@@ -196,6 +196,8 @@ A transparent serial-over-WiFi bridge. BecqMoni or AtomSpectra on a PC connect t
 
 ## Waterfall (spectrogram)
 
+![Web UI — "Waterfall" tab (spectrogram + spectrum slice)](images/web-ui-waterfall.png)
+
 Besides the live spectrum, the gateway can accumulate a **waterfall** — a sequence of
 spectra at equal intervals (5…60 s; each row = the accumulation delta over one period, 8192
 channels, `uint16`). The waterfall can be viewed in the browser

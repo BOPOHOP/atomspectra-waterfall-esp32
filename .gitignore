@@ -11,3 +11,6 @@ build_audit*.log
 # generated waterfall captures (users produce their own)
 *.aswf
 *.n42
+
+# but keep the bundled sample for the offline viewer
+!scripts/example-waterfall.n42

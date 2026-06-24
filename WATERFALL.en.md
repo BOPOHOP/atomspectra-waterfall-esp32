@@ -16,6 +16,20 @@ You can:
 - convert to **ANSI N42.42** with the scripts shipped in this repo;
 - open it as a 2D waterfall in the offline viewer shipped in this repo.
 
+## What it looks like
+
+Built-in waterfall Web UI (`http://<board-ip>/waterfall`): the spectrogram on top
+(time flows downward, X axis is channels/energy), with a slice of the current
+spectrum under the hovered row. Colour encodes intensity per the chosen palette and
+scale (log/lin).
+
+![Web UI — "Waterfall" tab (spectrogram + spectrum slice)](images/web-ui-waterfall.png)
+
+Buttons **Start / Stop / Clear / Export .n42**, an **Interval** field, a
+**keep in Flash** checkbox, X-axis selector (channels/keV), brightness (log/lin),
+palette, contrast slider and channel zoom. The counter shows total rows · in ring
+(`149/256`) · in Flash.
+
 ## How it works
 
 | Parameter | Value | Where in code |
@@ -154,6 +168,12 @@ A standalone HTML page (no server, no dependencies): open it in a browser and
 palette). Controls: channel range, detail, log/contrast, hover tooltip with energy in
 keV (when calibration is present). You can also pass a file via `?src=name.n42` when
 serving over `http://`.
+
+![Offline viewer waterfall_viewer.html — waterfall heatmap from .n42](images/waterfall-viewer.png)
+
+A ready-made sample [`example-waterfall.n42`](scripts/example-waterfall.n42) (export of
+a real run) ships with the repo — drag it into the viewer to see the result right away
+without connecting to a board.
 
 ### `waterfall_client.py` — capture to `.aswf`
 

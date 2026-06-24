@@ -11,6 +11,7 @@ PC-side helpers for the AtomSpectra waterfall (spectrogram). See [`../WATERFALL.
 | `waterfall_n42.py` | Waterfall → **ANSI N42.42** (`.n42`) for InterSpec / PeakEasy / Cambio |
 | `waterfall_viewer.html` | Offline 2D `.n42` heatmap viewer (open in a browser, no server) |
 | `waterfall_client.py` | Capture the live WS stream into an unbounded `.aswf` file |
+| `example-waterfall.n42` | Sample export of a real run — drag it into the viewer to try it / образец реального прогона |
 
 ```
 pip install requests websocket-client    # waterfall_n42.py / waterfall_client.py
@@ -41,6 +42,11 @@ Open the file directly in a browser (double-click) and drag a `.n42` onto it, or
 **Открыть .n42**. Renders the waterfall as a viridis heatmap; hover shows energy in keV
 (when the file carries a calibration) and the bin counts. No network, no server.
 
+A ready-made [`example-waterfall.n42`](example-waterfall.n42) ships next to the viewer —
+drag it in to see the result immediately, no board required.
+
+![waterfall_viewer.html — offline heatmap of example-waterfall.n42](../images/waterfall-viewer.png)
+
 ## waterfall_client.py — capture to .aswf
 
 Streams `/ws/waterfall` and writes an unbounded `.aswf` (not limited by the on-board
@@ -51,3 +57,4 @@ python waterfall_client.py <board-ip> -o capture.aswf
 ```
 
 > `.n42` and `.aswf` captures are git-ignored — they are generated artifacts, not source.
+> The only exception is the bundled `example-waterfall.n42` sample, kept for the viewer.
