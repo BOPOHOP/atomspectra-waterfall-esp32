@@ -1,12 +1,11 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<script src="palette-switcher.js" defer></script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AtomSpectra · Система</title>
 <style>
-  :root{ --accent:#9bdb4d; --accent-dim:rgba(155,219,77,.12); --bg:#0a0c0a; --panel:#11150f; --bd:#20281e; --dim:#8a9686; --txt:#cfd6cd; }
+  :root{ --accent:#34d3c0; --accent-dim:rgba(52,211,192,.12); --bg:#0a0c0a; --panel:#11150f; --bd:#20281e; --dim:#8a9686; --txt:#cfd6cd; }
   *{ box-sizing:border-box; }
   html,body{ margin:0; padding:0; background:var(--bg); }
   body{ color:var(--txt); font-family:ui-monospace,'SF Mono','Cascadia Mono','DejaVu Sans Mono',Consolas,monospace; padding-bottom:28px; }
@@ -32,7 +31,7 @@
   .kv span:first-child{ color:#7c887c; } .kv span:last-child{ color:#dfe5dc; text-align:right; }
   .bar{ height:7px; border-radius:4px; background:#1b211a; overflow:hidden; } .bar > i{ display:block; height:100%; border-radius:4px; }
   .btn{ width:100%; border-radius:8px; padding:9px 0; font-size:12.5px; cursor:pointer; background:#161b14; border:1px solid #2a322a; color:var(--txt); margin-top:13px; }
-  .btn.green{ background:var(--accent-dim); border-color:rgba(155,219,77,.4); color:var(--accent); font-weight:600; }
+  .btn.green{ background:var(--accent-dim); border-color:rgba(52,211,192,.4); color:var(--accent); font-weight:600; }
   .btn.red{ background:rgba(240,90,80,.07); border-color:rgba(240,90,80,.4); color:#ff8a82; }
   @media (max-width:900px){ .grid{ grid-template-columns:1fr } }
 </style>
@@ -110,7 +109,7 @@
 (function(){
   var heap=[],cpu=[],i;
   for(i=0;i<80;i++){ heap.push(212+Math.round(8*Math.sin(i/9))); cpu.push(50+Math.round(10*Math.sin(i/6))); }
-  function ac(){ return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#9bdb4d'; }
+  function ac(){ return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#34d3c0'; }
   function spark(id,hist,color,fill){
     var cv=document.getElementById(id),ctx=cv.getContext('2d'),w=cv.width,h=cv.height,mn=1e9,mx=-1e9,i;
     for(i=0;i<hist.length;i++){ if(hist[i]<mn)mn=hist[i]; if(hist[i]>mx)mx=hist[i]; } if(mx-mn<1)mx=mn+1;

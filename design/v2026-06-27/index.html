@@ -1,12 +1,11 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<script src="palette-switcher.js" defer></script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AtomSpectra · Спектр</title>
 <style>
-  :root{ --accent:#9bdb4d; --accent-dim:rgba(155,219,77,.12); --bg:#0a0c0a; --panel:#11150f; --bd:#20281e; --dim:#8a9686; --txt:#cfd6cd; }
+  :root{ --accent:#34d3c0; --accent-dim:rgba(52,211,192,.12); --bg:#0a0c0a; --panel:#11150f; --bd:#20281e; --dim:#8a9686; --txt:#cfd6cd; }
   *{ box-sizing:border-box; }
   html,body{ margin:0; padding:0; background:var(--bg); }
   body{ color:var(--txt); font-family:ui-monospace,'SF Mono','Cascadia Mono','DejaVu Sans Mono',Consolas,monospace; -webkit-text-size-adjust:100%; padding-bottom:28px; }
@@ -35,7 +34,7 @@
   .grp{ display:flex; gap:8px; }
   .btn{ border-radius:8px; padding:9px 16px; font-size:13px; cursor:pointer; background:#161b14; border:1px solid #2a322a; color:var(--txt); }
   .btn.sm{ padding:9px 14px; font-size:12.5px; }
-  .btn.green{ background:var(--accent-dim); border-color:rgba(155,219,77,.5); color:var(--accent); font-weight:600; }
+  .btn.green{ background:var(--accent-dim); border-color:rgba(52,211,192,.5); color:var(--accent); font-weight:600; }
   .btn.amber{ background:rgba(240,180,60,.08); border-color:rgba(240,180,60,.45); color:#f0c45a; }
   .btn.red{ background:rgba(240,90,80,.07); border-color:rgba(240,90,80,.45); color:#ff8a82; }
   .seg{ display:flex; border:1px solid #2a322a; border-radius:7px; overflow:hidden; }
@@ -79,7 +78,7 @@
 
     <section class="panel pad">
       <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px;color:#aeb6a8"><span><span style="color:var(--accent);font-weight:600">⛁ Flash LittleFS</span> &nbsp; <span id="m-flash">4 536 / 13 248 КБ (34.2%)</span></span><span class="mut" id="m-free">свободно 8 712 КБ</span></div>
-      <div class="bar"><i id="m-bar" style="width:34.2%;background:var(--accent);box-shadow:0 0 8px rgba(155,219,77,.4)"></i></div>
+      <div class="bar"><i id="m-bar" style="width:34.2%;background:var(--accent);box-shadow:0 0 8px rgba(52,211,192,.4)"></i></div>
     </section>
 
     <section class="panel">
@@ -119,7 +118,7 @@
         <span id="cal-arrow" style="color:var(--accent)">▶</span>
         <span style="font-size:13px;font-weight:600;color:#e8efe2">Калибровка энергии</span>
         <span class="lbl">E(ch) = e + d·ch + c·ch² + b·ch³ + a·ch⁴</span>
-        <span class="ml" style="font-size:11px;color:var(--accent);border:1px solid rgba(155,219,77,.35);border-radius:999px;padding:3px 10px">Задана</span>
+        <span class="ml" style="font-size:11px;color:var(--accent);border:1px solid rgba(52,211,192,.35);border-radius:999px;padding:3px 10px">Задана</span>
       </div>
       <div id="cal-body" style="display:none;padding:0 16px 14px">
         <div style="max-width:420px">
@@ -162,7 +161,7 @@
   function niceMax(v){ if(v<=0)return 1; var e=Math.pow(10,Math.floor(Math.log10(v))),f=v/e,n; n=f<=1?1:f<=2?2:f<=5?5:f<=8?8:10; return n*e; }
   function sv(c){ return st.yMode==='cps'?c/st.elapsed:c; }
   function fmtY(v){ if(st.yMode==='cps')return v<1?v.toFixed(2):v<10?v.toFixed(1):Math.round(v); return Math.round(v).toLocaleString('ru-RU'); }
-  function ac(){ return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#9bdb4d'; }
+  function ac(){ return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#34d3c0'; }
 
   function draw(){
     var cv=document.getElementById('chart'),ctx=cv.getContext('2d'),p=plot();

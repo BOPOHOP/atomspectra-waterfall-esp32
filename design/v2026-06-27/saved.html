@@ -1,12 +1,11 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<script src="palette-switcher.js" defer></script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AtomSpectra · Сохранённые</title>
 <style>
-  :root{ --accent:#9bdb4d; --accent-dim:rgba(155,219,77,.12); --bg:#0a0c0a; --panel:#11150f; --bd:#20281e; --dim:#8a9686; --txt:#cfd6cd; }
+  :root{ --accent:#34d3c0; --accent-dim:rgba(52,211,192,.12); --bg:#0a0c0a; --panel:#11150f; --bd:#20281e; --dim:#8a9686; --txt:#cfd6cd; }
   *{ box-sizing:border-box; }
   html,body{ margin:0; padding:0; background:var(--bg); }
   body{ color:var(--txt); font-family:ui-monospace,'SF Mono','Cascadia Mono','DejaVu Sans Mono',Consolas,monospace; padding-bottom:28px; }
@@ -28,7 +27,7 @@
   .mut{ color:#6b756a; }
   .bar{ height:8px; border-radius:4px; background:#1b211a; overflow:hidden; } .bar > i{ display:block; height:100%; border-radius:4px; }
   .btn{ border-radius:7px; padding:7px 13px; font-size:12px; cursor:pointer; background:#161b14; border:1px solid #2a322a; color:var(--txt); }
-  .btn.green{ background:var(--accent-dim); border-color:rgba(155,219,77,.4); color:var(--accent); font-weight:600; }
+  .btn.green{ background:var(--accent-dim); border-color:rgba(52,211,192,.4); color:var(--accent); font-weight:600; }
   .btn.red{ background:rgba(240,90,80,.07); border-color:rgba(240,90,80,.4); color:#ff8a82; }
   .seg{ display:flex; border:1px solid #2a322a; border-radius:7px; overflow:hidden; }
   .seg button{ padding:7px 14px; font-size:12px; cursor:pointer; border:none; background:transparent; color:#9aa496; }
@@ -36,7 +35,7 @@
   .grid{ display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:14px; }
   .list{ display:flex; flex-direction:column; gap:8px; max-height:560px; overflow:auto; }
   .item{ display:flex; gap:11px; align-items:center; background:#0e120c; border:1px solid #222a20; border-radius:9px; padding:10px; cursor:pointer; }
-  .item.on{ background:rgba(155,219,77,.08); border-color:rgba(155,219,77,.5); }
+  .item.on{ background:rgba(52,211,192,.08); border-color:rgba(52,211,192,.5); }
   .item canvas{ width:84px; height:32px; flex-shrink:0; border-radius:4px; background:#0c0f0b; }
   @media (max-width:860px){ .grid{ grid-template-columns:1fr } .list{ max-height:none } }
 </style>
@@ -58,7 +57,7 @@
         <div style="display:flex;gap:8px"><button class="btn">Экспорт всех (.zip)</button><button class="btn red" id="clear">Удалить все</button></div>
       </div>
       <div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:5px;color:#aeb6a8"><span><span style="color:var(--accent);font-weight:600">⛁ Flash LittleFS</span> &nbsp; 4 536 / 13 248 КБ (34.2%)</span><span class="mut">свободно 8 712 КБ · ~545 спектров</span></div>
-      <div class="bar"><i style="width:34.2%;background:var(--accent);box-shadow:0 0 8px rgba(155,219,77,.4)"></i></div>
+      <div class="bar"><i style="width:34.2%;background:var(--accent);box-shadow:0 0 8px rgba(52,211,192,.4)"></i></div>
     </section>
 
     <div class="grid">
@@ -100,7 +99,7 @@
   var st={ scale:'log', selectedId:1 }, items=[];
 
   function rnd(){ return Math.random()+Math.random()+Math.random()-1.5; }
-  function ac(){ return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#9bdb4d'; }
+  function ac(){ return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#34d3c0'; }
   function gen(kind){
     var sets={ cs137:{cont:60,peaks:[[662,520,7],[32,80,4]],peakE:'662 кэВ (Cs-137)'},
       background:{cont:34,peaks:[[1460,60,11],[609,30,8],[2614,22,15]],peakE:'1460 кэВ (K-40)'},
