@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AtomSpectra Web UI · дизайн-mock v2026-06-27</title>
+<style>
+  :root{ --accent:#9bdb4d; --bg:#0a0c0a; --panel:#11150f; --bd:#20281e; --dim:#8a9686; --txt:#cfd6cd; }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; background:var(--bg); height:100%; }
+  body{ color:var(--txt); font-family:ui-monospace,'SF Mono','Cascadia Mono','DejaVu Sans Mono',Consolas,monospace; display:flex; flex-direction:column; height:100vh; }
+  header{ padding:11px 18px; border-bottom:1px solid #1c241c; display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  .brand{ font-weight:700; font-size:14px; color:#e8efe2; }
+  .brand b{ color:var(--accent); }
+  .sub{ color:var(--dim); font-size:11.5px; }
+  nav{ display:flex; gap:2px; padding:0 14px; border-bottom:1px solid #1c241c; background:#0c100c; overflow-x:auto; flex-shrink:0; }
+  nav button{ background:transparent; border:0; color:var(--dim); font-family:inherit; font-size:13px; padding:11px 18px; cursor:pointer; border-bottom:2px solid transparent; white-space:nowrap; }
+  nav button.on{ color:#e8efe2; border-bottom-color:var(--accent); font-weight:600; }
+  nav button:hover{ color:var(--txt); }
+  main{ flex:1; min-height:0; }
+  iframe{ width:100%; height:100%; border:0; display:block; background:var(--bg); }
+  footer{ padding:8px 18px; border-top:1px solid #1c241c; color:#6b756a; font-size:11px; display:flex; justify-content:space-between; gap:14px; flex-wrap:wrap; }
+  footer a{ color:var(--dim); text-decoration:none; }
+  footer a:hover{ color:var(--accent); }
+</style>
+</head>
+<body>
+  <header>
+    <span class="brand">AtomSpectra <b>Web UI</b></span>
+    <span class="sub">дизайн-mock · v2026-06-27 · 4 страницы</span>
+  </header>
+  <nav>
+    <button data-src="index.html" class="on">Спектр</button>
+    <button data-src="waterfall.html">Водопад</button>
+    <button data-src="saved.html">Сохранённые</button>
+    <button data-src="system.html">Система</button>
+  </nav>
+  <main>
+    <iframe id="f" src="index.html" title="design mock"></iframe>
+  </main>
+  <footer>
+    <span>Статический mock. Цифры — плейсхолдеры. Backend не подключён.</span>
+    <span><a href="https://github.com/VibeEngineering-LLC/atomspectra-waterfall-esp32/tree/main/design/v2026-06-27" target="_blank" rel="noopener">репозиторий →</a></span>
+  </footer>
+<script>
+  var f=document.getElementById('f'), btns=document.querySelectorAll('nav button');
+  btns.forEach(function(b){
+    b.onclick=function(){
+      btns.forEach(function(x){ x.classList.remove('on'); });
+      b.classList.add('on');
+      f.src=b.dataset.src;
+    };
+  });
+</script>
+</body>
+</html>
