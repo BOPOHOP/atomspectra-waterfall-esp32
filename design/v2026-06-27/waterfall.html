@@ -167,6 +167,17 @@
     <section class="console" id="log"></section>
   </div>
 
+  <!-- PALETTE PICKER OVERLAY -->
+  <div id="pal-overlay" style="display:none;position:fixed;inset:0;z-index:50;background:rgba(6,8,6,.55);align-items:flex-start;justify-content:center;padding-top:60px">
+    <div style="background:#0e120c;border:1px solid #2a322a;border-radius:12px;width:430px;max-width:92vw;max-height:82vh;overflow:auto;box-shadow:0 18px 50px rgba(0,0,0,.6)">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid #1f261d;position:sticky;top:0;background:#0e120c">
+        <span style="font-weight:600;font-size:14px;color:#e8efe2">Палитра водопада <span class="mut" style="font-weight:400;font-size:11.5px">· клик для сравнения</span></span>
+        <span id="pal-close" style="cursor:pointer;color:#8a9686;font-size:19px;padding:0 4px">×</span>
+      </div>
+      <div id="pal-list" style="padding:10px 12px;display:flex;flex-direction:column;gap:7px"></div>
+    </div>
+  </div>
+
 <script>
 "use strict";
 (function(){
@@ -177,14 +188,20 @@
            cmap:'Inferno', chMin:0, chMax:8192, base:70, sec:0,
            elapsed:841, cps:136, total:138075, rowsTotal:149, ringRows:149, ringCap:256,
            flashUsed:2532, flashTotal:13248 };
-  var CMAPS=['Inferno','Magma','Viridis','Grayscale'];
+  var CMAPS=['Inferno','Magma','Plasma','Viridis','Cividis','Turbo','Jet','Hot','Ocean','Grayscale'];
   var hoverRow=null, hoverBin=null, rowsRaw=[], gmax=1, logMax=1, lut;
 
   // ---------- colormaps ----------
   function stops(n){ var S={
     Inferno:[[0,0,0,4],[.15,40,11,84],[.3,101,21,110],[.45,159,42,99],[.6,212,72,66],[.75,245,125,21],[.88,250,193,39],[1,252,255,164]],
     Magma:[[0,0,0,4],[.15,28,16,68],[.3,79,18,123],[.45,129,37,129],[.6,181,54,122],[.75,229,80,100],[.88,251,135,97],[1,252,253,191]],
+    Plasma:[[0,13,8,135],[.2,84,2,163],[.4,156,23,158],[.6,205,72,118],[.8,237,131,67],[1,240,249,33]],
     Viridis:[[0,68,1,84],[.2,72,40,120],[.4,62,74,137],[.55,49,104,142],[.7,38,130,142],[.82,53,183,121],[.92,145,213,66],[1,253,231,37]],
+    Cividis:[[0,0,32,76],[.25,38,62,89],[.5,124,123,120],[.75,180,160,105],[1,255,234,70]],
+    Turbo:[[0,48,18,59],[.15,70,134,251],[.35,42,215,194],[.55,124,242,73],[.75,242,201,57],[.9,238,79,21],[1,122,4,3]],
+    Jet:[[0,0,0,131],[.125,0,60,170],[.375,5,255,255],[.625,255,255,0],[.875,250,0,0],[1,128,0,0]],
+    Hot:[[0,8,0,0],[.35,255,0,0],[.66,255,255,0],[1,255,255,255]],
+    Ocean:[[0,2,8,28],[.3,12,52,110],[.55,20,120,160],[.78,86,196,176],[1,224,248,220]],
     Grayscale:[[0,8,10,8],[1,236,242,232]] }; return S[n]||S.Inferno; }
   function buildLut(n){ var s=stops(n), l=new Uint8ClampedArray(768),i,k,a,b,f;
     for(i=0;i<256;i++){ var t=i/255; a=s[0]; b=s[s.length-1];
@@ -296,6 +313,18 @@
   function logLine(m){ var d=new Date(), t='['+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds())+'] ';
     var box=document.getElementById('log'), div=document.createElement('div'); div.innerHTML='<span style="color:#4a534a">'+t+'</span>'+m; box.appendChild(div); box.scrollTop=box.scrollHeight; }
 
+  function palGrad(ctx,w,h,name){ var l=buildLut(name),img=ctx.createImageData(w,h),d=img.data;
+    for(var x=0;x<w;x++){ var idx=(Math.min(255,x/w*255)|0)*3; for(var y=0;y<h;y++){ var q=(y*w+x)*4; d[q]=l[idx]; d[q+1]=l[idx+1]; d[q+2]=l[idx+2]; d[q+3]=255; } } ctx.putImageData(img,0,0); }
+  function buildPicker(){ var box=document.getElementById('pal-list'); box.innerHTML='';
+    CMAPS.forEach(function(name){ var on=name===st.cmap, row=document.createElement('div');
+      row.style.cssText='display:flex;align-items:center;gap:11px;padding:7px 9px;border-radius:8px;cursor:pointer;border:1px solid '+(on?'rgba(155,219,77,.5)':'transparent')+';background:'+(on?'rgba(155,219,77,.08)':'transparent');
+      row.innerHTML='<canvas width="200" height="18" style="width:190px;height:16px;border-radius:4px;border:1px solid #2a322a;flex-shrink:0"></canvas><span style="font-size:12.5px;color:#cfd6cd;flex:1">'+name+'</span><span style="font-size:13px;color:var(--accent)">'+(on?'✓':'')+'</span>';
+      var cv=row.querySelector('canvas'); palGrad(cv.getContext('2d'),cv.width,cv.height,name);
+      row.onclick=function(){ st.cmap=name; document.getElementById('cmapname').textContent=name; redrawAll(); buildPicker(); };
+      box.appendChild(row); }); }
+  function openPicker(){ buildPicker(); document.getElementById('pal-overlay').style.display='flex'; }
+  function closePicker(){ document.getElementById('pal-overlay').style.display='none'; }
+
   function init(){
     buildData(); redrawAll(); refresh();
     ['WS подключён','backfill: 0 строк, first #0','запись во Flash: вкл'].forEach(logLine);
@@ -308,7 +337,9 @@
     bindSeg('seg-x',function(v){ st.energyUnit=v; redrawAll(); });
     bindSeg('seg-y',function(v){ st.logScale=(v==='log'); redrawAll(); });
     document.getElementById('contrast').oninput=function(e){ st.contrast=+e.target.value; drawWf(); };
-    document.getElementById('cmap').onclick=function(){ var i=CMAPS.indexOf(st.cmap); st.cmap=CMAPS[(i+1)%CMAPS.length]; document.getElementById('cmapname').textContent=st.cmap; redrawAll(); };
+    document.getElementById('cmap').onclick=openPicker;
+    document.getElementById('pal-close').onclick=closePicker;
+    document.getElementById('pal-overlay').onclick=function(e){ if(e.target.id==='pal-overlay') closePicker(); };
     document.getElementById('chmin').onchange=function(e){ var v=Math.max(0,Math.min(st.chMax-100,parseInt(e.target.value)||0)); st.chMin=v; e.target.value=v; redrawAll(); };
     document.getElementById('chmax').onchange=function(e){ var v=Math.max(st.chMin+100,Math.min(8192,parseInt(e.target.value)||8192)); st.chMax=v; e.target.value=v; redrawAll(); };
     document.getElementById('b-zoom').onclick=function(){ st.chMin=0; st.chMax=8192; document.getElementById('chmin').value=0; document.getElementById('chmax').value=8192; redrawAll(); };
