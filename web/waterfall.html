@@ -380,6 +380,27 @@ function cmap(t){
 function ch2kev(c){if(!calib)return c;var e=0;for(var i=0;i<calib.length;i++)e+=calib[i]*Math.pow(c,i);return e}
 function kev2ch(k){var lo=0,hi=CH;for(var i=0;i<30;i++){var m=(lo+hi)/2;if(ch2kev(m)<k)lo=m;else hi=m}return(lo+hi)/2}
 
+/* #DEMO-12: выбранные линии нуклидов — те же, что на «Спектре» (index.html).
+   Выбор хранится в общем localStorage["aswf-nuc"]; здесь только читаем и рисуем
+   их вертикальными маркерами на спектрограмме (через canvas cur) и на срезе. */
+var NUCLIDES=[
+ {id:"k40",   name:"K-40",   color:"#f0c45a", lines:[1460.8]},
+ {id:"cs137", name:"Cs-137", color:"#ff8a82", lines:[661.7]},
+ {id:"co60",  name:"Co-60",  color:"#7ed4ff", lines:[1173.2,1332.5]},
+ {id:"ra226", name:"Ra-226", color:"#ff9a55", lines:[186.2,242.0,295.2,351.9,609.3,1120.3,1764.5]},
+ {id:"th232", name:"Th-232", color:"#9ad17a", lines:[238.6,338.3,583.2,911.2,968.9,2614.5]},
+ {id:"am241", name:"Am-241", color:"#ff6ec0", lines:[59.5]},
+ {id:"na22",  name:"Na-22",  color:"#6ea8ff", lines:[511.0,1274.5]},
+ {id:"i131",  name:"I-131",  color:"#5fe7c3", lines:[364.5]},
+ {id:"mn54",  name:"Mn-54",  color:"#d0d36a", lines:[834.8]},
+ {id:"ann",   name:"e⁺/e⁻ 511", color:"#8a9686", lines:[511.0]}
+];
+var nucShow=(function(){
+ try{var raw=localStorage.getItem("aswf-nuc");if(raw){var o=JSON.parse(raw);if(o&&typeof o==="object")return o;}}catch(e){}
+ return {k40:true,cs137:true,co60:true};
+})();
+function nucAny(){for(var k in nucShow){if(nucShow[k])return true;}return false;}
+
 var normMax=64;
 function rowMax(r){var m=0;for(var i=chLo;i<chHi&&i<r.length;i++){if(r[i]>m)m=r[i];}return m;}
 
@@ -420,10 +441,40 @@ function draw(){
  }
  wfx.putImageData(img,0,0);
  drawAxis();
+ drawNuclidesWF();
  drawCursor();
  updHud(bottom,lastIdx);
  drawSlice();
  syncScroll();
+}
+/* #DEMO-12: вертикальные маркеры выбранных нуклидов на спектрограмме.
+   Рисуем в canvas cur (тот же, что оси/курсор) — оверлей берёт его через
+   compose(wfEl,curEl), поэтому линии видны и в обычном виде, и в zoom-оверлее.
+   Координата X канала c: (c-chLo)/span*WFW (та же, что у баров среза). */
+function drawNuclidesWF(){
+ if(!calib||!nucAny())return;
+ var span=chHi-chLo; if(span<1)span=1;
+ curx.save();
+ curx.textAlign="left"; curx.textBaseline="top"; curx.font="9px ui-monospace,monospace";
+ for(var i=0;i<NUCLIDES.length;i++){
+  var n=NUCLIDES[i]; if(!nucShow[n.id])continue;
+  for(var j=0;j<n.lines.length;j++){
+   var c=kev2ch(n.lines[j]);
+   if(c<chLo||c>=chHi)continue;
+   var x=Math.round((c-chLo)/span*WFW)+0.5;
+   curx.strokeStyle=n.color; curx.lineWidth=1; curx.globalAlpha=0.8; curx.setLineDash([4,3]);
+   curx.beginPath(); curx.moveTo(x,0); curx.lineTo(x,WFH-16); curx.stroke();
+   curx.setLineDash([]); curx.globalAlpha=0.95;
+   var ly=2+((i%3)*10);
+   curx.fillStyle="rgba(0,0,0,.55)";
+   var lw=curx.measureText(n.name).width+4;
+   var lx=x+2; if(lx+lw>WFW)lx=x-lw-2;
+   curx.fillRect(lx,ly,lw,10);
+   curx.fillStyle=n.color; curx.fillText(n.name,lx+2,ly+1);
+   curx.globalAlpha=1;
+  }
+ }
+ curx.restore();
 }
 /* #DEMO-3/#DEMO-5: видимая полоса прокрутки истории спектрограммы.
    value=0 → live (новейшая строка), value=max → самая старая строка. */
@@ -553,6 +604,20 @@ function drawSlice(){
    slcx.fillStyle=accent;
   }
   slcx.fillRect(k*bw, by, bwDraw>0?bwDraw:bw, h);
+ }
+ // #DEMO-12: вертикальные маркеры выбранных нуклидов на срезе (та же X-шкала каналов)
+ if(calib&&nucAny()){
+  for(var ni=0;ni<NUCLIDES.length;ni++){
+   var nn=NUCLIDES[ni]; if(!nucShow[nn.id])continue;
+   for(var nj=0;nj<nn.lines.length;nj++){
+    var nc=kev2ch(nn.lines[nj]);
+    if(nc<chLo||nc>=chHi)continue;
+    var nx=Math.round((nc-chLo)/span*SLW)+0.5;
+    slcx.strokeStyle=nn.color; slcx.lineWidth=1; slcx.globalAlpha=0.8; slcx.setLineDash([4,3]);
+    slcx.beginPath(); slcx.moveTo(nx,0); slcx.lineTo(nx,SLH); slcx.stroke();
+   }
+  }
+  slcx.setLineDash([]); slcx.globalAlpha=1;
  }
  // подпись курсора (ch / кэВ / counts) — поверх столбцов
  if(slcCursorCh>=chLo&&slcCursorCh<chHi){
@@ -991,6 +1056,9 @@ window.openZoomOverlay=function(sourcesFn,opts){
  document.body.appendChild(ov);
  var prevOvf=document.body.style.overflow;document.body.style.overflow="hidden"; /* #UI-24: лок прокрутки фона */
  var zoom=1,panX=0,panY=0,W=0,H=0,raf=0,closed=false;
+ /* #DEMO-11: геометрия последнего кадра (диапазон вертикального пана + масштаб),
+    нужна чтобы перевод «перетянул за край» → прокрутка по строкам истории. */
+ var lastGeo=null;
  /* #UI-19: живой маркер курсора в оверлее */
  var mouse={x:0,y:0,inside:false};
  var cmap=null;
@@ -1028,6 +1096,8 @@ window.openZoomOverlay=function(sourcesFn,opts){
    var loX=Math.min(-L0,W-R0), hiX=Math.max(-L0,W-R0); panX=Math.max(loX,Math.min(hiX,panX));
    var T0=(oy0-vcy)*zoom+vcy, B0=(oy0+totH-vcy)*zoom+vcy;
    var loY=Math.min(-T0,regionH-B0), hiY=Math.max(-T0,regionH-B0); panY=Math.max(loY,Math.min(hiY,panY));
+   /* #DEMO-11: сохраняем диапазон пана и масштаб строк для drag→scroll-by-rows */
+   lastGeo={loY:loY,hiY:hiY,totH:totH,zoom:zoom,regionH:regionH};
    /* #UI-22/#UI-26: экранные границы спектрограммы по обеим осям */
    pclip={top:T0+panY, bot:B0+panY, left:L0+panX, right:R0+panX};
    /* #UI-21: курсор над спектрограммой → доля fx/fy строки/канала наружу (инверсия zoom/pan по vcy). */
@@ -1044,11 +1114,20 @@ window.openZoomOverlay=function(sourcesFn,opts){
    ctx.drawImage(spg,ox,oy0,Wd,totH);
    ctx.restore();
    cmap={x0:ox,w:Wd,y0:oy0,h:totH}; /* #UI-29: рамка спектрограммы для fracX/fracY */
-   /* срез — фиксированная полоса снизу (без zoom/pan) */
+   /* #DEMO-9: срез повторяет ГОРИЗОНТАЛЬНУЮ трансформацию спектрограммы (zoom + panX
+      вокруг W/2), чтобы канал c был на одном и том же экранном X в спектрограмме и в
+      срезе («начало совпадает»). По вертикали — фиксированная полоса снизу (#DEMO-5):
+      scale(zoom,1), без panY, высота slcH не масштабируется. */
    if(slc){
     ctx.setTransform(dpr,0,0,dpr,0,0);
     ctx.imageSmoothingEnabled=false;
-    ctx.drawImage(slc,ox,regionH+gap,Wd,slcH);
+    ctx.save();
+    ctx.beginPath();ctx.rect(0,regionH+gap,W,slcH);ctx.clip(); /* срез не вылезает за свою полосу */
+    ctx.translate(W/2+panX,regionH+gap);
+    ctx.scale(zoom,1);
+    ctx.translate(-W/2,0);
+    ctx.drawImage(slc,ox,0,Wd,slcH);
+    ctx.restore();
    }
   }
   /* #UI-19/#UI-12: вертикальный маркер курсора (screen-space CSS px) + readout */
@@ -1099,9 +1178,24 @@ window.openZoomOverlay=function(sourcesFn,opts){
   var nz=Math.max(1,Math.min(60,zoom*f)); /* #UI-25: не меньше fit (вписанного окна) */
   panX=cx-(cx-panX)*nz/zoom;panY=cy-(cy-panY)*nz/zoom;zoom=nz;
  },{passive:false});
+ /* #DEMO-11: применяем инкрементальный сдвиг «ладони». По X — обычный pan (кламп в
+    render). По Y: сначала pan в пределах [loY,hiY]; «перелив» за край (когда спектрограмма
+    уже прижата к границе своей области) переводим в прокрутку по строкам истории через
+    opts.onScrollRows(frac), где frac — доля высоты образа спектрограммы. Так «ладонью»
+    можно пройти всю временную шкалу, а не упереться в край рамки. */
+ function applyDrag(dx,dy){
+  panX+=dx;
+  var ny=panY+dy;
+  if(lastGeo){
+   var c=Math.max(lastGeo.loY,Math.min(lastGeo.hiY,ny));
+   var ovf=ny-c; panY=c;
+   var denom=lastGeo.totH*lastGeo.zoom;
+   if(ovf!==0&&opts.onScrollRows&&denom>0)opts.onScrollRows(ovf/denom);
+  }else{panY=ny;}
+ }
  var drag=null;
- cv.addEventListener("pointerdown",function(e){if(e.pointerType==="touch")return;e.preventDefault();/* #DEMO-8: гасим нативное выделение/drag картинки, чтобы ЛКМ-«ладонь» начинала pan надёжно */try{cv.setPointerCapture(e.pointerId);}catch(_){}drag={x:e.clientX,y:e.clientY,px:panX,py:panY};ov.classList.add("dragging");});
- cv.addEventListener("pointermove",function(e){if(!drag)return;panX=drag.px+(e.clientX-drag.x);panY=drag.py+(e.clientY-drag.y);});
+ cv.addEventListener("pointerdown",function(e){if(e.pointerType==="touch")return;e.preventDefault();/* #DEMO-8: гасим нативное выделение/drag картинки, чтобы ЛКМ-«ладонь» начинала pan надёжно */try{cv.setPointerCapture(e.pointerId);}catch(_){}drag={x:e.clientX,y:e.clientY};ov.classList.add("dragging");});
+ cv.addEventListener("pointermove",function(e){if(!drag)return;var dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;applyDrag(dx,dy);});
  cv.addEventListener("pointerup",function(e){drag=null;ov.classList.remove("dragging");try{cv.releasePointerCapture(e.pointerId);}catch(_){}});
  cv.addEventListener("contextmenu",function(e){e.preventDefault();}); /* #DEMO-5: ПКМ — навигация по спектрограмме, без меню браузера */
  var pinch=null,tdrag=null;
@@ -1112,7 +1206,7 @@ window.openZoomOverlay=function(sourcesFn,opts){
    var dx=t2.clientX-t1.clientX,dy=t2.clientY-t1.clientY;
    pinch={d:Math.hypot(dx,dy),zoom:zoom,cx:(t1.clientX+t2.clientX)/2,cy:(t1.clientY+t2.clientY)/2,panX:panX,panY:panY};
   }else if(e.touches.length===1){
-   tdrag={x:e.touches[0].clientX,y:e.touches[0].clientY,px:panX,py:panY};
+   tdrag={x:e.touches[0].clientX,y:e.touches[0].clientY};
   }
  },{passive:true});
  cv.addEventListener("touchmove",function(e){
@@ -1128,8 +1222,10 @@ window.openZoomOverlay=function(sourcesFn,opts){
    panX=cx-(cx-pinch.panX)*nz/pinch.zoom;panY=cy-(cy-pinch.panY)*nz/pinch.zoom;zoom=nz;
   }else if(e.touches.length===1&&tdrag){
    e.preventDefault();
-   panX=tdrag.px+(e.touches[0].clientX-tdrag.x);
-   panY=tdrag.py+(e.touches[0].clientY-tdrag.y);
+   var tx=e.touches[0].clientX,ty=e.touches[0].clientY;
+   var ddx=tx-tdrag.x,ddy=ty-tdrag.y;
+   tdrag.x=tx;tdrag.y=ty;
+   applyDrag(ddx,ddy);
   }
  },{passive:false});
  cv.addEventListener("touchend",function(e){if(e.touches.length<2)pinch=null;if(e.touches.length<1)tdrag=null;});
@@ -1140,15 +1236,25 @@ window.openZoomOverlay=function(sourcesFn,opts){
  var wrap=document.getElementById("wrap-wf");
  var wfEl=document.getElementById("wf");
  var slcEl=document.getElementById("slc");
+ /* #DEMO-10: композит строим в МАКСИМАЛЬНОМ разрешении из a/b. Слой cur (оси/курсор/
+    линии нуклидов/подписи) — супердискретизирован (1800×1040 через hidpi), wf-heatmap —
+    900×520. Раньше композит брал размер a (=wf, 900) и ужимал cur до 900 → текст осей
+    запекался в 900px и в оверлее растягивался ~2× → мыло. Теперь холст = размер большего
+    слоя, heatmap апскейлим пиксельно (он и так дискретный), а текст cur ложится на родном
+    разрешении → в оверлее рисуется почти 1:1, чётко. */
  function compose(a,b){
+  var W=b?Math.max(a.width,b.width):a.width;
+  var H=b?Math.max(a.height,b.height):a.height;
   var c=document.createElement("canvas");
-  c.width=a.width; c.height=a.height;
+  c.width=W; c.height=H;
   var cx=c.getContext("2d");
-  cx.drawImage(a,0,0);
-  if(b)cx.drawImage(b,0,0,a.width,a.height);
+  cx.imageSmoothingEnabled=false;
+  cx.drawImage(a,0,0,W,H);
+  if(b)cx.drawImage(b,0,0,W,H);
   return c;
  }
  function open(){
+  var scrollAcc=0; /* #DEMO-11: накопитель дробных строк при drag→scroll */
   window.openZoomOverlay(function(){
    var arr=[];
    var curEl=document.getElementById("cur");
@@ -1156,6 +1262,23 @@ window.openZoomOverlay=function(sourcesFn,opts){
    if(slcEl)arr.push({canvas:slcEl});
    return arr;
   },{
+   /* #DEMO-11: «перетянул за край» (frac — доля высоты образа спектрограммы) →
+      прокрутка истории. frac>0 (тянем вниз) → новее (к live); frac<0 → старее.
+      Дробь копим, применяем целыми строками; на концах сбрасываем накопитель. */
+   onScrollRows:function(frac){
+    if(!rows.length)return;
+    var lastIdx=baseIndex+rows.length-1;
+    var oldest=baseIndex+(WFH-1); if(oldest>lastIdx)oldest=lastIdx;
+    var bottom=(viewBottom<0)?lastIdx:viewBottom;
+    scrollAcc+=frac*WFH;
+    var step=scrollAcc|0; if(step===0)return;
+    scrollAcc-=step;
+    bottom+=step;
+    if(bottom>=lastIdx){viewBottom=-1;scrollAcc=0;}
+    else if(bottom<=oldest){viewBottom=oldest;scrollAcc=0;}
+    else{viewBottom=bottom;}
+    draw();
+   },
    /* #UI-21: курсор над водопадом в оверлее → срез ИМЕННО строки под курсором.
       fx — доля по каналам [0..1], fy — доля по высоте образа (0=верх=новейшая строка). */
    onCursor:function(fx,fy){
@@ -1192,6 +1315,13 @@ window.openZoomOverlay=function(sourcesFn,opts){
  if(wrap)wrap.addEventListener("click",open);
  if(slcEl)slcEl.addEventListener("click",open);
 })();
+/* #DEMO-12: выбор нуклидов меняется на «Спектре» (index.html) и пишется в общий
+   localStorage["aswf-nuc"]. Если открыты обе вкладки — подхватываем выбор на лету. */
+window.addEventListener("storage",function(e){
+ if(e.key!=="aswf-nuc")return;
+ try{var o=JSON.parse(e.newValue||"{}");if(o&&typeof o==="object")nucShow=o;}catch(_){}
+ if(typeof draw==="function")draw();
+});
 </script>
 </body>
 </html>
