@@ -1018,11 +1018,16 @@ window.openZoomOverlay=function(sourcesFn,opts){
    vcy=regionH/2;                   /* центр зума/пана — центр области спектрограммы */
    var totH=0.98*regionH;           /* fill области по высоте (как и было — без сохранения аспекта) */
    var oy0=(regionH-totH)/2;
-   /* #UI-24/#DEMO-5: pan не выпускает спектрограмму за края её области; на fit-зуме по центру. */
+   /* #UI-24/#DEMO-5/#DEMO-8: pan не выпускает спектрограмму за края её области.
+      Единый clamp по доступному зазору при ЛЮБОМ зуме (включая fit): применённый
+      «ладонью» сдвиг сохраняется в границах рамки, а НЕ затирается принудительным
+      центрированием каждый кадр. Старый else (panX=center) сбрасывал перетаскивание
+      на fit-зуме → «перемещение ладонью не работает» (#DEMO-8). На открытии panX=0
+      попадает в [lo,hi] → контент по-прежнему по центру; за края не уходит (#UI-24). */
    var L0=(ox-W/2)*zoom+W/2, R0=(ox+Wd-W/2)*zoom+W/2;
-   if(Wd*zoom>=W) panX=Math.min(-L0,Math.max(W-R0,panX)); else panX=(W-Wd*zoom)/2-L0;
+   var loX=Math.min(-L0,W-R0), hiX=Math.max(-L0,W-R0); panX=Math.max(loX,Math.min(hiX,panX));
    var T0=(oy0-vcy)*zoom+vcy, B0=(oy0+totH-vcy)*zoom+vcy;
-   if(totH*zoom>=regionH) panY=Math.min(-T0,Math.max(regionH-B0,panY)); else panY=(regionH-totH*zoom)/2-T0;
+   var loY=Math.min(-T0,regionH-B0), hiY=Math.max(-T0,regionH-B0); panY=Math.max(loY,Math.min(hiY,panY));
    /* #UI-22/#UI-26: экранные границы спектрограммы по обеим осям */
    pclip={top:T0+panY, bot:B0+panY, left:L0+panX, right:R0+panX};
    /* #UI-21: курсор над спектрограммой → доля fx/fy строки/канала наружу (инверсия zoom/pan по vcy). */
@@ -1095,7 +1100,7 @@ window.openZoomOverlay=function(sourcesFn,opts){
   panX=cx-(cx-panX)*nz/zoom;panY=cy-(cy-panY)*nz/zoom;zoom=nz;
  },{passive:false});
  var drag=null;
- cv.addEventListener("pointerdown",function(e){if(e.pointerType==="touch")return;try{cv.setPointerCapture(e.pointerId);}catch(_){}drag={x:e.clientX,y:e.clientY,px:panX,py:panY};ov.classList.add("dragging");});
+ cv.addEventListener("pointerdown",function(e){if(e.pointerType==="touch")return;e.preventDefault();/* #DEMO-8: гасим нативное выделение/drag картинки, чтобы ЛКМ-«ладонь» начинала pan надёжно */try{cv.setPointerCapture(e.pointerId);}catch(_){}drag={x:e.clientX,y:e.clientY,px:panX,py:panY};ov.classList.add("dragging");});
  cv.addEventListener("pointermove",function(e){if(!drag)return;panX=drag.px+(e.clientX-drag.x);panY=drag.py+(e.clientY-drag.y);});
  cv.addEventListener("pointerup",function(e){drag=null;ov.classList.remove("dragging");try{cv.releasePointerCapture(e.pointerId);}catch(_){}});
  cv.addEventListener("contextmenu",function(e){e.preventDefault();}); /* #DEMO-5: ПКМ — навигация по спектрограмме, без меню браузера */

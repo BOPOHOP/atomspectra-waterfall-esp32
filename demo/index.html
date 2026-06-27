@@ -108,7 +108,7 @@ table.saved tr.on td{ background:rgba(110,168,255,.07); }
 <div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.x">Ось X</span><div class="seg" id="seg-x"><button id="btn-ch" class="on" onclick="setKev(false)">Ch</button><button id="btn-kev" onclick="setKev(true)">keV</button></div></div>
 <!-- #UI-3: оверлей энергетических линий нуклидов -->
 <div style="display:flex;align-items:center;gap:8px;position:relative">
- <button class="btn sm" id="btn-nuc" onclick="toggleNucPanel()" data-i18n="nuc.toggle" title="" disabled style="opacity:.5">&#129516; Линии</button>
+ <button class="btn sm" id="btn-nuc" onclick="toggleNucPanel()" data-i18n-html="nuc.toggle" title="" disabled style="opacity:.5">&#9883; Линии</button>
  <div id="nuc-panel" style="display:none;position:absolute;top:calc(100% + 6px);left:0;z-index:10;background:#0e120d;border:1px solid #2a322a;border-radius:8px;padding:10px 12px;min-width:260px;box-shadow:0 6px 18px rgba(0,0,0,.5)"></div>
 </div>
 <div class="ml" style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:#6b756a"><span style="width:18px;height:3px;border-radius:2px;background:var(--accent);display:inline-block"></span><span data-i18n="legend.live">живой</span></div>
@@ -188,7 +188,7 @@ var DICT={
   "btn.send":"Send",
   "ph.cmd":"команда, напр. -inf",
   "ctl.scale":"Шкала Y","ctl.value":"Величина","ctl.x":"Ось X",
-  "nuc.toggle":"&#129516; Линии","nuc.title":"Линии нуклидов",
+  "nuc.toggle":"&#9883; Линии","nuc.title":"Линии нуклидов",
   "nuc.all":"Все","nuc.none":"Снять",
   "nuc.need_cal":"Нужна калибровка энергии",
   "legend.live":"живой",
@@ -230,7 +230,7 @@ var DICT={
   "btn.send":"Send",
   "ph.cmd":"command, e.g. -inf",
   "ctl.scale":"Y scale","ctl.value":"Value","ctl.x":"X axis",
-  "nuc.toggle":"&#129516; Lines","nuc.title":"Nuclide lines",
+  "nuc.toggle":"&#9883; Lines","nuc.title":"Nuclide lines",
   "nuc.all":"All","nuc.none":"None",
   "nuc.need_cal":"Energy calibration required",
   "legend.live":"live",
@@ -528,10 +528,8 @@ var NUCLIDES=[
  {id:"k40",   name:"K-40",   color:"#f0c45a", lines:[1460.8]},
  {id:"cs137", name:"Cs-137", color:"#ff8a82", lines:[661.7]},
  {id:"co60",  name:"Co-60",  color:"#7ed4ff", lines:[1173.2,1332.5]},
- {id:"tl208", name:"Tl-208", color:"#c78bff", lines:[583.2,2614.5]},
- {id:"ac228", name:"Ac-228", color:"#9ad17a", lines:[338.3,911.2,968.9]},
- {id:"pb214", name:"Pb-214", color:"#ff9a55", lines:[242.0,295.2,351.9]},
- {id:"bi214", name:"Bi-214", color:"#ffd16a", lines:[609.3,1120.3,1764.5]},
+ {id:"ra226", name:"Ra-226", color:"#ff9a55", lines:[186.2,242.0,295.2,351.9,609.3,1120.3,1764.5]},
+ {id:"th232", name:"Th-232", color:"#9ad17a", lines:[238.6,338.3,583.2,911.2,968.9,2614.5]},
  {id:"am241", name:"Am-241", color:"#ff6ec0", lines:[59.5]},
  {id:"na22",  name:"Na-22",  color:"#6ea8ff", lines:[511.0,1274.5]},
  {id:"i131",  name:"I-131",  color:"#5fe7c3", lines:[364.5]},
