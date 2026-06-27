@@ -1,13 +1,17 @@
 /* demo-shim.js — replays a real AtomSpectra ".aswf" capture into the firmware's
  * own Web UI by mocking window.fetch and window.WebSocket. No board required.
  * Data: demo/meta.json + demo/data.bin.gz (gzipped uint16 LE rows, real counts).
- * The firmware HTML pages are byte-for-byte copies; only this shim is injected. */
+ * The firmware HTML pages are byte-for-byte copies; only this shim is injected.
+ *
+ * #DEMO-2: the capture is FINISHED — we show the real final integrated spectrum
+ * (static sum of all rows) and the real final spectrogram (all backfilled rows).
+ * No accumulation animation, no looping live stream. */
 (function () {
   "use strict";
   var realFetch = window.fetch ? window.fetch.bind(window) : null;
   var RealWS = window.WebSocket;
 
-  var META = null, ROWS = null, CH = 8192, IVS = 70, NROWS = 0, CAL = [];
+  var META = null, ROWS = null, CH = 8192, IVS = 30, NROWS = 0, CAL = [];
   var startMs = (window.performance && performance.now) ? performance.now() : 0;
   var resolveReady;
   var ready = new Promise(function (r) { resolveReady = r; });
@@ -23,7 +27,7 @@
   async function load() {
     META = await (await realFetch("meta.json")).json();
     CH = META.channels || 8192;
-    IVS = META.integration_sec || META.interval_sec || 70;
+    IVS = META.integration_sec || META.interval_sec || 30;
     CAL = META.calibration || [];
     NROWS = META.rows || 0;
     var ab = await (await realFetch("data.bin.gz")).arrayBuffer();
@@ -37,26 +41,25 @@
 
   function row(i) { return ROWS.subarray(i * CH, (i + 1) * CH); }
 
-  /* ---- integrated spectrum: fills up over polls, then holds (looks live) ---- */
-  var acc = null, accDone = 0, specPtr = 64, lastSpectrum = null;
+  /* ---- integrated spectrum: REAL FINAL = static sum of ALL rows (computed once) ---- */
+  var SPEC = null, lastSpectrum = null;
   function spectrumJSON() {
-    if (!acc) { acc = new Float64Array(CH); accDone = 0; }
-    var target = Math.min(specPtr, NROWS);
-    for (; accDone < target; accDone++) {
-      var r = row(accDone);
-      for (var c = 0; c < CH; c++) acc[c] += r[c];
+    if (!SPEC) {
+      var acc = new Float64Array(CH);
+      for (var i = 0; i < NROWS; i++) {
+        var r = row(i);
+        for (var c = 0; c < CH; c++) acc[c] += r[c];
+      }
+      var bins = new Array(CH), total = 0;
+      for (var c2 = 0; c2 < CH; c2++) { bins[c2] = acc[c2]; total += acc[c2]; }
+      var time = NROWS * IVS;
+      SPEC = {
+        calib: CAL, serial: "", bins: bins, total: total, time: time,
+        cps: Math.round(total / Math.max(1, time)), cpu: 12, lost: 0, t1: 24, t2: 25, t3: 25
+      };
     }
-    var bins = new Array(CH), total = 0;
-    for (var c2 = 0; c2 < CH; c2++) { bins[c2] = acc[c2]; total += acc[c2]; }
-    var last = 0;
-    if (accDone > 0) { var lr = row(accDone - 1); for (var c3 = 0; c3 < CH; c3++) last += lr[c3]; }
-    if (specPtr < NROWS) specPtr = Math.min(NROWS, specPtr + 16);
-    var o = {
-      calib: CAL, serial: "", bins: bins, total: total, time: accDone * IVS,
-      cps: Math.round(last / IVS), cpu: 12, lost: 0, t1: 24, t2: 25, t3: 25
-    };
-    lastSpectrum = o;
-    return o;
+    lastSpectrum = SPEC;
+    return SPEC;
   }
 
   function uptimeSec() {
@@ -79,10 +82,11 @@
       calibration: CAL, calib_order: Math.max(0, CAL.length - 1)
     };
   }
+  /* capture finished: recording=false, full rectime, all rows in ring */
   function wfStatusJSON() {
     return {
-      recording: true, interval_sec: IVS, started_at: 0, persist: false,
-      total_rows: NROWS, ring_count: NROWS, ring_capacity: NROWS,
+      recording: false, interval_sec: IVS, started_at: 0, persist: false,
+      total_rows: NROWS, ring_count: NROWS, ring_capacity: Math.max(NROWS, 2048),
       flash_rows: 0, flash_full: false
     };
   }
@@ -116,8 +120,8 @@
     if (path === "/api/waterfall/window") return binResp(windowBuffer());
     if (path === "/api/save") return jsonResp({ ok: true, index: 1 });
     if (method === "POST") return jsonResp({ ok: true });
-    if (/^\/api\/saved\/\d+\/spectrum\.json$/.test(path) && lastSpectrum)
-      return jsonResp({ bins: lastSpectrum.bins });
+    if (/^\/api\/saved\/\d+\/spectrum\.json$/.test(path))
+      return jsonResp({ bins: spectrumJSON().bins });
     return jsonResp({ ok: true });
   }
 
@@ -128,7 +132,10 @@
     return realFetch(input, init);
   };
 
-  /* ---- mock WebSocket /ws/waterfall: header JSON, then looping binary rows ---- */
+  /* ---- mock WebSocket /ws/waterfall: header ONLY (real final, no live stream) ----
+   * backfill (/api/waterfall/window) already delivered every row of the finished
+   * spectrogram; sending the header lets calib/interval load without simulating
+   * an ongoing accumulation. No binary row frames => rows[] stays the real final. */
   function MockWS(url) {
     this.url = url; this.readyState = 0; this.binaryType = "blob";
     this.onopen = this.onmessage = this.onclose = this.onerror = null;
@@ -137,19 +144,11 @@
       self.readyState = 1;
       if (self.onopen) self.onopen({});
       if (self.onmessage) self.onmessage({ data: JSON.stringify({ channels: CH, interval_sec: IVS, calibration: CAL, serial: "" }) });
-      var i = 0;
-      self._timer = setInterval(function () {
-        if (self.readyState !== 1) { clearInterval(self._timer); return; }
-        var r = row(i % NROWS);
-        if (self.onmessage) self.onmessage({ data: r.slice().buffer });
-        i++;
-      }, 400);
     });
   }
   MockWS.prototype.send = function () { };
   MockWS.prototype.close = function () {
     this.readyState = 3;
-    if (this._timer) clearInterval(this._timer);
     if (this.onclose) this.onclose({});
   };
   window.WebSocket = function (url, proto) {

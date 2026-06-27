@@ -539,7 +539,9 @@ var NUCLIDES=[
 ];
 var nucShow=(function(){
  try{var raw=localStorage.getItem("aswf-nuc");if(raw){var o=JSON.parse(raw);if(o&&typeof o==="object")return o;}}catch(e){}
- return {};
+ /* #DEMO-4: показываем основные опорные линии сразу (а не пустой оверлей),
+    чтобы пики были подписаны «из коробки». Пользователь может снять любые. */
+ return {k40:true,cs137:true,co60:true};
 })();
 function nucSave(){try{localStorage.setItem("aswf-nuc",JSON.stringify(nucShow));}catch(e){}}
 function setNuc(id,v){nucShow[id]=!!v;nucSave();if(lastD)draw(lastD);}

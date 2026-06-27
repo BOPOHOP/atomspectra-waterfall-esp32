@@ -20,7 +20,7 @@ import sys, os, json, gzip, struct
 import numpy as np
 
 DEFAULT_SRC = r"waterfall_capture.aswf"  # local .aswf capture (operator PC); pass an explicit path as argv[1]
-ROW_GROUP = 7  # sum N consecutive rows -> one demo row
+ROW_GROUP = 3  # sum N consecutive rows -> one demo row (1120 rows: > waterfall viewport, scrollbar is meaningful)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUTDIR = os.path.join(os.path.dirname(HERE), "demo")

@@ -52,6 +52,10 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 #wf{ display:block; background:#000; cursor:crosshair; width:100%; height:auto; max-width:100%; image-rendering:pixelated; image-rendering:crisp-edges; }
 #cur{ position:absolute; left:0; top:0; pointer-events:none; width:100%; height:100%; }
 #hud{ position:absolute; right:8px; top:8px; background:rgba(8,10,8,.7); padding:6px 10px; font-size:11px; color:#aeb6a8; white-space:pre; border:1px solid #283024; border-radius:6px; line-height:1.5; }
+#wf-row{ display:flex; gap:8px; align-items:stretch; }
+#wf-row #wrap-wf{ flex:1 1 auto; min-width:0; }
+#wf-scroll{ writing-mode:vertical-lr; -webkit-appearance:slider-vertical; width:16px; flex:0 0 16px; height:auto; margin:0; cursor:pointer; accent-color:var(--accent); background:#10140f; border:1px solid var(--bd); border-radius:8px; }
+#wf-scroll:disabled{ opacity:.35; cursor:default; }
 #log{ box-sizing:border-box; width:100%; height:120px; overflow:auto; background:#0b0e0a; border:1px solid #1b211a; border-radius:8px; padding:10px 12px; font-size:11px; white-space:pre-wrap; color:#7c887c; line-height:1.5; }
 .seg{ display:flex; border:1px solid #2a322a; border-radius:7px; overflow:hidden; }
 .seg button{ padding:6px 11px; font-size:11.5px; cursor:pointer; border:none; background:transparent; color:#9aa496; }
@@ -78,7 +82,6 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 </head>
 <body>
 <header>
-<script src="demo-shim.js"></script>
 <div class="brand"><span class="logo"><i></i><b></b></span>AtomSpectra <span style="color:var(--accent)">&nbsp;Gateway</span></div>
 <div class="chips"><span class="chip ok"><span class="dot"></span><span id="device-chip" data-i18n="device">Прибор</span></span><span class="chip" id="ip-chip">—</span><button id="langBtn" class="chip" style="cursor:pointer;background:#161b14;border:1px solid #283024;color:#aeb6a8;font-weight:600;padding:3px 8px;font-size:10.5px;line-height:1.2;min-width:28px;text-align:center" title="Switch language / Сменить язык">EN</button></div>
 </header>
@@ -130,10 +133,13 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 </section>
 
 <section class="panel pad">
+<div id="wf-row">
 <div id="wrap-wf">
 <canvas id="wf" width="900" height="520"></canvas>
 <canvas id="cur" width="900" height="520"></canvas>
 <div id="hud"></div>
+</div>
+<input id="wf-scroll" type="range" min="0" max="0" value="0" step="1" title="прокрутка истории спектрограммы / spectrogram history scroll" aria-label="spectrogram scroll">
 </div>
 </section>
 
@@ -418,6 +424,21 @@ function draw(){
  drawCursor();
  updHud(bottom,lastIdx);
  drawSlice();
+ syncScroll();
+}
+/* #DEMO-3/#DEMO-5: видимая полоса прокрутки истории спектрограммы.
+   value=0 → live (новейшая строка), value=max → самая старая строка. */
+function syncScroll(){
+ var sb=document.getElementById("wf-scroll");
+ if(!sb)return;
+ var lastIdx=baseIndex+rows.length-1;
+ var mx=Math.max(0,lastIdx-(WFH-1));
+ if(parseInt(sb.max)!==mx)sb.max=mx;
+ sb.disabled=(mx<=0);
+ if(document.activeElement===sb)return;
+ var bottom=(viewBottom<0)?lastIdx:viewBottom;
+ var v=lastIdx-bottom; if(v<0)v=0; if(v>mx)v=mx;
+ if(parseInt(sb.value)!==v)sb.value=v;
 }
 
 function drawCursor(){
@@ -922,6 +943,14 @@ wf.addEventListener("wheel",function(e){
  var lb=document.getElementById("langBtn");
  if(lb)lb.onclick=function(){setLang(LANG==="ru"?"en":"ru");};
  document.getElementById("ip-chip").textContent=location.hostname;
+ var sb=document.getElementById("wf-scroll");
+ if(sb)sb.addEventListener("input",function(){
+  var lastIdx=baseIndex+rows.length-1;
+  var v=parseInt(sb.value)||0;
+  if(v<=0){viewBottom=-1;}
+  else{var bottom=lastIdx-v;var lo=baseIndex+WFH-1;if(bottom<lo)bottom=lo;viewBottom=bottom;}
+  draw();
+ });
  var savedPal="Inferno";
  try{var lp=localStorage.getItem("aswf-pal");if(lp&&PALETTES[lp])savedPal=lp;}catch(e){}
  applyPalette(savedPal);
@@ -966,6 +995,7 @@ window.openZoomOverlay=function(sourcesFn,opts){
  /* #UI-19: живой маркер курсора в оверлее */
  var mouse={x:0,y:0,inside:false};
  var cmap=null;
+ var vcy=0; /* #DEMO-5: вертикальный центр области спектрограммы (без полосы среза) */
  function resize(){W=ov.clientWidth;H=ov.clientHeight;var dpr=window.devicePixelRatio||1;cv.style.width=W+"px";cv.style.height=H+"px";cv.width=Math.floor(W*dpr);cv.height=Math.floor(H*dpr);}
  resize();window.addEventListener("resize",resize);
  function render(){
@@ -977,40 +1007,45 @@ window.openZoomOverlay=function(sourcesFn,opts){
   cmap=null;
   var pclip=null; /* #UI-22: экранные границы панели по вертикали (для обрезки курсора) */
   if(srcs&&srcs.length){
-   /* #UI-20: все источники одной display-шириной Wd → выровнены по оси каналов.
-      Высота каждого по собственному аспекту; supersample (#UI-18) сохраняется (downscale=чётко). */
-   var ratios=srcs.map(function(s){return s.canvas.height/s.canvas.width;});
-   var sumR=ratios.reduce(function(a,b){return a+b;},0);
-   /* #UI-23: fill — растягиваем на весь вьюпорт по ширине и высоте (аспект не сохраняем).
-      hScale делит totH между источниками пропорционально их аспектам. */
-   var Wd=0.98*W;
-   var totH=0.96*H;
-   var hScale=totH/sumR;
-   var ox=(W-Wd)/2,oy0=(H-totH)/2;
-   /* #UI-24: контент закреплён — pan не выпускает панель за края; на fit-зуме строго по центру. */
+   /* #DEMO-5: zoom/pan действуют ТОЛЬКО на спектрограмму (src[0]).
+      Срез (src[1]) — фиксированная полоса снизу, не масштабируется и не двигается:
+      колесо увеличивает спектрограмму, перетаскивание (ЛКМ/ПКМ) навигирует по ней. */
+   var spg=srcs[0].canvas;
+   var slc=srcs[1]?srcs[1].canvas:null;
+   var Wd=0.98*W, ox=(W-Wd)/2;
+   var slcH=slc?Math.min(0.24*H, Wd*(slc.height/slc.width)):0;
+   var gap=slc?10:0;
+   var regionH=H-slcH-gap;          /* область спектрограммы: y∈[0..regionH] */
+   vcy=regionH/2;                   /* центр зума/пана — центр области спектрограммы */
+   var totH=0.98*regionH;           /* fill области по высоте (как и было — без сохранения аспекта) */
+   var oy0=(regionH-totH)/2;
+   /* #UI-24/#DEMO-5: pan не выпускает спектрограмму за края её области; на fit-зуме по центру. */
    var L0=(ox-W/2)*zoom+W/2, R0=(ox+Wd-W/2)*zoom+W/2;
    if(Wd*zoom>=W) panX=Math.min(-L0,Math.max(W-R0,panX)); else panX=(W-Wd*zoom)/2-L0;
-   var T0=(oy0-H/2)*zoom+H/2, B0=(oy0+totH-H/2)*zoom+H/2;
-   if(totH*zoom>=H) panY=Math.min(-T0,Math.max(H-B0,panY)); else panY=(H-totH*zoom)/2-T0;
-   /* #UI-22/#UI-26: экранные границы панели по обеим осям через pan/zoom */
+   var T0=(oy0-vcy)*zoom+vcy, B0=(oy0+totH-vcy)*zoom+vcy;
+   if(totH*zoom>=regionH) panY=Math.min(-T0,Math.max(regionH-B0,panY)); else panY=(regionH-totH*zoom)/2-T0;
+   /* #UI-22/#UI-26: экранные границы спектрограммы по обеим осям */
    pclip={top:T0+panY, bot:B0+panY, left:L0+panX, right:R0+panX};
-   /* #UI-21: курсор над источником-0 (водопадом) → доля fx/fy строки/канала наружу.
-      Инвертируем pan/zoom; обновляем срез именно строки под курсором (до отрисовки slc). */
+   /* #UI-21: курсор над спектрограммой → доля fx/fy строки/канала наружу (инверсия zoom/pan по vcy). */
    if(opts.onCursor&&mouse.inside){
-    var Txp=(mouse.x-W/2-panX)/zoom+W/2, Typ=(mouse.y-H/2-panY)/zoom+H/2;
-    var fx=(Txp-ox)/Wd, fy=(Typ-oy0)/(ratios[0]*hScale);
+    var Txp=(mouse.x-W/2-panX)/zoom+W/2, Typ=(mouse.y-vcy-panY)/zoom+vcy;
+    var fx=(Txp-ox)/Wd, fy=(Typ-oy0)/totH;
     if(fx>=0&&fx<=1&&fy>=0&&fy<=1)opts.onCursor(fx,fy);
    }
+   /* спектрограмма — с zoom/pan вокруг vcy */
    ctx.setTransform(dpr,0,0,dpr,0,0);
    ctx.imageSmoothingEnabled=false; /* #UI-28: без интерполяции — чётко, без размытия */
-   ctx.translate(W/2+panX,H/2+panY);ctx.scale(zoom,zoom);ctx.translate(-W/2,-H/2);
-   var dy=oy0;
-   srcs.forEach(function(s,i){
-    var h=ratios[i]*hScale; /* #UI-23: fill totH (консистентно с pclip/onCursor/#UI-24) */
-    ctx.drawImage(s.canvas,ox,dy,Wd,h);
-    if(i===0)cmap={x0:ox,w:Wd,y0:dy,h:h}; /* #UI-29: + вертикаль панели для fracY */
-    dy+=h;
-   });
+   ctx.save();
+   ctx.translate(W/2+panX,vcy+panY);ctx.scale(zoom,zoom);ctx.translate(-W/2,-vcy);
+   ctx.drawImage(spg,ox,oy0,Wd,totH);
+   ctx.restore();
+   cmap={x0:ox,w:Wd,y0:oy0,h:totH}; /* #UI-29: рамка спектрограммы для fracX/fracY */
+   /* срез — фиксированная полоса снизу (без zoom/pan) */
+   if(slc){
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.imageSmoothingEnabled=false;
+    ctx.drawImage(slc,ox,regionH+gap,Wd,slcH);
+   }
   }
   /* #UI-19/#UI-12: вертикальный маркер курсора (screen-space CSS px) + readout */
   if(mouse.inside){
@@ -1025,7 +1060,7 @@ window.openZoomOverlay=function(sourcesFn,opts){
    ctx.setLineDash([]);
    if(opts.readout&&cmap){
     /* #UI-29: значения (cps/E/время) у перекрестья — multi-line бокс рядом с курсором */
-    var Tx=(mouse.x-W/2-panX)/zoom+W/2, Ty=(mouse.y-H/2-panY)/zoom+H/2;
+    var Tx=(mouse.x-W/2-panX)/zoom+W/2, Ty=(mouse.y-vcy-panY)/zoom+vcy;
     var fracX=(Tx-cmap.x0)/cmap.w, fracY=(Ty-cmap.y0)/cmap.h;
     var lbl=(fracX>=0&&fracX<=1)?opts.readout(fracX,fracY):null;
     if(lbl){
@@ -1055,7 +1090,7 @@ window.openZoomOverlay=function(sourcesFn,opts){
  cv.addEventListener("wheel",function(e){
   e.preventDefault();
   var rect=cv.getBoundingClientRect();
-  var cx=e.clientX-rect.left-W/2,cy=e.clientY-rect.top-H/2;
+  var cx=e.clientX-rect.left-W/2,cy=e.clientY-rect.top-vcy; /* #DEMO-5: зум вокруг центра спектрограммы */
   var f=e.deltaY<0?1.15:1/1.15;
   var nz=Math.max(1,Math.min(60,zoom*f)); /* #UI-25: не меньше fit (вписанного окна) */
   panX=cx-(cx-panX)*nz/zoom;panY=cy-(cy-panY)*nz/zoom;zoom=nz;
@@ -1064,6 +1099,7 @@ window.openZoomOverlay=function(sourcesFn,opts){
  cv.addEventListener("pointerdown",function(e){if(e.pointerType==="touch")return;try{cv.setPointerCapture(e.pointerId);}catch(_){}drag={x:e.clientX,y:e.clientY,px:panX,py:panY};ov.classList.add("dragging");});
  cv.addEventListener("pointermove",function(e){if(!drag)return;panX=drag.px+(e.clientX-drag.x);panY=drag.py+(e.clientY-drag.y);});
  cv.addEventListener("pointerup",function(e){drag=null;ov.classList.remove("dragging");try{cv.releasePointerCapture(e.pointerId);}catch(_){}});
+ cv.addEventListener("contextmenu",function(e){e.preventDefault();}); /* #DEMO-5: ПКМ — навигация по спектрограмме, без меню браузера */
  var pinch=null,tdrag=null;
  cv.addEventListener("touchstart",function(e){
   if(e.touches.length===2){
@@ -1084,7 +1120,7 @@ window.openZoomOverlay=function(sourcesFn,opts){
    var f=d/Math.max(1,pinch.d);
    var nz=Math.max(1,Math.min(60,pinch.zoom*f)); /* #UI-25: не меньше fit */
    var rect=cv.getBoundingClientRect();
-   var cx=pinch.cx-rect.left-W/2,cy=pinch.cy-rect.top-H/2;
+   var cx=pinch.cx-rect.left-W/2,cy=pinch.cy-rect.top-vcy; /* #DEMO-5 */
    panX=cx-(cx-pinch.panX)*nz/pinch.zoom;panY=cy-(cy-pinch.panY)*nz/pinch.zoom;zoom=nz;
   }else if(e.touches.length===1&&tdrag){
    e.preventDefault();

@@ -2,9 +2,9 @@
  "format": "atomspectra-waterfall-demo",
  "channels": 8192,
  "interval_sec": 10,
- "row_group": 7,
- "integration_sec": 70,
- "rows": 480,
+ "row_group": 3,
+ "integration_sec": 30,
+ "rows": 1120,
  "calibration": [
   3.52287433185117,
   0.383773900647254,
@@ -13,5 +13,5 @@
   5.67558675724181e-13
  ],
  "source": "real AtomSpectra measurement, browser /waterfall WS stream -> .aswf",
- "note": "Rows summed in groups of 7 (70 s integration each) and gzip-packed. Channel counts are the real measured values; no IP/MAC/credentials."
+ "note": "Rows summed in groups of 3 (30 s integration each) and gzip-packed. Channel counts are the real measured values; no IP/MAC/credentials."
 }

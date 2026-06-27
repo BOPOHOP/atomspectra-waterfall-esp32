@@ -14,8 +14,11 @@ foreach ($p in $pages) {
   $src = Join-Path $web $p
   $dst = Join-Path $demo $p
   $html = [System.IO.File]::ReadAllText($src, $enc)
-  # 1) inject shim as the first thing in <head> (runs before page scripts)
-  $html = [regex]::Replace($html, "<head([^>]*)>", '<head$1>' + "`n" + '<script src="demo-shim.js"></script>', 1)
+  # 1) inject shim as the first thing in <head> (runs before page scripts).
+  #    NB: pattern anchors on `>` or whitespace after "head" so it does NOT
+  #    also match <header> (which would double-inject and double-run the shim).
+  $rx = New-Object System.Text.RegularExpressions.Regex '<head(\s[^>]*)?>'
+  $html = $rx.Replace($html, '$0' + "`n" + '<script src="demo-shim.js"></script>', 1)
   # 2) rewrite absolute nav links to demo-relative files
   $html = $html.Replace('href="/"',          'href="index.html"')
   $html = $html.Replace('href="/waterfall"', 'href="waterfall.html"')

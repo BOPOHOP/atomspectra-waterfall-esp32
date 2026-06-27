@@ -65,7 +65,6 @@ table.saved tr.on td{ background:rgba(110,168,255,.07); }
 </head>
 <body>
 <header>
-<script src="demo-shim.js"></script>
 <div class="brand"><span class="logo"><i></i><b></b></span>AtomSpectra <span style="color:var(--accent)">&nbsp;Gateway</span></div>
 <div class="chips">
 <span class="chip ok"><span class="dot"></span><span id="device-chip" data-i18n="device">Прибор</span></span>
@@ -541,7 +540,9 @@ var NUCLIDES=[
 ];
 var nucShow=(function(){
  try{var raw=localStorage.getItem("aswf-nuc");if(raw){var o=JSON.parse(raw);if(o&&typeof o==="object")return o;}}catch(e){}
- return {};
+ /* #DEMO-4: показываем основные опорные линии сразу (а не пустой оверлей),
+    чтобы пики были подписаны «из коробки». Пользователь может снять любые. */
+ return {k40:true,cs137:true,co60:true};
 })();
 function nucSave(){try{localStorage.setItem("aswf-nuc",JSON.stringify(nucShow));}catch(e){}}
 function setNuc(id,v){nucShow[id]=!!v;nucSave();if(lastD)draw(lastD);}
