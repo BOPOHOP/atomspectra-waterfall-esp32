@@ -1,0 +1,202 @@
+/* demo-shim.js — replays a real AtomSpectra ".aswf" capture into the firmware's
+ * own Web UI by mocking window.fetch and window.WebSocket. No board required.
+ * Data: demo/meta.json + demo/data.bin.gz (gzipped uint16 LE rows, real counts).
+ * The firmware HTML pages are byte-for-byte copies; only this shim is injected. */
+(function () {
+  "use strict";
+  var realFetch = window.fetch ? window.fetch.bind(window) : null;
+  var RealWS = window.WebSocket;
+
+  var META = null, ROWS = null, CH = 8192, IVS = 70, NROWS = 0, CAL = [];
+  var startMs = (window.performance && performance.now) ? performance.now() : 0;
+  var resolveReady;
+  var ready = new Promise(function (r) { resolveReady = r; });
+
+  async function gunzip(buf) {
+    if (typeof DecompressionStream === "undefined")
+      throw new Error("DecompressionStream unsupported (need Chrome 80+/FF113+/Safari16.4+)");
+    var ds = new DecompressionStream("gzip");
+    var stream = new Response(buf).body.pipeThrough(ds);
+    return await new Response(stream).arrayBuffer();
+  }
+
+  async function load() {
+    META = await (await realFetch("meta.json")).json();
+    CH = META.channels || 8192;
+    IVS = META.integration_sec || META.interval_sec || 70;
+    CAL = META.calibration || [];
+    NROWS = META.rows || 0;
+    var ab = await (await realFetch("data.bin.gz")).arrayBuffer();
+    var sig = new Uint8Array(ab.slice(0, 2));
+    var raw = (sig[0] === 0x1f && sig[1] === 0x8b) ? await gunzip(ab) : ab;
+    ROWS = new Uint16Array(raw);
+    if (!NROWS) NROWS = Math.floor(ROWS.length / CH);
+    resolveReady();
+  }
+  load();
+
+  function row(i) { return ROWS.subarray(i * CH, (i + 1) * CH); }
+
+  /* ---- integrated spectrum: fills up over polls, then holds (looks live) ---- */
+  var acc = null, accDone = 0, specPtr = 64, lastSpectrum = null;
+  function spectrumJSON() {
+    if (!acc) { acc = new Float64Array(CH); accDone = 0; }
+    var target = Math.min(specPtr, NROWS);
+    for (; accDone < target; accDone++) {
+      var r = row(accDone);
+      for (var c = 0; c < CH; c++) acc[c] += r[c];
+    }
+    var bins = new Array(CH), total = 0;
+    for (var c2 = 0; c2 < CH; c2++) { bins[c2] = acc[c2]; total += acc[c2]; }
+    var last = 0;
+    if (accDone > 0) { var lr = row(accDone - 1); for (var c3 = 0; c3 < CH; c3++) last += lr[c3]; }
+    if (specPtr < NROWS) specPtr = Math.min(NROWS, specPtr + 16);
+    var o = {
+      calib: CAL, serial: "", bins: bins, total: total, time: accDone * IVS,
+      cps: Math.round(last / IVS), cpu: 12, lost: 0, t1: 24, t2: 25, t3: 25
+    };
+    lastSpectrum = o;
+    return o;
+  }
+
+  function uptimeSec() {
+    var now = (window.performance && performance.now) ? performance.now() : startMs;
+    return Math.floor((now - startMs) / 1000) + 137;
+  }
+  function systemJSON() {
+    var ft = 12582912, fu = 2516582;
+    return {
+      free_heap: 207360, min_free_heap: 178200, uptime_sec: uptimeSec(),
+      flash_total: ft, flash_used: fu,
+      wifi_connected: true, ssid: "AtomSpectra-Demo", rssi: -58,
+      usb_connected: true, tcp_client: false
+    };
+  }
+  function deviceJSON() {
+    return {
+      valid: true, version: "demo", mode: 0, tc_on: false,
+      t1: 24, t2: 25, t3: 25, serial: "",
+      calibration: CAL, calib_order: Math.max(0, CAL.length - 1)
+    };
+  }
+  function wfStatusJSON() {
+    return {
+      recording: true, interval_sec: IVS, started_at: 0, persist: false,
+      total_rows: NROWS, ring_count: NROWS, ring_capacity: NROWS,
+      flash_rows: 0, flash_full: false
+    };
+  }
+  /* backfill window: "ASWW" + ch + nr + first + interval + all rows (uint16 LE) */
+  function windowBuffer() {
+    var nr = NROWS, base = 20;
+    var buf = new ArrayBuffer(base + nr * CH * 2);
+    var dv = new DataView(buf);
+    dv.setUint8(0, 0x41); dv.setUint8(1, 0x53); dv.setUint8(2, 0x57); dv.setUint8(3, 0x57);
+    dv.setUint32(4, CH, true); dv.setUint32(8, nr, true);
+    dv.setUint32(12, 0, true); dv.setUint32(16, IVS, true);
+    new Uint16Array(buf, base).set(ROWS.subarray(0, nr * CH));
+    return buf;
+  }
+
+  function jsonResp(o) {
+    return new Response(JSON.stringify(o), { status: 200, headers: { "Content-Type": "application/json" } });
+  }
+  function binResp(b) {
+    return new Response(b, { status: 200, headers: { "Content-Type": "application/octet-stream" } });
+  }
+
+  function route(path, init) {
+    var method = (init && init.method) ? init.method.toUpperCase() : "GET";
+    if (path === "/api/csrf-token") return jsonResp({ token: "demo" });
+    if (path === "/api/spectrum.json") return jsonResp(spectrumJSON());
+    if (path === "/api/system") return jsonResp(systemJSON());
+    if (path === "/api/device") return jsonResp(deviceJSON());
+    if (path === "/api/list") return jsonResp({ spectra: [] });
+    if (path === "/api/waterfall/status") return jsonResp(wfStatusJSON());
+    if (path === "/api/waterfall/window") return binResp(windowBuffer());
+    if (path === "/api/save") return jsonResp({ ok: true, index: 1 });
+    if (method === "POST") return jsonResp({ ok: true });
+    if (/^\/api\/saved\/\d+\/spectrum\.json$/.test(path) && lastSpectrum)
+      return jsonResp({ bins: lastSpectrum.bins });
+    return jsonResp({ ok: true });
+  }
+
+  window.fetch = async function (input, init) {
+    var url = (typeof input === "string") ? input : (input && input.url) || "";
+    var path = url.replace(/^https?:\/\/[^/]+/, "");
+    if (path.indexOf("/api/") === 0) { await ready; return route(path, init); }
+    return realFetch(input, init);
+  };
+
+  /* ---- mock WebSocket /ws/waterfall: header JSON, then looping binary rows ---- */
+  function MockWS(url) {
+    this.url = url; this.readyState = 0; this.binaryType = "blob";
+    this.onopen = this.onmessage = this.onclose = this.onerror = null;
+    var self = this;
+    ready.then(function () {
+      self.readyState = 1;
+      if (self.onopen) self.onopen({});
+      if (self.onmessage) self.onmessage({ data: JSON.stringify({ channels: CH, interval_sec: IVS, calibration: CAL, serial: "" }) });
+      var i = 0;
+      self._timer = setInterval(function () {
+        if (self.readyState !== 1) { clearInterval(self._timer); return; }
+        var r = row(i % NROWS);
+        if (self.onmessage) self.onmessage({ data: r.slice().buffer });
+        i++;
+      }, 400);
+    });
+  }
+  MockWS.prototype.send = function () { };
+  MockWS.prototype.close = function () {
+    this.readyState = 3;
+    if (this._timer) clearInterval(this._timer);
+    if (this.onclose) this.onclose({});
+  };
+  window.WebSocket = function (url, proto) {
+    if (typeof url === "string" && url.indexOf("/ws/waterfall") >= 0) return new MockWS(url);
+    return new RealWS(url, proto);
+  };
+  window.WebSocket.OPEN = 1; window.WebSocket.CLOSED = 3;
+
+  /* ---- make Export buttons actually work (generate from real spectrum) ---- */
+  function curSpectrum() { return lastSpectrum || spectrumJSON(); }
+  function dl(name, text, mime) {
+    var b = new Blob([text], { type: mime || "text/plain" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(b); a.download = name;
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+  function exportCSV() {
+    var s = curSpectrum(), out = "channel,counts\n";
+    for (var i = 0; i < s.bins.length; i++) out += i + "," + s.bins[i] + "\n";
+    dl("atomspectra-demo.csv", out, "text/csv");
+  }
+  function exportXML() {
+    var s = curSpectrum();
+    var data = s.bins.join(" ");
+    var cal = (s.calib || []).join(" ");
+    var xml = '<?xml version="1.0"?>\n<ResultDataFile><FormatVersion>120920</FormatVersion>' +
+      '<ResultData><EnergySpectrum><NumberOfChannels>' + s.bins.length + '</NumberOfChannels>' +
+      '<MeasurementTime>' + s.time + '</MeasurementTime>' +
+      '<EnergyCalibration><Coefficients>' + cal + '</Coefficients></EnergyCalibration>' +
+      '<Spectrum>' + data + '</Spectrum></EnergySpectrum></ResultData></ResultDataFile>\n';
+    dl("atomspectra-demo.xml", xml, "application/xml");
+  }
+  function exportN42() {
+    var s = curSpectrum();
+    dl("atomspectra-demo.n42",
+      "AtomSpectra demo export (real .aswf data)\nChannels: " + s.bins.length +
+      "\nLiveTime(s): " + s.time + "\n" + s.bins.join(" ") + "\n", "text/plain");
+  }
+  document.addEventListener("DOMContentLoaded", function () {
+    try {
+      document.querySelectorAll("[onclick]").forEach(function (el) {
+        var oc = el.getAttribute("onclick") || "";
+        if (oc.indexOf("/api/export.csv") >= 0) el.onclick = function (e) { e.preventDefault(); exportCSV(); return false; };
+        else if (oc.indexOf("/api/export.xml") >= 0) el.onclick = function (e) { e.preventDefault(); exportXML(); return false; };
+        else if (oc.indexOf("export.n42") >= 0) el.onclick = function (e) { e.preventDefault(); exportN42(); return false; };
+      });
+    } catch (e) { }
+  });
+})();
