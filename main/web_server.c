@@ -313,14 +313,15 @@ static esp_err_t handle_list(httpd_req_t *req)
     return ESP_OK;
 }
 
-static esp_err_t handle_index(httpd_req_t *req)
-{
-    extern const uint8_t index_html_start[] asm("_binary_index_html_start");
-    extern const uint8_t index_html_end[]   asm("_binary_index_html_end");
-    httpd_resp_set_type(req, "text/html");
-    httpd_resp_send(req, (const char *)index_html_start, index_html_end - index_html_start);
-    return ESP_OK;
-}
+#define EMBED_HTML_HANDLER(fn,sym) static esp_err_t fn(httpd_req_t *req){ \
+    extern const uint8_t sym##_start[] asm("_binary_" #sym "_start"); \
+    extern const uint8_t sym##_end[]   asm("_binary_" #sym "_end"); \
+    httpd_resp_set_type(req,"text/html"); \
+    httpd_resp_send(req,(const char *)sym##_start, sym##_end - sym##_start); \
+    return ESP_OK; }
+EMBED_HTML_HANDLER(handle_index,        index_html)
+EMBED_HTML_HANDLER(handle_saved_page,   saved_html)
+EMBED_HTML_HANDLER(handle_system_page,  system_html)
 
 static esp_err_t render_spectrum_xml(httpd_req_t *req, const spectrum_data_t *sp, const char *filename)
 {
@@ -866,6 +867,8 @@ void web_server_init(void)
         {"/api/reboot-esp",              HTTP_POST, handle_reboot_esp,       NULL},
         {"/api/calibration",             HTTP_POST, handle_set_calibration,  NULL},
         {"/healthcheck",                 HTTP_GET,  handle_healthcheck,      NULL},
+        {"/saved",                       HTTP_GET,  handle_saved_page,       NULL},
+        {"/system",                      HTTP_GET,  handle_system_page,      NULL},
         {"/",                            HTTP_GET,  handle_index,            NULL},
     };
 

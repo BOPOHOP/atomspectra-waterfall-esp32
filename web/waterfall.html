@@ -3,566 +3,653 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AtomSpectra — Водопад</title>
+<title>AtomSpectra · Водопад</title>
 <style>
-body{font-family:monospace;background:#111;color:#0f0;margin:0;padding:10px}
-h1{font-size:16px;margin:0 0 8px}
-a{color:#3cf}
-.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}
-.bar>*{flex:none}
-button{background:#222;color:#0f0;border:1px solid #0f0;padding:4px 8px;cursor:pointer;font-family:monospace}
-button:hover{background:#0f0;color:#111}
-button:disabled{opacity:.4;cursor:default}
-button:disabled:hover{background:#222;color:#0f0}
-input,select{background:#000;color:#0f0;border:1px solid #0a0;padding:3px;font-family:monospace}
-input[type=number]{width:64px}
-label{user-select:none}
-#wrap{position:relative;display:inline-block;border:1px solid #0a0}
-#wf{display:block;background:#000;cursor:crosshair}
-#cur{position:absolute;left:0;top:0;pointer-events:none}
-#hud{position:absolute;right:4px;top:4px;background:rgba(0,0,0,.6);padding:2px 6px;font-size:11px;color:#9f9;white-space:pre}
-.st{color:#9f9}
-.warn{color:#fc3}
-.err{color:#f55}
-#log{box-sizing:border-box;width:902px;max-width:100%;height:90px;overflow:auto;background:#000;border:1px solid #060;padding:4px;font-size:11px;white-space:pre-wrap;margin-top:8px}
-.sw{display:inline-block;width:140px;height:10px;vertical-align:middle;
-  background:linear-gradient(90deg,#000,#206,#a04,#f80,#ff0,#fff)}
-.ind{color:#9f9;display:inline-flex;align-items:center;gap:6px}
-.ind b{color:#0f0}
-#rectime{font-size:15px;letter-spacing:1px}
-.fb{display:inline-block;width:120px;height:12px;border:1px solid #0a0;background:#000;
-  vertical-align:middle;position:relative;overflow:hidden}
-.fi{display:block;height:100%;width:0;background:#0f0;transition:width .4s,background .4s}
-details.help{margin:2px 0 8px;font-size:12px;color:#9f9;max-width:900px}
-details.help summary{cursor:pointer;color:#3cf}
-details.help code{color:#ff0}
-details.help b{color:#0f0}
+:root{ --accent:#34d3c0; --accent-dim:rgba(52,211,192,.12); --bg:#0a0c0a; --panel:#11150f; --bd:#20281e; --dim:#8a9686; --txt:#cfd6cd; }
+*{ box-sizing:border-box; }
+html,body{ margin:0; padding:0; background:var(--bg); }
+body{ color:var(--txt); font-family:ui-monospace,'SF Mono','Cascadia Mono','DejaVu Sans Mono',Consolas,monospace; padding-bottom:28px; }
+a{ color:inherit; text-decoration:none; }
+button,input,select{ font-family:inherit; }
+.wrap{ max-width:1460px; margin:0 auto; padding:18px 22px 0; display:flex; flex-direction:column; gap:14px; }
+header{ display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 24px; border-bottom:1px solid #1c241c; }
+.brand{ display:flex; align-items:center; gap:13px; font-weight:700; font-size:16px; color:#e8efe2; }
+.logo{ width:34px; height:34px; border-radius:8px; background:#10140f; border:1px solid #283226; display:flex; align-items:center; justify-content:center; position:relative; }
+.logo i{ width:15px; height:15px; border-radius:50%; border:2px solid var(--accent); }
+.logo b{ position:absolute; width:5px; height:5px; border-radius:50%; background:var(--accent); box-shadow:0 0 8px var(--accent); }
+.chips{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+.chip{ background:#10140f; border:1px solid #243024; border-radius:999px; padding:6px 12px; font-size:11.5px; color:var(--dim); }
+.chip.ok{ color:#aeb6a8; display:flex; align-items:center; gap:7px; }
+.dot{ width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 7px var(--accent); }
+nav{ display:flex; align-items:center; gap:2px; padding:0 20px; border-bottom:1px solid #1c241c; overflow-x:auto; }
+nav a,nav span{ padding:12px 16px; font-size:13px; color:var(--dim); flex-shrink:0; white-space:nowrap; }
+nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); }
+.panel{ background:var(--panel); border:1px solid var(--bd); border-radius:10px; }
+.pad{ padding:13px 16px; }
+.row{ display:flex; align-items:center; gap:14px; padding:11px 16px; flex-wrap:wrap; }
+.row + .row{ border-top:1px solid #1b211a; }
+.grp{ display:flex; gap:8px; }
+.btn{ border-radius:8px; padding:8px 13px; font-size:12.5px; cursor:pointer; background:#161b14; border:1px solid #2a322a; color:var(--txt); }
+.btn.sm{ padding:7px 11px; font-size:12px; }
+.btn.green{ background:var(--accent-dim); border-color:rgba(52,211,192,.5); color:var(--accent); font-weight:600; }
+.btn.amber{ background:rgba(240,180,60,.08); border-color:rgba(240,180,60,.45); color:#f0c45a; }
+.btn.red{ background:rgba(240,90,80,.07); border-color:rgba(240,90,80,.45); color:#ff8a82; }
+.btn:hover:not(:disabled){ filter:brightness(1.2); }
+.btn:disabled{ opacity:.4; cursor:default; }
+.inp,.sel{ background:#0c0f0b; border:1px solid #283024; color:#e8efe2; padding:7px 10px; border-radius:7px; font-size:12px; outline:none; }
+.inp[type=number]{ width:74px; }
+.lbl{ font-size:11.5px; color:#6b756a; }
+.ml{ margin-left:auto; }
+.bar{ height:7px; border-radius:4px; background:#1b211a; overflow:hidden; min-width:120px; }
+.bar > i{ display:block; height:100%; border-radius:4px; transition:width .3s,background .3s; }
+.ind{ display:inline-flex; align-items:center; gap:8px; font-size:12px; color:#aeb6a8; }
+.ind b{ color:#e8efe2; font-weight:600; }
+#state{ font-size:12.5px; }
+.st{ color:#aeb6a8; } .warn{ color:#f0c45a; } .err{ color:#ff8a82; }
+#rectime{ font-size:14px; letter-spacing:1px; color:var(--accent); font-weight:600; }
+#wrap-wf{ position:relative; display:block; border:1px solid var(--bd); border-radius:8px; overflow:hidden; }
+#wf{ display:block; background:#000; cursor:crosshair; width:100%; height:auto; max-width:100%; }
+#cur{ position:absolute; left:0; top:0; pointer-events:none; width:100%; height:100%; }
+#hud{ position:absolute; right:8px; top:8px; background:rgba(8,10,8,.7); padding:6px 10px; font-size:11px; color:#aeb6a8; white-space:pre; border:1px solid #283024; border-radius:6px; line-height:1.5; }
+#log{ box-sizing:border-box; width:100%; height:120px; overflow:auto; background:#0b0e0a; border:1px solid #1b211a; border-radius:8px; padding:10px 12px; font-size:11px; white-space:pre-wrap; color:#7c887c; line-height:1.5; }
+.seg{ display:flex; border:1px solid #2a322a; border-radius:7px; overflow:hidden; }
+.seg button{ padding:6px 11px; font-size:11.5px; cursor:pointer; border:none; background:transparent; color:#9aa496; }
+.seg button.on{ background:var(--accent); color:#0c1206; font-weight:700; }
+.help{ font-size:11.5px; color:#7c887c; line-height:1.55; max-width:1100px; }
+.help summary{ cursor:pointer; color:var(--accent); padding:7px 0; }
+.help code{ color:#f0c45a; background:#0c0f0b; padding:1px 5px; border-radius:3px; font-size:11px; }
+.help b{ color:#aeb6a8; }
+.sw{ display:inline-block; width:130px; height:9px; vertical-align:middle; border-radius:3px; border:1px solid #283024; cursor:pointer; transition:transform .15s; }
+.sw:hover{ transform:scaleY(1.3); }
+.palmod{ position:fixed; inset:0; background:rgba(0,0,0,.78); z-index:100; display:none; align-items:center; justify-content:center; padding:20px; }
+.palmod.on{ display:flex; }
+.palmod .pal{ background:var(--panel); border:1px solid var(--bd); border-radius:12px; max-width:520px; width:100%; max-height:80vh; overflow:auto; }
+.palmod h3{ margin:0; padding:14px 18px; border-bottom:1px solid #1b211a; font-size:14px; color:#e8efe2; display:flex; justify-content:space-between; align-items:center; }
+.palmod h3 button{ background:none; border:none; color:#6b756a; font-size:22px; cursor:pointer; padding:0; }
+.palmod ul{ list-style:none; margin:0; padding:8px; }
+.palmod li{ display:flex; align-items:center; gap:14px; padding:10px 12px; border-radius:8px; cursor:pointer; }
+.palmod li:hover{ background:#161b14; }
+.palmod li.on{ background:var(--accent-dim); border:1px solid rgba(52,211,192,.4); }
+.palmod .swatch{ width:160px; height:14px; border-radius:4px; flex-shrink:0; }
+.palmod .nm{ font-size:13px; color:#cfd6cd; }
+.palmod .desc{ font-size:11px; color:#6b756a; margin-top:2px; }
 </style>
 </head>
 <body>
-<h1>AtomSpectra — Водопад (спектрограмма) · <a href="/">← спектр</a></h1>
+<header>
+<div class="brand"><span class="logo"><i></i><b></b></span>AtomSpectra <span style="color:var(--accent)">&nbsp;Gateway</span></div>
+<div class="chips"><span class="chip ok"><span class="dot"></span><span id="device-chip">Прибор</span></span><span class="chip" id="ip-chip">—</span></div>
+</header>
+<nav>
+<a href="/">Спектр</a>
+<span class="on">Водопад</span>
+<a href="/saved">Сохранённые</a>
+<a href="/system">Система</a>
+</nav>
 
-<div class="bar">
-  <button id="bStart">▶ Старт</button>
-  <button id="bStop">■ Стоп</button>
-  <button id="bClear">🗑 Очистить</button>
-  <button id="bExportN42">⬇ Экспорт .n42</button>
-  <button id="bDisk" title="Сохранять входящий стрим в .aswf-файл на диске ПК (Chromium-браузеры)">💾 Стрим на диск…</button>
-  <span class="st" id="state">…</span>
+<div class="wrap">
+
+<section class="panel">
+<div class="row">
+<div class="grp">
+<button class="btn green" id="bStart">&#9654; Старт</button>
+<button class="btn amber" id="bStop">&#9632; Стоп</button>
+<button class="btn red" id="bClear">&#128465; Очистить</button>
+<button class="btn" id="bExportN42">&#11015; Экспорт .n42</button>
+<button class="btn" id="bDisk" title="Сохранять входящий стрим в .aswf-файл на диске ПК">&#128190; Стрим на диск&hellip;</button>
+</div>
+<span class="ml st" id="state">&hellip;</span>
 </div>
 
-<div class="bar">
-  <label>Интервал, с <input type="number" id="iv" min="5" max="60" value="5"></label>
-  <button id="bIv">применить</button>
-  <label title="Выбор места хранения водопада">📍 Место:
-    <input type="checkbox" id="persist"> хранить во Flash <span style="color:#6a6">(без галочки — только кольцо ОЗУ)</span></label>
-  <span class="st" id="flashst"></span>
+<div class="row">
+<label class="lbl">Интервал, с <input class="inp" type="number" id="iv" min="5" max="60" value="5"></label>
+<button class="btn sm" id="bIv">применить</button>
+<label class="lbl" title="Выбор места хранения водопада"><input type="checkbox" id="persist"> &#128205; хранить во Flash <span style="color:#5b655a">(без галочки — только кольцо ОЗУ)</span></label>
+<span class="st warn" id="flashst"></span>
 </div>
 
-<div class="bar" id="indic">
-  <span class="ind">⏱ Время записи: <b id="rectime">00:00:00</b></span>
-  <span class="ind" title="заполнение кольца в PSRAM — последние строки; при переполнении старое затирается">
-    Кольцо ОЗУ <b id="ringtxt">0/0</b>
-    <span class="fb"><span class="fi" id="ringfi"></span></span></span>
-  <span class="ind" id="flashwrap" title="занятость флэш-памяти платы (когда включено «хранить во Flash»)">
-    Flash <b id="flashtxt">—</b>
-    <span class="fb"><span class="fi" id="flashfi"></span></span></span>
-  <span class="ind" id="diskwrap" style="display:none" title="идёт запись WS-стрима в .aswf на диске ПК">
-    💾 Диск: <b id="disktxt">—</b></span>
+<div class="row" id="indic">
+<span class="ind">&#9201; Время записи: <b id="rectime">00:00:00</b></span>
+<span class="ind" title="заполнение кольца в PSRAM — последние строки">Кольцо ОЗУ <b id="ringtxt">0/0</b><span class="bar"><i id="ringfi" style="width:0%;background:var(--accent)"></i></span></span>
+<span class="ind" id="flashwrap" title="занятость флэш-памяти платы">Flash <b id="flashtxt">—</b><span class="bar"><i id="flashfi" style="width:0%;background:var(--accent)"></i></span></span>
+<span class="ind" id="diskwrap" style="display:none">&#128190; Диск: <b id="disktxt">—</b></span>
 </div>
+</section>
 
+<section class="panel pad">
 <details class="help">
-  <summary>❓ Куда идёт стрим на ПК и где выбор места хранения</summary>
-  <p><b>Стрим на ПК</b> — отдельно включать не нужно. Плата раздаёт каждую новую строку по WebSocket
-  всем, кто открыл эту страницу. Чтобы «стримить на компьютер» — просто открой
-  <code>http://&lt;IP-платы&gt;/waterfall</code> в браузере <b>на ПК</b>: спектрограмма рисуется вживую.
-  Источник — буфер в RAM в момент рождения строки, а <b>не</b> Flash; работает и при выключенном
-  «хранить во Flash», и когда Flash переполнен.</p>
-  <p><b>Запись в файл на ПК — две опции:</b><br>
-  • кнопка <code>💾 Стрим на диск…</code> сверху — два режима:
-  <b>(а) потоковый</b> — Chrome/Edge/Opera: открывает нативный диалог «Сохранить как», каждая входящая
-  строка пишется прямо в выбранный <code>.aswf</code>-файл, шапка обновляется каждые ~30 с (валидный
-  файл даже при крахе вкладки).
-  <b>(б) buffer-режим</b> — Firefox/Safari/sandboxed-iframe: строки копятся в ОЗУ вкладки, на «Стоп»
-  скачивается одним blob-ом через стандартный download (имя <code>waterfall_&lt;ip&gt;_…&period;aswf</code>).
-  Для длинных сессий используй потоковый режим или скрипты.<br>
-  • скрипты в <code>scripts/</code>: <code>waterfall_n42.py</code> (экспорт .n42 одним выстрелом) и
-  <code>waterfall_client.py &lt;ip&gt; -o &lt;путь&gt;.aswf</code> (непрерывный захват).</p>
-  <p><b>Выбор места хранения</b> — галочка «📍 хранить во Flash» выше:<br>
-  • <b>выкл</b> (по умолчанию) — водопад живёт только в <b>кольце ОЗУ</b> (PSRAM, последние ~256 строк;
-  старое затирается новым). Экспорт .n42 берёт данные из кольца — Flash для этого не нужен.<br>
-  • <b>вкл</b> — каждая строка дополнительно пишется во <b>Flash</b> платы (переживает перезагрузку,
-  но место ограничено — полоса «Flash» показывает занятость).</p>
+<summary>&#10067; Куда идёт стрим на ПК и где выбор места хранения</summary>
+<p><b>Стрим на ПК</b> — отдельно включать не нужно. Плата раздаёт каждую новую строку по WebSocket всем, кто открыл эту страницу. Источник — буфер в RAM в момент рождения строки, а <b>не</b> Flash; работает и при выключенном «хранить во Flash», и когда Flash переполнен.</p>
+<p><b>Запись в файл на ПК — две опции:</b><br>
+&bull; кнопка <code>&#128190; Стрим на диск</code>: в Chrome/Edge/Opera — нативный «Сохранить как» + потоковая запись каждой строки в .aswf (шапка обновляется каждые ~30 с); в Firefox/Safari — буфер ОЗУ + blob-download на «Стоп».<br>
+&bull; скрипты в <code>scripts/</code>: <code>waterfall_n42.py</code> (экспорт .n42 одним выстрелом) и <code>waterfall_client.py</code> (непрерывный захват).</p>
+<p><b>Выбор места хранения на плате</b> — галочка «&#128205; хранить во Flash»:<br>
+&bull; <b>выкл</b> (по умолчанию) — водопад живёт только в кольце ОЗУ (последние ~256 строк; старое затирается новым). Экспорт .n42 берёт данные из кольца.<br>
+&bull; <b>вкл</b> — каждая строка дополнительно пишется во Flash (переживает перезагрузку).</p>
 </details>
+</section>
 
-<div class="bar">
-  <label>Ось X
-    <select id="axis"><option value="ch">каналы</option><option value="kev">кэВ</option></select>
-  </label>
-  <label>Яркость
-    <select id="scale"><option value="log">лог</option><option value="lin">лин</option></select>
-  </label>
-  <label>Контраст <input type="range" id="gain" min="1" max="100" value="40"></label>
-  <span class="sw"></span>
-  <label>Каналы <input type="number" id="chLo" min="0" max="8191" value="0"> –
-    <input type="number" id="chHi" min="1" max="8192" value="8192"></label>
-  <button id="bFit">сброс зума</button>
+<section class="panel">
+<div class="row">
+<label class="lbl">Ось X <select class="sel" id="axis"><option value="ch">каналы</option><option value="kev">кэВ</option></select></label>
+<label class="lbl">Яркость <select class="sel" id="scale"><option value="log">лог</option><option value="lin">лин</option></select></label>
+<label class="lbl">Контраст <input type="range" id="gain" min="1" max="100" value="40" style="vertical-align:middle"></label>
+<label class="lbl">Палитра <span class="sw" id="palSw" title="Сменить цветовую палитру" onclick="openPalette()"></span> <span id="palName" style="color:var(--accent);font-size:11.5px">Inferno</span></label>
+<label class="lbl">Каналы <input class="inp" type="number" id="chLo" min="0" max="8191" value="0"> – <input class="inp" type="number" id="chHi" min="1" max="8192" value="8192"></label>
+<button class="btn sm" id="bFit">сброс зума</button>
+</div>
+</section>
+
+<section class="panel pad">
+<div id="wrap-wf">
+<canvas id="wf" width="900" height="520"></canvas>
+<canvas id="cur" width="900" height="520"></canvas>
+<div id="hud"></div>
+</div>
+</section>
+
+<pre id="log"></pre>
 </div>
 
-<div id="wrap">
-  <canvas id="wf" width="900" height="520"></canvas>
-  <canvas id="cur" width="900" height="520"></canvas>
-  <div id="hud"></div>
+<div class="palmod" id="palMod">
+<div class="pal">
+<h3>Цветовая палитра<button onclick="closePalette()">&times;</button></h3>
+<ul id="palList"></ul>
 </div>
-
-<div id="log"></div>
+</div>
 
 <script>
 "use strict";
-var CH=8192;                 // число каналов (уточняется из WS-заголовка)
-var WFW=900, WFH=520;        // размер канвы
-var MAXROWS=2048;            // потолок клиентского буфера строк
-var rows=[];                 // массив Uint16Array(CH), хронологически (старые в начале)
-var baseIndex=0;             // глобальный индекс строки rows[0]
+
+// === 10-стоп палитры (заимствованы из mock v3) ===
+var PALETTES={
+ Inferno:{desc:"тёмная, контрастная (дефолт)",stops:[[0,0,4],[20,11,52],[58,9,99],[101,21,110],[143,36,108],[185,53,95],[222,73,74],[247,104,52],[252,143,30],[252,194,72]]},
+ Magma:{desc:"мягкая, фиолетово-розовая",stops:[[0,0,4],[18,13,49],[56,15,94],[94,23,113],[131,35,123],[166,47,129],[202,63,128],[233,86,118],[247,123,106],[252,176,134]]},
+ Plasma:{desc:"фиолет → жёлтый, без чёрного",stops:[[13,8,135],[55,5,158],[97,1,168],[131,4,167],[164,17,154],[195,38,132],[221,69,103],[239,103,73],[247,150,40],[239,205,40]]},
+ Viridis:{desc:"перцептивная, друг-к-другу слепых",stops:[[68,1,84],[71,28,113],[63,55,128],[55,82,131],[43,108,128],[35,135,120],[40,159,106],[81,182,86],[150,200,60],[230,210,50]]},
+ Cividis:{desc:"для дальтоников, синь→жёлт",stops:[[0,32,77],[0,50,103],[19,68,121],[51,86,127],[81,103,127],[112,121,126],[145,140,124],[181,160,115],[219,182,98],[253,206,73]]},
+ Turbo:{desc:"яркая, плавный синий→красн",stops:[[48,18,59],[64,69,196],[57,141,247],[42,205,202],[81,242,115],[173,246,55],[244,209,46],[253,143,46],[223,75,41],[122,4,3]]},
+ Jet:{desc:"классика matlab",stops:[[0,0,131],[0,60,170],[5,255,255],[5,255,135],[120,255,5],[255,255,0],[255,170,0],[255,80,0],[225,0,0],[128,0,0]]},
+ Hot:{desc:"чёрный→красн→жёлт→белый",stops:[[0,0,0],[64,0,0],[128,0,0],[192,0,0],[255,32,0],[255,96,0],[255,160,0],[255,224,0],[255,255,128],[255,255,255]]},
+ Ocean:{desc:"чёрный→синий→белый, спокойная",stops:[[0,0,0],[0,16,40],[0,32,80],[0,56,120],[0,90,160],[20,130,200],[60,170,225],[120,205,235],[190,225,240],[245,250,252]]},
+ Grayscale:{desc:"моно, для печати",stops:[[0,0,0],[28,28,28],[56,56,56],[84,84,84],[112,112,112],[140,140,140],[168,168,168],[196,196,196],[224,224,224],[255,255,255]]}
+};
+var currentPalette="Inferno", currentLut=null;
+
+function buildLut(name){
+ var stops=PALETTES[name].stops, N=256;
+ var lut=new Uint8Array(N*3);
+ for(var i=0;i<N;i++){
+  var t=i/(N-1);
+  var f=t*(stops.length-1), si=Math.floor(f), g=f-si;
+  if(si>=stops.length-1)si=stops.length-2,g=1;
+  var a=stops[si],b=stops[si+1];
+  lut[i*3]  =(a[0]+(b[0]-a[0])*g)|0;
+  lut[i*3+1]=(a[1]+(b[1]-a[1])*g)|0;
+  lut[i*3+2]=(a[2]+(b[2]-a[2])*g)|0;
+ }
+ return lut;
+}
+function applyPalette(name){
+ currentPalette=name; currentLut=buildLut(name);
+ document.getElementById("palName").textContent=name;
+ // мини-градиент в селекторе
+ var sw=document.getElementById("palSw");
+ var stops=PALETTES[name].stops;
+ var grad=stops.map(function(s,i){return"rgb("+s[0]+","+s[1]+","+s[2]+") "+(i/(stops.length-1)*100).toFixed(0)+"%"}).join(",");
+ sw.style.background="linear-gradient(90deg,"+grad+")";
+ try{localStorage.setItem("aswf-pal",name);}catch(e){}
+ draw();
+}
+function openPalette(){
+ var list=document.getElementById("palList"); list.innerHTML="";
+ Object.keys(PALETTES).forEach(function(name){
+  var p=PALETTES[name];
+  var grad=p.stops.map(function(s,i){return"rgb("+s[0]+","+s[1]+","+s[2]+") "+(i/(p.stops.length-1)*100).toFixed(0)+"%"}).join(",");
+  var li=document.createElement("li");
+  if(name===currentPalette)li.className="on";
+  li.innerHTML='<div class="swatch" style="background:linear-gradient(90deg,'+grad+')"></div>'+
+   '<div><div class="nm">'+name+'</div><div class="desc">'+p.desc+'</div></div>';
+  li.onclick=function(){applyPalette(name);closePalette();};
+  list.appendChild(li);
+ });
+ document.getElementById("palMod").classList.add("on");
+}
+function closePalette(){document.getElementById("palMod").classList.remove("on");}
+document.getElementById("palMod").addEventListener("click",function(e){if(e.target===this)closePalette();});
+
+// ============== JS-плумбинг — БЕЗ ИЗМЕНЕНИЙ ==============
+var CH=8192;
+var WFW=900, WFH=520;
+var MAXROWS=2048;
+var rows=[];
+var baseIndex=0;
 var calib=null, serial="", intervalSec=5, startedAt=0;
-var viewBottom=-1;           // глобальный индекс строки у нижнего края (-1 = прилипнуть к новым)
-var chLo=0, chHi=CH;         // окно каналов (зум по X)
+var viewBottom=-1;
+var chLo=0, chHi=CH;
 var gain=40, scaleMode="log", axisMode="ch";
 var ws=null, wsTimer=null, recording=false;
-var wfStat=null;             // последний /api/waterfall/status (для индикаторов)
-// --- disk stream (File System Access API, Chromium) ---
-var dskWritable=null;        // FileSystemWritableFileStream
+var wfStat=null;
+var dskWritable=null;
 var dskRows=0, dskStart=0, dskName="", dskBytes=0;
-var dskHdrReserve=4096;      // зарезервированный размер JSON-шапки .aswf
+var dskHdrReserve=4096;
 var dskFlushTimer=null;
-var dskMemChunks=null;       // fallback-режим: накопление в ОЗУ + download на стопе
+var dskMemChunks=null;
 var wf=document.getElementById("wf"), wfx=wf.getContext("2d");
 var cur=document.getElementById("cur"), curx=cur.getContext("2d");
 
 function lg(m){var d=document.getElementById("log");var t=new Date().toLocaleTimeString();
-  d.textContent+="["+t+"] "+m+"\n";d.scrollTop=d.scrollHeight}
+ d.textContent+="["+t+"] "+m+"\n";d.scrollTop=d.scrollHeight}
 
-// палитра: 0..1 -> [r,g,b] (black-blue-magenta-orange-yellow-white)
 function cmap(t){
-  if(t<0)t=0; if(t>1)t=1;
-  var stops=[[0,0,0],[32,0,96],[160,0,64],[255,128,0],[255,255,0],[255,255,255]];
-  var f=t*(stops.length-1), i=Math.floor(f), g=f-i;
-  if(i>=stops.length-1)return stops[stops.length-1];
-  var a=stops[i], b=stops[i+1];
-  return [a[0]+(b[0]-a[0])*g, a[1]+(b[1]-a[1])*g, a[2]+(b[2]-a[2])*g];
+ if(t<0)t=0; if(t>1)t=1;
+ var i=Math.min(255,Math.floor(t*256));
+ var o=i*3;
+ return [currentLut[o],currentLut[o+1],currentLut[o+2]];
 }
 function ch2kev(c){if(!calib)return c;var e=0;for(var i=0;i<calib.length;i++)e+=calib[i]*Math.pow(c,i);return e}
 function kev2ch(k){var lo=0,hi=CH;for(var i=0;i<30;i++){var m=(lo+hi)/2;if(ch2kev(m)<k)lo=m;else hi=m}return(lo+hi)/2}
 
-// текущий максимум для нормировки яркости (сглажен)
 var normMax=64;
 function rowMax(r){var m=0;for(var i=chLo;i<chHi&&i<r.length;i++){if(r[i]>m)m=r[i];}return m;}
 
 function draw(){
-  var img=wfx.createImageData(WFW,WFH);
-  var data=img.data;
-  var span=chHi-chLo; if(span<1)span=1;
-  // какой глобальный индекс у нижней строки
-  var lastIdx=baseIndex+rows.length-1;
-  var bottom=(viewBottom<0)?lastIdx:viewBottom;
-  // нормировка: максимум по видимым строкам
-  var seenMax=1;
-  for(var y=0;y<WFH;y++){
-    var gIdx=bottom-y;                 // верх экрана = старее
-    var li=gIdx-baseIndex;
-    if(li<0||li>=rows.length)continue;
-    var rm=rowMax(rows[li]); if(rm>seenMax)seenMax=rm;
+ var img=wfx.createImageData(WFW,WFH);
+ var data=img.data;
+ var span=chHi-chLo; if(span<1)span=1;
+ var lastIdx=baseIndex+rows.length-1;
+ var bottom=(viewBottom<0)?lastIdx:viewBottom;
+ var seenMax=1;
+ for(var y=0;y<WFH;y++){
+  var gIdx=bottom-y;
+  var li=gIdx-baseIndex;
+  if(li<0||li>=rows.length)continue;
+  var rm=rowMax(rows[li]); if(rm>seenMax)seenMax=rm;
+ }
+ normMax=normMax*0.7+seenMax*0.3; if(normMax<1)normMax=1;
+ var gfac=gain/40.0;
+ for(var y=0;y<WFH;y++){
+  var gIdx=bottom-y;
+  var li=gIdx-baseIndex;
+  var off=y*WFW*4;
+  if(li<0||li>=rows.length){
+   for(var x=0;x<WFW;x++){var o=off+x*4;data[o]=8;data[o+1]=10;data[o+2]=8;data[o+3]=255;}
+   continue;
   }
-  normMax=normMax*0.7+seenMax*0.3; if(normMax<1)normMax=1;
-  var gfac=gain/40.0;
-  for(var y=0;y<WFH;y++){
-    var gIdx=bottom-y;
-    var li=gIdx-baseIndex;
-    var off=y*WFW*4;
-    if(li<0||li>=rows.length){
-      for(var x=0;x<WFW;x++){var o=off+x*4;data[o]=12;data[o+1]=12;data[o+2]=12;data[o+3]=255;}
-      continue;
-    }
-    var row=rows[li];
-    for(var x=0;x<WFW;x++){
-      var c=chLo+Math.floor(x/WFW*span);
-      var v=(c>=0&&c<row.length)?row[c]:0;
-      var t;
-      if(scaleMode==="log"){t=Math.log1p(v*gfac)/Math.log1p(normMax);}
-      else{t=(v*gfac)/normMax;}
-      var col=cmap(t);
-      var o=off+x*4;
-      data[o]=col[0]|0;data[o+1]=col[1]|0;data[o+2]=col[2]|0;data[o+3]=255;
-    }
+  var row=rows[li];
+  for(var x=0;x<WFW;x++){
+   var c=chLo+Math.floor(x/WFW*span);
+   var v=(c>=0&&c<row.length)?row[c]:0;
+   var t;
+   if(scaleMode==="log"){t=Math.log1p(v*gfac)/Math.log1p(normMax);}
+   else{t=(v*gfac)/normMax;}
+   var col=cmap(t);
+   var o=off+x*4;
+   data[o]=col[0]|0;data[o+1]=col[1]|0;data[o+2]=col[2]|0;data[o+3]=255;
   }
-  wfx.putImageData(img,0,0);
-  drawAxis();
-  updHud(bottom,lastIdx);
+ }
+ wfx.putImageData(img,0,0);
+ drawAxis();
+ updHud(bottom,lastIdx);
 }
 
 function drawAxis(){
-  curx.clearRect(0,0,WFW,WFH);
-  curx.fillStyle="rgba(0,0,0,.55)";curx.fillRect(0,WFH-16,WFW,16);
-  curx.strokeStyle="#0a0";curx.fillStyle="#9f9";curx.font="10px monospace";curx.textAlign="center";
-  var span=chHi-chLo;
-  var N=8;
-  for(var i=0;i<=N;i++){
-    var x=i/N*WFW;
-    var ch=chLo+span*i/N;
-    var lbl=axisMode==="kev"&&calib?ch2kev(ch).toFixed(0)+"k":Math.round(ch);
-    curx.beginPath();curx.moveTo(x,WFH-16);curx.lineTo(x,WFH-12);curx.stroke();
-    var tx=x; if(i===0)tx+=12; if(i===N)tx-=12;
-    curx.fillText(lbl,tx,WFH-4);
-  }
+ curx.clearRect(0,0,WFW,WFH);
+ curx.fillStyle="rgba(0,0,0,.55)";curx.fillRect(0,WFH-16,WFW,16);
+ curx.strokeStyle="#283024";curx.fillStyle="#aeb6a8";curx.font="10px ui-monospace,monospace";curx.textAlign="center";
+ var span=chHi-chLo;
+ var N=8;
+ for(var i=0;i<=N;i++){
+  var x=i/N*WFW;
+  var ch=chLo+span*i/N;
+  var lbl=axisMode==="kev"&&calib?ch2kev(ch).toFixed(0)+"k":Math.round(ch);
+  curx.beginPath();curx.moveTo(x,WFH-16);curx.lineTo(x,WFH-12);curx.stroke();
+  var tx=x; if(i===0)tx+=12; if(i===N)tx-=12;
+  curx.fillText(lbl,tx,WFH-4);
+ }
 }
 
 function updHud(bottom,lastIdx){
-  var behind=lastIdx-bottom;
-  var total=rows.length;
-  var tail=(viewBottom<0)?"LIVE":("−"+behind);
-  document.getElementById("hud").textContent=
-    "строк: "+total+"   низ: #"+(bottom<0?0:bottom)+" ["+tail+"]\n"+
-    "норм: "+Math.round(normMax)+"   X: "+chLo+"…"+chHi;
+ var behind=lastIdx-bottom;
+ var total=rows.length;
+ var tail=(viewBottom<0)?"LIVE":("−"+behind);
+ document.getElementById("hud").textContent=
+  "строк: "+total+"   низ: #"+(bottom<0?0:bottom)+" ["+tail+"]\n"+
+  "норм: "+Math.round(normMax)+"   X: "+chLo+"…"+chHi;
 }
 
-// курсор
 wf.parentNode.addEventListener("mousemove",function(e){
-  var rc=wf.getBoundingClientRect();
-  var x=e.clientX-rc.left, y=e.clientY-rc.top;
-  if(x<0||x>=WFW||y<0||y>=WFH)return;
-  draw();
-  curx.strokeStyle="rgba(255,255,255,.4)";
-  curx.beginPath();curx.moveTo(x,0);curx.lineTo(x,WFH);curx.moveTo(0,y);curx.lineTo(WFW,y);curx.stroke();
-  var span=chHi-chLo; var c=chLo+Math.floor(x/WFW*span);
-  var lastIdx=baseIndex+rows.length-1;
-  var bottom=(viewBottom<0)?lastIdx:viewBottom;
-  var gIdx=bottom-y, li=gIdx-baseIndex;
-  var v=(li>=0&&li<rows.length&&c<rows[li].length)?rows[li][c]:0;
-  var ke=calib?(" / "+ch2kev(c).toFixed(1)+" кэВ"):"";
-  curx.fillStyle="rgba(0,0,0,.7)";curx.fillRect(x+6,y-2,150,14);
-  curx.fillStyle="#ff0";curx.textAlign="left";curx.font="11px monospace";
-  curx.fillText("ch "+c+ke+" : "+v,x+9,y+9);
+ var rc=wf.getBoundingClientRect();
+ var sx=WFW/rc.width, sy=WFH/rc.height;
+ var x=(e.clientX-rc.left)*sx, y=(e.clientY-rc.top)*sy;
+ if(x<0||x>=WFW||y<0||y>=WFH)return;
+ draw();
+ curx.strokeStyle="rgba(255,255,255,.4)";
+ curx.beginPath();curx.moveTo(x,0);curx.lineTo(x,WFH);curx.moveTo(0,y);curx.lineTo(WFW,y);curx.stroke();
+ var span=chHi-chLo; var c=chLo+Math.floor(x/WFW*span);
+ var lastIdx=baseIndex+rows.length-1;
+ var bottom=(viewBottom<0)?lastIdx:viewBottom;
+ var gIdx=bottom-y, li=gIdx-baseIndex;
+ var v=(li>=0&&li<rows.length&&c<rows[li].length)?rows[li][c]:0;
+ var ke=calib?(" / "+ch2kev(c).toFixed(1)+" кэВ"):"";
+ curx.fillStyle="rgba(0,0,0,.7)";curx.fillRect(x+6,y-2,180,14);
+ curx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#34d3c0';
+ curx.textAlign="left";curx.font="11px ui-monospace,monospace";
+ curx.fillText("ch "+c+ke+" : "+v,x+9,y+9);
 });
 wf.parentNode.addEventListener("mouseleave",function(){draw();});
 
 function pushRow(u16){
-  rows.push(u16);
-  if(rows.length>MAXROWS){rows.shift();baseIndex++;}
+ rows.push(u16);
+ if(rows.length>MAXROWS){rows.shift();baseIndex++;}
 }
 function clearRows(){rows=[];baseIndex=0;viewBottom=-1;normMax=64;}
 
 async function backfill(){
-  try{
-    var ab=await(await fetch("/api/waterfall/window")).arrayBuffer();
-    if(ab.byteLength<20)return;
-    var dv=new DataView(ab);
-    var mg=String.fromCharCode(dv.getUint8(0),dv.getUint8(1),dv.getUint8(2),dv.getUint8(3));
-    if(mg!=="ASWW")return;
-    var ch=dv.getUint32(4,true), nr=dv.getUint32(8,true), first=dv.getUint32(12,true);
-    intervalSec=dv.getUint32(16,true)||intervalSec;
-    CH=ch; chHiClamp();
-    clearRows(); baseIndex=first;
-    var base=20;
-    for(var i=0;i<nr;i++){
-      rows.push(new Uint16Array(ab.slice(base+i*ch*2, base+(i+1)*ch*2)));
-    }
-    lg("backfill: "+nr+" строк, first #"+first);
-    draw();
-  }catch(e){lg("backfill err: "+e);}
+ try{
+  var ab=await(await fetch("/api/waterfall/window")).arrayBuffer();
+  if(ab.byteLength<20)return;
+  var dv=new DataView(ab);
+  var mg=String.fromCharCode(dv.getUint8(0),dv.getUint8(1),dv.getUint8(2),dv.getUint8(3));
+  if(mg!=="ASWW")return;
+  var ch=dv.getUint32(4,true), nr=dv.getUint32(8,true), first=dv.getUint32(12,true);
+  intervalSec=dv.getUint32(16,true)||intervalSec;
+  CH=ch; chHiClamp();
+  clearRows(); baseIndex=first;
+  var base=20;
+  for(var i=0;i<nr;i++){
+   rows.push(new Uint16Array(ab.slice(base+i*ch*2, base+(i+1)*ch*2)));
+  }
+  lg("backfill: "+nr+" строк, first #"+first);
+  draw();
+ }catch(e){lg("backfill err: "+e);}
 }
 
 function connectWS(){
-  var proto=location.protocol==="https:"?"wss:":"ws:";
-  ws=new WebSocket(proto+"//"+location.host+"/ws/waterfall");
-  ws.binaryType="arraybuffer";
-  ws.onopen=function(){lg("WS подключён");document.getElementById("state").className="st";};
-  ws.onmessage=function(ev){
-    if(typeof ev.data==="string"){
-      try{var h=JSON.parse(ev.data);if(h.channels){CH=h.channels;chHiClamp();}if(h.interval_sec)intervalSec=h.interval_sec;
-        if(h.calibration&&h.calibration.length){calib=h.calibration;drawAxis();}if(h.serial)serial=h.serial;}catch(e){}
-      return;
-    }
-    var u16=new Uint16Array(ev.data);
-    if(u16.length!==CH&&u16.length>0)CH=u16.length;
-    pushRow(u16);
-    // ── запись на диск (если включено пользователем) ──
-    if(dskWritable){
-      try{
-        dskWritable.write(new Uint8Array(ev.data));
-        dskRows++; dskBytes+=ev.data.byteLength;
-        updDiskInd();
-      }catch(e){lg("диск: write err "+e);stopDiskStream();}
-    }else if(dskMemChunks){
-      dskMemChunks.push(new Uint8Array(ev.data));
-      dskRows++; dskBytes+=ev.data.byteLength;
-      updDiskInd();
-    }
-    draw();
-  };
-  ws.onclose=function(){lg("WS закрыт, переподключение…");document.getElementById("state").className="warn";
-    clearTimeout(wsTimer);wsTimer=setTimeout(connectWS,2000);};
-  ws.onerror=function(){try{ws.close();}catch(e){}};
+ var proto=location.protocol==="https:"?"wss:":"ws:";
+ ws=new WebSocket(proto+"//"+location.host+"/ws/waterfall");
+ ws.binaryType="arraybuffer";
+ ws.onopen=function(){lg("WS подключён");document.getElementById("state").className="st";};
+ ws.onmessage=function(ev){
+  if(typeof ev.data==="string"){
+   try{var h=JSON.parse(ev.data);if(h.channels){CH=h.channels;chHiClamp();}if(h.interval_sec)intervalSec=h.interval_sec;
+    if(h.calibration&&h.calibration.length){calib=h.calibration;drawAxis();}if(h.serial){serial=h.serial;document.getElementById("device-chip").textContent=h.serial;}}catch(e){}
+   return;
+  }
+  var u16=new Uint16Array(ev.data);
+  if(u16.length!==CH&&u16.length>0)CH=u16.length;
+  pushRow(u16);
+  if(dskWritable){
+   try{
+    dskWritable.write(new Uint8Array(ev.data));
+    dskRows++; dskBytes+=ev.data.byteLength;
+    updDiskInd();
+   }catch(e){lg("диск: write err "+e);stopDiskStream();}
+  }else if(dskMemChunks){
+   dskMemChunks.push(new Uint8Array(ev.data));
+   dskRows++; dskBytes+=ev.data.byteLength;
+   updDiskInd();
+  }
+  draw();
+ };
+ ws.onclose=function(){lg("WS закрыт, переподключение…");document.getElementById("state").className="warn";
+  clearTimeout(wsTimer);wsTimer=setTimeout(connectWS,2000);};
+ ws.onerror=function(){try{ws.close();}catch(e){}};
 }
 
 function chHiClamp(){
-  if(chHi>CH)chHi=CH; if(chLo<0)chLo=0; if(chLo>=chHi)chLo=Math.max(0,chHi-1);
-  document.getElementById("chHi").max=CH;document.getElementById("chLo").max=CH-1;
+ if(chHi>CH)chHi=CH; if(chLo<0)chLo=0; if(chLo>=chHi)chLo=Math.max(0,chHi-1);
+ document.getElementById("chHi").max=CH;document.getElementById("chLo").max=CH-1;
 }
 
 async function refreshStatus(){
-  try{
-    var s=await(await fetch("/api/waterfall/status")).json();
-    recording=s.recording;intervalSec=s.interval_sec;startedAt=s.started_at;
-    var ivEl=document.getElementById("iv"); if(document.activeElement!==ivEl)ivEl.value=s.interval_sec;
-    document.getElementById("persist").checked=!!s.persist;
-    var st=document.getElementById("state");
-    st.textContent=(s.recording?"● ЗАПИСЬ":"○ стоп")+
-      "  ·  строк всего: "+s.total_rows+"  ·  в кольце: "+s.ring_count+"/"+s.ring_capacity+
-      (s.persist?("  ·  Flash: "+s.flash_rows):"");
-    st.className=s.recording?"st":"warn";
-    var fs=document.getElementById("flashst");
-    fs.textContent=s.flash_full?"⚠ Flash заполнен (стрим продолжается)":"";
-    fs.className=s.flash_full?"err":"st";
-    document.getElementById("bStart").disabled=s.recording;
-    document.getElementById("bStop").disabled=!s.recording;
-    // --- индикаторы: кольцо ОЗУ + время записи ---
-    wfStat=s;
-    var rc=s.ring_capacity||1, rn=s.ring_count||0;
-    var rpct=Math.min(100,rn/rc*100);
-    document.getElementById("ringtxt").textContent=rn+"/"+rc;
-    var rfi=document.getElementById("ringfi");
-    rfi.style.width=rpct.toFixed(1)+"%";
-    rfi.style.background=rpct>=100?"#fa0":"#0f0";   // полное кольцо = оранжевый: старое затирается
-    var fw=document.getElementById("flashwrap");
-    if(!s.persist){
-      fw.style.opacity=".45";
-      document.getElementById("flashtxt").textContent="выкл";
-      document.getElementById("flashfi").style.width="0%";
-    }else{
-      fw.style.opacity="1";
-    }
-    tickRecTime();
-  }catch(e){}
+ try{
+  var s=await(await fetch("/api/waterfall/status")).json();
+  recording=s.recording;intervalSec=s.interval_sec;startedAt=s.started_at;
+  var ivEl=document.getElementById("iv"); if(document.activeElement!==ivEl)ivEl.value=s.interval_sec;
+  document.getElementById("persist").checked=!!s.persist;
+  var st=document.getElementById("state");
+  st.textContent=(s.recording?"● ЗАПИСЬ":"○ стоп")+
+   "  ·  строк всего: "+s.total_rows+"  ·  в кольце: "+s.ring_count+"/"+s.ring_capacity+
+   (s.persist?("  ·  Flash: "+s.flash_rows):"");
+  st.className=s.recording?"st":"warn";
+  var fs=document.getElementById("flashst");
+  fs.textContent=s.flash_full?"⚠ Flash заполнен (стрим продолжается)":"";
+  fs.className=s.flash_full?"err":"st";
+  document.getElementById("bStart").disabled=s.recording;
+  document.getElementById("bStop").disabled=!s.recording;
+  wfStat=s;
+  var rc=s.ring_capacity||1, rn=s.ring_count||0;
+  var rpct=Math.min(100,rn/rc*100);
+  document.getElementById("ringtxt").textContent=rn+"/"+rc;
+  var rfi=document.getElementById("ringfi");
+  rfi.style.width=rpct.toFixed(1)+"%";
+  rfi.style.background=rpct>=100?"#f0c45a":"var(--accent)";
+  var fw=document.getElementById("flashwrap");
+  if(!s.persist){
+   fw.style.opacity=".45";
+   document.getElementById("flashtxt").textContent="выкл";
+   document.getElementById("flashfi").style.width="0%";
+  }else{
+   fw.style.opacity="1";
+  }
+  tickRecTime();
+ }catch(e){}
 }
 
-// время записи: HH:MM:SS из started_at (epoch, SNTP) или fallback total_rows*interval
 function fmtHMS(s){s=Math.max(0,Math.floor(s));
-  var h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;
-  function p(n){return(n<10?"0":"")+n;}return p(h)+":"+p(m)+":"+p(x);}
+ var h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;
+ function p(n){return(n<10?"0":"")+n;}return p(h)+":"+p(m)+":"+p(x);}
 function recElapsed(){
-  if(!wfStat)return 0;
-  if(wfStat.recording){
-    if(wfStat.started_at>1600000000)return Math.max(0,Date.now()/1000-wfStat.started_at);
-    return (wfStat.total_rows||0)*(wfStat.interval_sec||intervalSec); // SNTP ещё не синкнут
-  }
-  return (wfStat.total_rows||0)*(wfStat.interval_sec||intervalSec);    // стоп: показываем длину записи
+ if(!wfStat)return 0;
+ if(wfStat.recording){
+  if(wfStat.started_at>1600000000)return Math.max(0,Date.now()/1000-wfStat.started_at);
+  return (wfStat.total_rows||0)*(wfStat.interval_sec||intervalSec);
+ }
+ return (wfStat.total_rows||0)*(wfStat.interval_sec||intervalSec);
 }
 function tickRecTime(){
-  var el=document.getElementById("rectime"); if(!el)return;
-  el.textContent=fmtHMS(recElapsed());
-  el.style.color=(wfStat&&wfStat.recording)?"#0f0":"#fc3";
+ var el=document.getElementById("rectime"); if(!el)return;
+ el.textContent=fmtHMS(recElapsed());
+ el.style.color=(wfStat&&wfStat.recording)?"var(--accent)":"#f0c45a";
 }
 
-// полоса Flash платы (общая занятость LittleFS) — из /api/system
 async function refreshSystem(){
-  if(!wfStat||!wfStat.persist)return;
-  try{var d=await(await fetch("/api/system")).json();
-    var t=d.flash_total||0,u=d.flash_used||0;
-    var pct=t>0?(u/t*100):0;
-    document.getElementById("flashtxt").textContent=
-      (u/1024).toFixed(0)+"/"+(t/1024).toFixed(0)+" КБ ("+pct.toFixed(0)+"%)";
-    var fi=document.getElementById("flashfi");
-    fi.style.width=pct.toFixed(1)+"%";
-    fi.style.background=pct>90?"#f44":pct>70?"#fa0":"#0f0";
-  }catch(e){}
+ if(!wfStat||!wfStat.persist)return;
+ try{var d=await(await fetch("/api/system")).json();
+  var t=d.flash_total||0,u=d.flash_used||0;
+  var pct=t>0?(u/t*100):0;
+  document.getElementById("flashtxt").textContent=
+   (u/1024).toFixed(0)+"/"+(t/1024).toFixed(0)+" КБ ("+pct.toFixed(0)+"%)";
+  var fi=document.getElementById("flashfi");
+  fi.style.width=pct.toFixed(1)+"%";
+  fi.style.background=pct>90?"#ff8a82":pct>70?"#f0c45a":"var(--accent)";
+ }catch(e){}
 }
 
-// ---- диск-стрим (File System Access API, Chromium) ----
 function dskTs(){var d=new Date();function p(n){return(n<10?"0":"")+n;}
-  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+"_"+
-         p(d.getHours())+p(d.getMinutes())+p(d.getSeconds());}
+ return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+"_"+
+        p(d.getHours())+p(d.getMinutes())+p(d.getSeconds());}
 function padJson(obj,len){
-  var s=JSON.stringify(obj);
-  var enc=new TextEncoder().encode(s);
-  if(enc.length>len)throw new Error("header overflow: "+enc.length+">"+len);
-  var pad=" ".repeat(len-enc.length);
-  return new TextEncoder().encode(s+pad);
+ var s=JSON.stringify(obj);
+ var enc=new TextEncoder().encode(s);
+ if(enc.length>len)throw new Error("header overflow: "+enc.length+">"+len);
+ var pad=" ".repeat(len-enc.length);
+ return new TextEncoder().encode(s+pad);
 }
 function dskHeaderObj(finalRows){
-  return {
-    format:"aswf",version:1,
-    channels:CH,interval_sec:intervalSec,
-    serial:serial||"",
-    calibration:calib||[],
-    started_at:wfStat&&wfStat.started_at?wfStat.started_at:Math.floor(Date.now()/1000),
-    saved_rows:finalRows|0,
-    source:"browser /waterfall WS",
-    saved_at:Math.floor(Date.now()/1000)
-  };
+ return {
+  format:"aswf",version:1,
+  channels:CH,interval_sec:intervalSec,
+  serial:serial||"",
+  calibration:calib||[],
+  started_at:wfStat&&wfStat.started_at?wfStat.started_at:Math.floor(Date.now()/1000),
+  saved_rows:finalRows|0,
+  source:"browser /waterfall WS",
+  saved_at:Math.floor(Date.now()/1000)
+ };
 }
 async function writeDiskHeader(finalRows){
-  if(!dskWritable)return;
-  var hdr=padJson(dskHeaderObj(finalRows),dskHdrReserve);
-  var prefix=new Uint8Array(8);
-  prefix[0]=0x41;prefix[1]=0x53;prefix[2]=0x57;prefix[3]=0x46; // "ASWF"
-  var dv=new DataView(prefix.buffer);
-  dv.setUint32(4,dskHdrReserve,true);
-  await dskWritable.write({type:"write",position:0,data:prefix});
-  await dskWritable.write({type:"write",position:8,data:hdr});
-  // вернуть курсор записи в хвост (payload), чтобы новые строки шли за концом файла
-  var tail=8+dskHdrReserve+dskRows*CH*2;
-  await dskWritable.write({type:"seek",position:tail});
+ if(!dskWritable)return;
+ var hdr=padJson(dskHeaderObj(finalRows),dskHdrReserve);
+ var prefix=new Uint8Array(8);
+ prefix[0]=0x41;prefix[1]=0x53;prefix[2]=0x57;prefix[3]=0x46;
+ var dv=new DataView(prefix.buffer);
+ dv.setUint32(4,dskHdrReserve,true);
+ await dskWritable.write({type:"write",position:0,data:prefix});
+ await dskWritable.write({type:"write",position:8,data:hdr});
+ var tail=8+dskHdrReserve+dskRows*CH*2;
+ await dskWritable.write({type:"seek",position:tail});
 }
 async function startDiskStream(){
-  var host=(location.hostname||"esp").replace(/[^a-zA-Z0-9_.-]/g,"_");
-  var name="waterfall_"+host+"_"+dskTs()+".aswf";
-  dskRows=0;dskBytes=0;dskStart=Date.now();dskName=name;
-  // 1) Современный путь: нативный диалог + потоковая запись
-  if("showSaveFilePicker" in window){
-    try{
-      var handle=await window.showSaveFilePicker({
-        suggestedName:name,
-        types:[{description:"AtomSpectra waterfall",accept:{"application/octet-stream":[".aswf"]}}]
-      });
-      dskWritable=await handle.createWritable();
-      dskName=handle.name||name;
-      await writeDiskHeader(0);
-      dskFlushTimer=setInterval(flushDiskHeader,30000);
-      lg("диск: запись начата → "+dskName+" (потоковая)");
-    }catch(e){
-      if(e&&e.name==="AbortError"){dskRows=0;dskBytes=0;return;}   // отмена диалога — молча
-      lg("диск: FSA fail ("+e+"), переключаюсь в режим ОЗУ-буфера");
-      dskWritable=null;
-    }
+ var host=(location.hostname||"esp").replace(/[^a-zA-Z0-9_.-]/g,"_");
+ var name="waterfall_"+host+"_"+dskTs()+".aswf";
+ dskRows=0;dskBytes=0;dskStart=Date.now();dskName=name;
+ if("showSaveFilePicker" in window){
+  try{
+   var handle=await window.showSaveFilePicker({
+    suggestedName:name,
+    types:[{description:"AtomSpectra waterfall",accept:{"application/octet-stream":[".aswf"]}}]
+   });
+   dskWritable=await handle.createWritable();
+   dskName=handle.name||name;
+   await writeDiskHeader(0);
+   dskFlushTimer=setInterval(flushDiskHeader,30000);
+   lg("диск: запись начата → "+dskName+" (потоковая)");
+  }catch(e){
+   if(e&&e.name==="AbortError"){dskRows=0;dskBytes=0;return;}
+   lg("диск: FSA fail ("+e+"), переключаюсь в режим ОЗУ-буфера");
+   dskWritable=null;
   }
-  // 2) Fallback: копим строки в ОЗУ, на «Стоп» — скачиваем blob-ом
-  if(!dskWritable){
-    dskMemChunks=[];
-    lg("диск: запись начата → "+dskName+" (буфер ОЗУ, скачается на «Стоп»)");
-  }
-  document.getElementById("diskwrap").style.display="";
-  document.getElementById("bDisk").textContent="■ Стрим на диск (стоп)";
-  updDiskInd();
-  window.addEventListener("beforeunload",beforeUnloadDisk);
+ }
+ if(!dskWritable){
+  dskMemChunks=[];
+  lg("диск: запись начата → "+dskName+" (буфер ОЗУ, скачается на «Стоп»)");
+ }
+ document.getElementById("diskwrap").style.display="";
+ document.getElementById("bDisk").textContent="■ Стрим на диск (стоп)";
+ updDiskInd();
+ window.addEventListener("beforeunload",beforeUnloadDisk);
 }
 async function flushDiskHeader(){
-  if(!dskWritable)return;
-  try{await writeDiskHeader(dskRows);}catch(e){lg("диск: flush err "+e);}
+ if(!dskWritable)return;
+ try{await writeDiskHeader(dskRows);}catch(e){lg("диск: flush err "+e);}
 }
 async function stopDiskStream(){
-  if(dskFlushTimer){clearInterval(dskFlushTimer);dskFlushTimer=null;}
-  window.removeEventListener("beforeunload",beforeUnloadDisk);
-  var w=dskWritable;dskWritable=null;
-  var mem=dskMemChunks;dskMemChunks=null;
-  try{
-    if(w){
-      // финальная шапка с актуальным числом строк, затем close()
-      var hdr=padJson(dskHeaderObj(dskRows),dskHdrReserve);
-      var prefix=new Uint8Array(8);
-      prefix[0]=0x41;prefix[1]=0x53;prefix[2]=0x57;prefix[3]=0x46;
-      new DataView(prefix.buffer).setUint32(4,dskHdrReserve,true);
-      await w.write({type:"write",position:0,data:prefix});
-      await w.write({type:"write",position:8,data:hdr});
-      await w.close();
-      lg("диск: запись завершена ("+dskRows+" стр., "+(dskBytes/1048576).toFixed(2)+" МБ) → "+dskName);
-    }else if(mem){
-      // fallback: собираем blob и форсируем download
-      var hdr2=padJson(dskHeaderObj(dskRows),dskHdrReserve);
-      var prefix2=new Uint8Array(8);
-      prefix2[0]=0x41;prefix2[1]=0x53;prefix2[2]=0x57;prefix2[3]=0x46;
-      new DataView(prefix2.buffer).setUint32(4,dskHdrReserve,true);
-      var parts=[prefix2,hdr2].concat(mem);
-      var blob=new Blob(parts,{type:"application/octet-stream"});
-      var url=URL.createObjectURL(blob);
-      var a=document.createElement("a");
-      a.href=url;a.download=dskName;document.body.appendChild(a);a.click();
-      setTimeout(function(){document.body.removeChild(a);URL.revokeObjectURL(url);},1000);
-      lg("диск: blob скачан ("+dskRows+" стр., "+(dskBytes/1048576).toFixed(2)+" МБ) → "+dskName);
-    }
-  }catch(e){lg("диск: close err "+e);}
-  document.getElementById("diskwrap").style.display="none";
-  document.getElementById("bDisk").textContent="💾 Стрим на диск…";
+ if(dskFlushTimer){clearInterval(dskFlushTimer);dskFlushTimer=null;}
+ window.removeEventListener("beforeunload",beforeUnloadDisk);
+ var w=dskWritable;dskWritable=null;
+ var mem=dskMemChunks;dskMemChunks=null;
+ try{
+  if(w){
+   var hdr=padJson(dskHeaderObj(dskRows),dskHdrReserve);
+   var prefix=new Uint8Array(8);
+   prefix[0]=0x41;prefix[1]=0x53;prefix[2]=0x57;prefix[3]=0x46;
+   new DataView(prefix.buffer).setUint32(4,dskHdrReserve,true);
+   await w.write({type:"write",position:0,data:prefix});
+   await w.write({type:"write",position:8,data:hdr});
+   await w.close();
+   lg("диск: запись завершена ("+dskRows+" стр., "+(dskBytes/1048576).toFixed(2)+" МБ) → "+dskName);
+  }else if(mem){
+   var hdr2=padJson(dskHeaderObj(dskRows),dskHdrReserve);
+   var prefix2=new Uint8Array(8);
+   prefix2[0]=0x41;prefix2[1]=0x53;prefix2[2]=0x57;prefix2[3]=0x46;
+   new DataView(prefix2.buffer).setUint32(4,dskHdrReserve,true);
+   var parts=[prefix2,hdr2].concat(mem);
+   var blob=new Blob(parts,{type:"application/octet-stream"});
+   var url=URL.createObjectURL(blob);
+   var a=document.createElement("a");
+   a.href=url;a.download=dskName;document.body.appendChild(a);a.click();
+   setTimeout(function(){document.body.removeChild(a);URL.revokeObjectURL(url);},1000);
+   lg("диск: blob скачан ("+dskRows+" стр., "+(dskBytes/1048576).toFixed(2)+" МБ) → "+dskName);
+  }
+ }catch(e){lg("диск: close err "+e);}
+ document.getElementById("diskwrap").style.display="none";
+ document.getElementById("bDisk").textContent="&#128190; Стрим на диск…";
 }
 function beforeUnloadDisk(e){
-  if(!dskWritable)return;
-  e.preventDefault();e.returnValue="Идёт запись на диск. Закрыть страницу?";
+ if(!dskWritable)return;
+ e.preventDefault();e.returnValue="Идёт запись на диск. Закрыть страницу?";
 }
 function updDiskInd(){
-  var sec=Math.floor((Date.now()-dskStart)/1000);
-  document.getElementById("disktxt").textContent=
-    dskRows+" стр. · "+(dskBytes/1048576).toFixed(2)+" МБ · "+fmtHMS(sec);
+ var sec=Math.floor((Date.now()-dskStart)/1000);
+ document.getElementById("disktxt").textContent=
+  dskRows+" стр. · "+(dskBytes/1048576).toFixed(2)+" МБ · "+fmtHMS(sec);
 }
 
-// ---- контролы ----
-function post(url,body){return fetch(url,{method:"POST",headers:{"X-CSRF-Token":csrfToken,"Content-Type":"application/json"},body:body?JSON.stringify(body):undefined});}
 var csrfToken="";
+function post(url,body){return fetch(url,{method:"POST",headers:{"X-CSRF-Token":csrfToken,"Content-Type":"application/json"},body:body?JSON.stringify(body):undefined});}
 async function loadCsrf(){try{var r=await(await fetch("/api/csrf-token")).json();csrfToken=r.token||"";}catch(e){}}
 
 document.getElementById("bStart").onclick=async function(){await post("/api/waterfall/start");refreshStatus();};
 document.getElementById("bStop").onclick=async function(){await post("/api/waterfall/stop");refreshStatus();};
 document.getElementById("bClear").onclick=async function(){
-  if(!confirm("Очистить накопленную спектрограмму?"))return;
-  await post("/api/waterfall/clear");clearRows();draw();refreshStatus();lg("очищено");};
+ if(!confirm("Очистить накопленную спектрограмму?"))return;
+ await post("/api/waterfall/clear");clearRows();draw();refreshStatus();lg("очищено");};
 async function applyInterval(){
-  var el=document.getElementById("iv");
-  var v=parseInt(el.value)||5;
-  if(v<5)v=5; if(v>60)v=60; el.value=v;
-  await post("/api/waterfall/config",{interval:v});refreshStatus();lg("интервал = "+v+" с");}
+ var el=document.getElementById("iv");
+ var v=parseInt(el.value)||5;
+ if(v<5)v=5; if(v>60)v=60; el.value=v;
+ await post("/api/waterfall/config",{interval:v});refreshStatus();lg("интервал = "+v+" с");}
 document.getElementById("bIv").onclick=applyInterval;
 document.getElementById("iv").onchange=applyInterval;
 document.getElementById("persist").onchange=async function(){
-  await post("/api/waterfall/config",{persist:this.checked});refreshStatus();};
+ await post("/api/waterfall/config",{persist:this.checked});refreshStatus();};
 document.getElementById("bExportN42").onclick=function(){window.location="/api/waterfall/export.n42";lg("экспорт .n42 (ANSI N42.42)");};
 document.getElementById("bDisk").onclick=function(){
-  if(dskWritable||dskMemChunks)stopDiskStream();else startDiskStream();
+ if(dskWritable||dskMemChunks)stopDiskStream();else startDiskStream();
 };
 if(!("showSaveFilePicker" in window)){
-  document.getElementById("bDisk").title=
-    "Этот браузер не поддерживает File System Access API — буду копить в ОЗУ, на «Стоп» скачается одним файлом. "+
-    "Для длинных сессий используйте Chrome / Edge / Opera (потоковая запись) или scripts/waterfall_client.py.";
+ document.getElementById("bDisk").title=
+  "Этот браузер не поддерживает File System Access API — буду копить в ОЗУ, на «Стоп» скачается одним файлом. "+
+  "Для длинных сессий используйте Chrome / Edge / Opera или scripts/waterfall_client.py.";
 }
 
 document.getElementById("axis").onchange=function(){axisMode=this.value;draw();};
 document.getElementById("scale").onchange=function(){scaleMode=this.value;draw();};
 document.getElementById("gain").oninput=function(){gain=parseInt(this.value);draw();};
 function applyZoom(){chLo=parseInt(document.getElementById("chLo").value)||0;
-  chHi=parseInt(document.getElementById("chHi").value)||CH;chHiClamp();draw();}
+ chHi=parseInt(document.getElementById("chHi").value)||CH;chHiClamp();draw();}
 document.getElementById("chLo").onchange=applyZoom;
 document.getElementById("chHi").onchange=applyZoom;
 document.getElementById("bFit").onclick=function(){chLo=0;chHi=CH;
-  document.getElementById("chLo").value=0;document.getElementById("chHi").value=CH;draw();};
+ document.getElementById("chLo").value=0;document.getElementById("chHi").value=CH;draw();};
 
-// колесо: вертикальный скролл; Shift = зум по каналам у курсора
 wf.addEventListener("wheel",function(e){
-  e.preventDefault();
-  if(e.shiftKey){
-    var rc=wf.getBoundingClientRect();var x=e.clientX-rc.left;
-    var span=chHi-chLo;var cc=chLo+x/WFW*span;
-    var f=e.deltaY<0?0.8:1.25;var ns=Math.max(16,Math.min(CH,span*f));
-    chLo=Math.round(cc-(x/WFW)*ns);chHi=Math.round(chLo+ns);chHiClamp();
-    document.getElementById("chLo").value=chLo;document.getElementById("chHi").value=chHi;
-  }else{
-    var lastIdx=baseIndex+rows.length-1;
-    var bottom=(viewBottom<0)?lastIdx:viewBottom;
-    var step=e.deltaY<0?-3:3;
-    bottom+=step;
-    if(bottom>=lastIdx){viewBottom=-1;}else{if(bottom<baseIndex)bottom=baseIndex;viewBottom=bottom;}
-  }
-  draw();
+ e.preventDefault();
+ if(e.shiftKey){
+  var rc=wf.getBoundingClientRect();var x=(e.clientX-rc.left)*(WFW/rc.width);
+  var span=chHi-chLo;var cc=chLo+x/WFW*span;
+  var f=e.deltaY<0?0.8:1.25;var ns=Math.max(16,Math.min(CH,span*f));
+  chLo=Math.round(cc-(x/WFW)*ns);chHi=Math.round(chLo+ns);chHiClamp();
+  document.getElementById("chLo").value=chLo;document.getElementById("chHi").value=chHi;
+ }else{
+  var lastIdx=baseIndex+rows.length-1;
+  var bottom=(viewBottom<0)?lastIdx:viewBottom;
+  var step=e.deltaY<0?-3:3;
+  bottom+=step;
+  if(bottom>=lastIdx){viewBottom=-1;}else{if(bottom<baseIndex)bottom=baseIndex;viewBottom=bottom;}
+ }
+ draw();
 },{passive:false});
 
-// ---- init ----
 (async function(){
-  await loadCsrf();
-  try{var sp=await(await fetch("/api/spectrum.json")).json();
-    if(sp.calib&&sp.calib.length)calib=sp.calib;if(sp.serial)serial=sp.serial;}catch(e){}
-  await refreshStatus();
-  await refreshSystem();
-  await backfill();
-  connectWS();
-  setInterval(refreshStatus,5000);
-  setInterval(refreshSystem,5000);
-  setInterval(tickRecTime,1000);   // плавный счётчик времени записи
+ document.getElementById("ip-chip").textContent=location.hostname;
+ var savedPal="Inferno";
+ try{var lp=localStorage.getItem("aswf-pal");if(lp&&PALETTES[lp])savedPal=lp;}catch(e){}
+ applyPalette(savedPal);
+ await loadCsrf();
+ try{var sp=await(await fetch("/api/spectrum.json")).json();
+  if(sp.calib&&sp.calib.length)calib=sp.calib;
+  if(sp.serial){serial=sp.serial;document.getElementById("device-chip").textContent=sp.serial;}
+ }catch(e){}
+ await refreshStatus();
+ await refreshSystem();
+ await backfill();
+ connectWS();
+ setInterval(refreshStatus,5000);
+ setInterval(refreshSystem,5000);
+ setInterval(tickRecTime,1000);
 })();
 </script>
 </body>

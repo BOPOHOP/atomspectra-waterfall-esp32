@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AtomSpectra · Система</title>
+<style>
+:root{ --accent:#34d3c0; --accent-dim:rgba(52,211,192,.12); --bg:#0a0c0a; --panel:#11150f; --bd:#20281e; --dim:#8a9686; --txt:#cfd6cd; }
+*{ box-sizing:border-box; }
+html,body{ margin:0; padding:0; background:var(--bg); }
+body{ color:var(--txt); font-family:ui-monospace,'SF Mono','Cascadia Mono','DejaVu Sans Mono',Consolas,monospace; padding-bottom:28px; }
+a{ color:inherit; text-decoration:none; } button{ font-family:inherit; }
+.wrap{ max-width:1460px; margin:0 auto; padding:18px 22px 0; display:flex; flex-direction:column; gap:14px; }
+header{ display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 24px; border-bottom:1px solid #1c241c; }
+.brand{ display:flex; align-items:center; gap:13px; font-weight:700; font-size:16px; color:#e8efe2; }
+.logo{ width:34px; height:34px; border-radius:8px; background:#10140f; border:1px solid #283226; display:flex; align-items:center; justify-content:center; position:relative; }
+.logo i{ width:15px; height:15px; border-radius:50%; border:2px solid var(--accent); }
+.logo b{ position:absolute; width:5px; height:5px; border-radius:50%; background:var(--accent); box-shadow:0 0 8px var(--accent); }
+.chips{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+.chip{ background:#10140f; border:1px solid #243024; border-radius:999px; padding:6px 12px; font-size:11.5px; color:var(--dim); }
+.chip.ok{ color:#aeb6a8; display:flex; align-items:center; gap:7px; }
+.chip.warn{ color:#f0c45a; border-color:rgba(240,180,60,.35); }
+.dot{ width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 7px var(--accent); }
+.dot.off{ background:#5b655a; box-shadow:none; }
+nav{ display:flex; align-items:center; gap:2px; padding:0 20px; border-bottom:1px solid #1c241c; overflow-x:auto; }
+nav a,nav span{ padding:12px 16px; font-size:13px; color:var(--dim); flex-shrink:0; white-space:nowrap; }
+nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); }
+.panel{ background:var(--panel); border:1px solid var(--bd); border-radius:10px; padding:16px; }
+.mut{ color:#6b756a; }
+.grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.ttl{ font-size:14px; font-weight:600; color:#e8efe2; margin-bottom:13px; display:flex; align-items:center; gap:8px; }
+.kv{ display:flex; justify-content:space-between; gap:12px; padding:7px 0; border-bottom:1px solid #161c15; font-size:12.5px; }
+.kv span:first-child{ color:#7c887c; } .kv span:last-child{ color:#dfe5dc; text-align:right; }
+.bar{ height:7px; border-radius:4px; background:#1b211a; overflow:hidden; } .bar > i{ display:block; height:100%; border-radius:4px; transition:width .3s,background .3s; }
+.btn{ width:100%; border-radius:8px; padding:9px 0; font-size:12.5px; cursor:pointer; background:#161b14; border:1px solid #2a322a; color:var(--txt); margin-top:13px; }
+.btn.green{ background:var(--accent-dim); border-color:rgba(52,211,192,.4); color:var(--accent); font-weight:600; }
+.btn.red{ background:rgba(240,90,80,.07); border-color:rgba(240,90,80,.4); color:#ff8a82; }
+.btn:hover{ filter:brightness(1.2); }
+@media (max-width:900px){ .grid{ grid-template-columns:1fr } }
+</style>
+</head>
+<body>
+<header>
+<div class="brand"><span class="logo"><i></i><b></b></span>AtomSpectra <span style="color:var(--accent)">&nbsp;Gateway</span></div>
+<div class="chips"><span class="chip ok" id="dev-chip"><span class="dot" id="dev-dot"></span><span id="dev-stat">Прибор</span></span><span class="chip" id="ip-chip">—</span></div>
+</header>
+<nav>
+<a href="/">Спектр</a>
+<a href="/waterfall">Водопад</a>
+<a href="/saved">Сохранённые</a>
+<span class="on">Система</span>
+</nav>
+
+<div class="wrap">
+
+<div class="grid">
+<section class="panel">
+<div style="display:flex;justify-content:space-between;margin-bottom:8px">
+<span style="font-size:12px;color:#8a9686">Свободная память (heap)</span>
+<span style="font-size:18px;font-weight:600;color:var(--accent)"><span id="heap-cur">—</span> <span class="mut" style="font-size:11px">КБ</span></span>
+</div>
+<canvas id="heapc" width="700" height="90" style="width:100%;height:auto;display:block"></canvas>
+<div class="mut" style="font-size:11px;margin-top:5px">мин. с момента старта: <span id="heap-min">—</span> КБ</div>
+</section>
+<section class="panel">
+<div style="display:flex;justify-content:space-between;margin-bottom:8px">
+<span style="font-size:12px;color:#8a9686">CPU спектрометра</span>
+<span style="font-size:18px;font-weight:600;color:var(--accent)"><span id="cpu-cur">—</span> <span class="mut" style="font-size:11px">%</span></span>
+</div>
+<canvas id="cpuc" width="700" height="90" style="width:100%;height:auto;display:block"></canvas>
+<div class="mut" style="font-size:11px;margin-top:5px">из <code>/api/spectrum.json</code>: поле <code>cpu</code></div>
+</section>
+</div>
+
+<div class="grid">
+
+<section class="panel">
+<div class="ttl"><span style="color:var(--accent)">&#9636;</span> ESP32-S3</div>
+<div class="kv"><span>Чип</span><span>ESP32-S3 N16R8</span></div>
+<div class="kv"><span>Flash / PSRAM</span><span>16 МБ / 8 МБ</span></div>
+<div class="kv"><span>ESP-IDF</span><span>v5.4</span></div>
+<div class="kv"><span>Uptime</span><span id="up">—</span></div>
+<div class="kv"><span>Free heap</span><span id="heap-kv">—</span></div>
+<div class="kv"><span>Min free heap</span><span id="heap-min-kv">—</span></div>
+<div style="margin-top:12px">
+<div style="display:flex;justify-content:space-between;font-size:11px;color:#6b756a;margin-bottom:5px"><span>Flash LittleFS</span><span id="flash-pct">—</span></div>
+<div class="bar"><i id="flash-fi" style="width:0%;background:var(--accent)"></i></div>
+</div>
+</section>
+
+<section class="panel">
+<div class="ttl"><span style="color:var(--accent)">&#8779;</span> WiFi</div>
+<div class="kv"><span>Состояние</span><span id="wifi-state">—</span></div>
+<div class="kv"><span>SSID</span><span id="wifi-ssid">—</span></div>
+<div class="kv"><span>IP</span><span id="wifi-ip">—</span></div>
+<div class="kv"><span>RSSI</span><span id="wifi-rssi">—</span></div>
+<div style="margin-top:12px">
+<div style="display:flex;justify-content:space-between;font-size:11px;color:#6b756a;margin-bottom:5px"><span>Уровень сигнала</span><span id="rssi-desc">—</span></div>
+<div class="bar"><i id="rssi-fi" style="width:0%;background:var(--accent)"></i></div>
+</div>
+<button class="btn" onclick="resetWifi()">Сбросить WiFi (режим настройки)</button>
+</section>
+
+<section class="panel">
+<div class="ttl"><span style="color:var(--accent)">&#9678;</span> Прибор · AtomSpectra</div>
+<div class="kv"><span>USB</span><span id="dev-usb">—</span></div>
+<div class="kv"><span>Серийный №</span><span id="dev-serial">—</span></div>
+<div class="kv"><span>Версия прошивки</span><span id="dev-ver">—</span></div>
+<div class="kv"><span>Каналов</span><span id="dev-ch">—</span></div>
+<div class="kv"><span>Калибровка</span><span id="dev-cal">—</span></div>
+<div class="kv"><span>Темп. T1/T2/T3</span><span id="dev-t">—</span></div>
+<div class="kv"><span>Режим</span><span id="dev-mode">—</span></div>
+<button class="btn red" onclick="rebootDevice()">Перезагрузить прибор</button>
+</section>
+
+<section class="panel">
+<div class="ttl"><span style="color:var(--accent)">&#8644;</span> TCP-мост (serial-over-WiFi)</div>
+<div class="kv"><span>Порт</span><span>8234</span></div>
+<div class="kv"><span>Состояние</span><span id="tcp-state">—</span></div>
+<div class="mut" style="font-size:11px;line-height:1.5;margin-top:11px">BecqMoni / AtomSpectra на ПК подключаются к <span id="tcp-addr" style="color:#aeb6a8">—</span> вместо COM-порта.</div>
+<div style="display:flex;gap:8px;margin-top:13px">
+<button class="btn red" style="margin-top:0" onclick="rebootEsp()">Reboot ESP</button>
+<button class="btn green" style="margin-top:0" onclick="location.reload()">Обновить</button>
+</div>
+<!-- TODO: эндпоинт /api/system не возвращает MAC ESP32, режим WiFi (STA/AP), канал, скорость USB CDC, причину последнего сброса. Поля скрыты до появления в /api/system. -->
+</section>
+
+</div>
+</div>
+
+<script>
+"use strict";
+var csrfToken="";
+var heap=[],cpu=[];
+function ac(){return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#34d3c0';}
+
+async function loadCsrf(){try{var r=await(await fetch("/api/csrf-token")).json();csrfToken=r.token||""}catch(e){}}
+function post(url,opts){opts=opts||{};opts.method="POST";opts.headers=Object.assign({},opts.headers||{},{"X-CSRF-Token":csrfToken});return fetch(url,opts)}
+
+function fmtKB(n){return (n/1024).toFixed(0)}
+function fmtUp(s){var d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60),x=s%60;
+ var p=[]; if(d>0)p.push(d+"д"); if(d>0||h>0)p.push(h+"ч"); p.push(m+"м"); if(d===0)p.push(x+"с"); return p.join(" ");}
+
+function spark(id,hist,color){
+ var cv=document.getElementById(id);if(!cv||hist.length<2)return;
+ var ctx=cv.getContext('2d'),w=cv.width,h=cv.height,mn=1e9,mx=-1e9,i;
+ for(i=0;i<hist.length;i++){if(hist[i]<mn)mn=hist[i];if(hist[i]>mx)mx=hist[i];}
+ if(mx-mn<1)mx=mn+1;
+ var pad=8; function yO(v){return pad+(h-2*pad)*(1-(v-mn)/(mx-mn));}
+ ctx.clearRect(0,0,w,h);
+ ctx.strokeStyle='rgba(255,255,255,.05)';
+ for(var k=0;k<=2;k++){var y=pad+(h-2*pad)*k/2;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}
+ var n=hist.length;
+ ctx.beginPath();
+ for(i=0;i<n;i++){var x=i/(n-1)*w,yy=yO(hist[i]);i?ctx.lineTo(x,yy):ctx.moveTo(x,yy);}
+ ctx.lineTo(w,h);ctx.lineTo(0,h);ctx.closePath();ctx.fillStyle=color+'22';ctx.fill();
+ ctx.beginPath();
+ for(i=0;i<n;i++){var x2=i/(n-1)*w,y2=yO(hist[i]);i?ctx.lineTo(x2,y2):ctx.moveTo(x2,y2);}
+ ctx.strokeStyle=color;ctx.lineWidth=1.4;ctx.stroke();
+}
+
+async function refreshSystem(){
+ try{
+  var r=await(await fetch("/api/system")).json();
+  // heap-история
+  var heapKB=Math.round((r.free_heap||0)/1024);
+  heap.push(heapKB); if(heap.length>80)heap.shift();
+  document.getElementById("heap-cur").textContent=heapKB;
+  document.getElementById("heap-min").textContent=Math.round((r.min_free_heap||0)/1024);
+  document.getElementById("heap-kv").textContent=heapKB+" КБ";
+  document.getElementById("heap-min-kv").textContent=Math.round((r.min_free_heap||0)/1024)+" КБ";
+  spark("heapc",heap,ac());
+  // uptime
+  document.getElementById("up").textContent=fmtUp(r.uptime_sec||0);
+  // Flash
+  var ft=r.flash_total||0, fu=r.flash_used||0;
+  var pct=ft>0?(fu/ft*100):0;
+  document.getElementById("flash-pct").textContent=fmtKB(fu)+" / "+fmtKB(ft)+" КБ ("+pct.toFixed(1)+"%)";
+  var ffi=document.getElementById("flash-fi");
+  ffi.style.width=pct.toFixed(1)+"%";
+  ffi.style.background=pct>90?"#ff8a82":pct>70?"#f0c45a":"var(--accent)";
+  // WiFi
+  if(r.wifi_connected){
+   document.getElementById("wifi-state").innerHTML='<span style="color:var(--accent)">подключено</span>';
+   document.getElementById("wifi-ssid").textContent=r.ssid||"—";
+   document.getElementById("wifi-ip").textContent=location.hostname;
+   var rssi=r.rssi;
+   if(typeof rssi==="number"){
+    document.getElementById("wifi-rssi").textContent=rssi+" dBm";
+    // 0% при -100, 100% при -40
+    var qPct=Math.max(0,Math.min(100,(rssi+100)*100/60));
+    var qDesc=rssi>=-55?"отличный":rssi>=-65?"хороший":rssi>=-75?"средний":rssi>=-85?"слабый":"очень слабый";
+    document.getElementById("rssi-desc").textContent=rssi+" dBm · "+qDesc;
+    var rfi=document.getElementById("rssi-fi");
+    rfi.style.width=qPct.toFixed(0)+"%";
+    rfi.style.background=qPct>=70?"var(--accent)":qPct>=40?"#f0c45a":"#ff8a82";
+   }else{
+    document.getElementById("wifi-rssi").textContent="—";
+   }
+  }else{
+   document.getElementById("wifi-state").innerHTML='<span style="color:#ff8a82">не подключено</span>';
+   document.getElementById("wifi-ssid").textContent="—";
+   document.getElementById("wifi-ip").textContent=location.hostname;
+   document.getElementById("wifi-rssi").textContent="—";
+  }
+  // прибор
+  var devDot=document.getElementById("dev-dot"), devStat=document.getElementById("dev-stat"), devChip=document.getElementById("dev-chip");
+  if(r.usb_connected){
+   devDot.classList.remove("off"); devStat.textContent="Прибор подключён"; devChip.classList.remove("warn"); devChip.classList.add("ok");
+   document.getElementById("dev-usb").innerHTML='<span style="color:var(--accent)">подключено</span>';
+  }else{
+   devDot.classList.add("off"); devStat.textContent="Нет прибора"; devChip.classList.add("warn"); devChip.classList.remove("ok");
+   document.getElementById("dev-usb").innerHTML='<span style="color:#ff8a82">отключено</span>';
+  }
+  // TCP-мост
+  var tcpClient=!!r.tcp_client;
+  document.getElementById("tcp-state").innerHTML=tcpClient?'<span style="color:var(--accent)">клиент подключён</span>':'<span class="mut">свободен</span>';
+  document.getElementById("tcp-addr").textContent=location.hostname+":8234";
+ }catch(e){}
+}
+
+async function refreshDevice(){
+ try{
+  var r=await(await fetch("/api/device")).json();
+  if(r.valid){
+   document.getElementById("dev-ver").textContent=r.version||"—";
+   document.getElementById("dev-mode").textContent=(r.mode!==undefined?r.mode:"—")+(r.tc_on?" (TC)":"");
+   var t=(r.t1!==undefined?r.t1:"—")+" / "+(r.t2!==undefined?r.t2:"—")+" / "+(r.t3!==undefined?r.t3:"—")+" °C";
+   document.getElementById("dev-t").textContent=t;
+  }else{
+   document.getElementById("dev-ver").textContent="—";
+   document.getElementById("dev-mode").textContent="—";
+   document.getElementById("dev-t").textContent="—";
+  }
+  document.getElementById("dev-serial").textContent=r.serial||"—";
+  document.getElementById("dev-cal").textContent=r.calibration?("задана ("+r.calibration.length+" коэфф., порядок "+(r.calib_order||(r.calibration.length-1))+")"):"не задана";
+ }catch(e){}
+}
+
+async function refreshSpectrum(){
+ // /api/spectrum.json даёт cpu и кол-во каналов
+ try{
+  var r=await(await fetch("/api/spectrum.json")).json();
+  if(typeof r.cpu==="number"){
+   cpu.push(r.cpu); if(cpu.length>80)cpu.shift();
+   document.getElementById("cpu-cur").textContent=r.cpu;
+   spark("cpuc",cpu,'#f0c45a');
+  }
+  if(r.bins)document.getElementById("dev-ch").textContent=r.bins.length;
+ }catch(e){}
+}
+
+async function rebootDevice(){if(!confirm("Перезагрузить прибор?"))return;await post("/api/reboot-device");}
+async function rebootEsp(){if(!confirm("Перезагрузить ESP32?"))return;await post("/api/reboot-esp");}
+async function resetWifi(){if(!confirm("Сбросить WiFi и войти в режим настройки?"))return;await post("/api/wifi/reset");}
+
+(async function(){
+ document.getElementById("ip-chip").textContent=location.hostname;
+ await loadCsrf();
+ await refreshSystem();
+ await refreshDevice();
+ await refreshSpectrum();
+ setInterval(refreshSystem,2000);
+ setInterval(refreshDevice,5000);
+ setInterval(refreshSpectrum,2000);
+})();
+</script>
+</body>
+</html>
