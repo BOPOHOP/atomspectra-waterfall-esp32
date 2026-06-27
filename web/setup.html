@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html><head>
+<html lang="ru"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AtomSpectra WiFi Setup</title>
@@ -21,24 +21,76 @@ button:disabled{background:#2a322a;color:#5b655a;cursor:not-allowed}
 .ok{color:var(--accent)}.err{color:#ff8a82}
 #rescan{width:auto;padding:8px 16px;font-size:13px;background:var(--accent-dim);color:var(--accent);border:1px solid rgba(52,211,192,.4);margin:8px 0;font-weight:600}
 #rescan:hover{filter:brightness(1.2);background:var(--accent-dim)}
+#langBtn{position:fixed;top:12px;right:12px;width:auto;margin:0;padding:6px 12px;font-size:12px;background:var(--panel);color:var(--accent);border:1px solid var(--bd);border-radius:6px;font-weight:600}
 </style>
 </head>
 <body>
+<button id="langBtn">EN</button>
 <h1>AtomSpectra WiFi Setup</h1>
-<div class="nets" id="nets">Scanning networks...</div>
-<button id="rescan" onclick="scan()">Rescan</button>
-<input id="ssid" placeholder="WiFi Network (SSID)">
-<input id="pass" type="password" placeholder="Password">
-<button onclick="doConnect()" id="btn">Connect</button>
+<div class="nets" id="nets" data-i18n="scan.progress">Сканирование сетей...</div>
+<button id="rescan" onclick="scan()" data-i18n="btn.rescan">Пересканировать</button>
+<input id="ssid" data-i18n-placeholder="ph.ssid" placeholder="WiFi-сеть (SSID)">
+<input id="pass" type="password" data-i18n-placeholder="ph.pass" placeholder="Пароль">
+<button onclick="doConnect()" id="btn" data-i18n="btn.connect">Подключиться</button>
 <div id="st"></div>
 
 <script>
+"use strict";
+var DICT={
+ ru:{
+  "scan.progress":"Сканирование сетей...",
+  "scan.empty":"Сети не найдены",
+  "scan.fail":"Ошибка сканирования",
+  "scan.running":"Сканирование...",
+  "btn.rescan":"Пересканировать",
+  "btn.connect":"Подключиться",
+  "ph.ssid":"WiFi-сеть (SSID)",
+  "ph.pass":"Пароль",
+  "secured":"защищена",
+  "err.ssid":"Введите SSID",
+  "saving":"Сохранение...",
+  "saved":"Сохранено! Перезагрузка в режим STA...",
+  "rebooting":"Устройство перезагружается, подключитесь к своей WiFi-сети"
+ },
+ en:{
+  "scan.progress":"Scanning networks...",
+  "scan.empty":"No networks found",
+  "scan.fail":"Scan failed",
+  "scan.running":"Scanning...",
+  "btn.rescan":"Rescan",
+  "btn.connect":"Connect",
+  "ph.ssid":"WiFi Network (SSID)",
+  "ph.pass":"Password",
+  "secured":"secured",
+  "err.ssid":"Enter SSID",
+  "saving":"Saving...",
+  "saved":"Saved! Rebooting in STA mode...",
+  "rebooting":"Device rebooting, connect to your WiFi network"
+ }
+};
+var LANG=(function(){try{return localStorage.getItem("aswf-lang")||"ru";}catch(e){return"ru";}})();
+function t(k){var d=DICT[LANG]||DICT.ru;return(d[k]!==undefined)?d[k]:(DICT.ru[k]||k);}
+function applyI18n(){
+ document.querySelectorAll("[data-i18n]").forEach(function(el){
+  var k=el.getAttribute("data-i18n"); el.textContent=t(k);
+ });
+ document.querySelectorAll("[data-i18n-placeholder]").forEach(function(el){
+  var k=el.getAttribute("data-i18n-placeholder"); el.placeholder=t(k);
+ });
+ document.documentElement.lang=LANG;
+ var b=document.getElementById("langBtn"); if(b)b.textContent=(LANG==="ru")?"EN":"RU";
+}
+function setLang(l){
+ if(l!=="ru"&&l!=="en")l="ru";
+ LANG=l; try{localStorage.setItem("aswf-lang",l);}catch(e){}
+ applyI18n();
+}
 function scan(){
-    document.getElementById('nets').textContent='Scanning...';
+    document.getElementById('nets').textContent=t("scan.running");
     fetch('/api/scan').then(function(r){return r.json()}).then(function(d){
         var c=document.getElementById('nets');
         c.innerHTML='';
-        if(!d.length){c.textContent='No networks found';return;}
+        if(!d.length){c.textContent=t("scan.empty");return;}
         d.forEach(function(n){
             var div=document.createElement('div');
             div.className='net';
@@ -46,7 +98,7 @@ function scan(){
             s1.textContent=n.ssid;
             var s2=document.createElement('span');
             s2.className='sig';
-            s2.textContent=n.rssi+' dBm'+(n.auth>0?' [secured]':'');
+            s2.textContent=n.rssi+' dBm'+(n.auth>0?' ['+t("secured")+']':'');
             div.appendChild(s1);
             div.appendChild(s2);
             div.onclick=function(){
@@ -56,23 +108,25 @@ function scan(){
             };
             c.appendChild(div);
         });
-    }).catch(function(){document.getElementById('nets').textContent='Scan failed';});
+    }).catch(function(){document.getElementById('nets').textContent=t("scan.fail");});
 }
 function doConnect(){
     var s=document.getElementById('ssid').value;
     var p=document.getElementById('pass').value;
     var st=document.getElementById('st');
-    if(!s){st.className='err';st.textContent='Enter SSID';return;}
+    if(!s){st.className='err';st.textContent=t("err.ssid");return;}
     document.getElementById('btn').disabled=true;
-    st.className='ok';st.textContent='Saving...';
+    st.className='ok';st.textContent=t("saving");
     fetch('/api/connect',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({ssid:s,pass:p})})
     .then(function(r){return r.json()}).then(function(){
-        st.textContent='Saved! Rebooting in STA mode...';
+        st.textContent=t("saved");
     }).catch(function(){
-        st.className='ok';st.textContent='Device rebooting, connect to your WiFi network';
+        st.className='ok';st.textContent=t("rebooting");
     });
 }
+applyI18n();
+document.getElementById("langBtn").onclick=function(){setLang(LANG==="ru"?"en":"ru");};
 scan();
 </script>
 </body></html>

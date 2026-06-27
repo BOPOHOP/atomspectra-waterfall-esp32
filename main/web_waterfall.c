@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <inttypes.h>
+#include <unistd.h>      // close() для web_waterfall_on_close()
 
 static const char *TAG = "wf_web";
 
@@ -38,10 +39,14 @@ static void ws_del_locked(int fd)
 
 static void ws_add(int fd)
 {
+    // #UI-15 P0a: при отсутствии свободного слота — выталкиваем слот 0 (LRU),
+    // иначе зомби после F5 копились и водопад «глох» на новых клиентах.
     WS_LOCK();
     for (int i = 0; i < WF_WS_MAX; i++) if (s_ws_fds[i] == fd) { WS_UNLOCK(); return; }
-    for (int i = 0; i < WF_WS_MAX; i++)
-        if (s_ws_fds[i] <= 0) { s_ws_fds[i] = fd; s_ws_inflight[i] = 0; break; }
+    int slot = -1;
+    for (int i = 0; i < WF_WS_MAX; i++) if (s_ws_fds[i] <= 0) { slot = i; break; }
+    if (slot < 0) { ESP_LOGW(TAG, "ws_add: evict fd=%d for fd=%d", s_ws_fds[0], fd); slot = 0; }
+    s_ws_fds[slot] = fd; s_ws_inflight[slot] = 0;
     WS_UNLOCK();
 }
 
@@ -50,6 +55,16 @@ static void ws_del(int fd)
     WS_LOCK();
     ws_del_locked(fd);
     WS_UNLOCK();
+}
+
+/* #UI-15 P0: httpd close_fn — единственный надёжный сигнал «сокет закрыт».
+   Без него s_ws_fds[] копит зомби fd (RST/FIN при F5 не доходят как
+   HTTPD_WS_TYPE_CLOSE) и водопад глохнет после 4 F5. */
+void web_waterfall_on_close(httpd_handle_t hd, int sockfd)
+{
+    (void)hd;
+    ws_del(sockfd);
+    close(sockfd);   // обязательно: при заданном close_fn httpd сам не закрывает
 }
 
 typedef struct { int fd; size_t len; uint8_t buf[]; } ws_send_t;

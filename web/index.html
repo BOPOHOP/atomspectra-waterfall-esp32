@@ -20,6 +20,8 @@ header{ display:flex; align-items:center; justify-content:space-between; gap:16p
 .chips{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
 .chip{ background:#10140f; border:1px solid #243024; border-radius:999px; padding:6px 12px; font-size:11.5px; color:var(--dim); }
 .chip.ok{ color:#aeb6a8; display:flex; align-items:center; gap:7px; }
+.chip.lang{ cursor:pointer; color:var(--accent); border-color:rgba(52,211,192,.4); font-weight:600; padding:3px 8px; font-size:10.5px; line-height:1.2; min-width:28px; text-align:center; }
+.chip.lang:hover{ filter:brightness(1.15); }
 .dot{ width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 7px var(--accent); }
 nav{ display:flex; align-items:center; gap:2px; padding:0 20px; border-bottom:1px solid #1c241c; overflow-x:auto; }
 nav a,nav span{ padding:12px 16px; font-size:13px; color:var(--dim); flex-shrink:0; white-space:nowrap; }
@@ -63,21 +65,25 @@ table.saved tr.on td{ background:rgba(110,168,255,.07); }
 <body>
 <header>
 <div class="brand"><span class="logo"><i></i><b></b></span>AtomSpectra <span style="color:var(--accent)">&nbsp;Gateway</span></div>
-<div class="chips"><span class="chip ok"><span class="dot"></span><span id="device-chip">Прибор</span></span><span class="chip" id="ip-chip">—</span></div>
+<div class="chips">
+<span class="chip ok"><span class="dot"></span><span id="device-chip" data-i18n="device">Прибор</span></span>
+<span class="chip" id="ip-chip">—</span>
+<span class="chip lang" id="langBtn">EN</span>
+</div>
 </header>
 <nav>
-<span class="on">Спектр</span>
-<a href="/waterfall">Водопад</a>
-<a href="/saved">Сохранённые</a>
-<a href="/system">Система</a>
+<span class="on" data-i18n="nav.spectrum">Спектр</span>
+<a href="/waterfall" data-i18n="nav.waterfall">Водопад</a>
+<a href="/saved" data-i18n="nav.saved">Сохранённые</a>
+<a href="/system" data-i18n="nav.system">Система</a>
 </nav>
 
 <div class="wrap">
-<div class="status" id="status">Подключение...</div>
+<div class="status" id="status" data-i18n="status.connecting">Подключение...</div>
 
 <section class="panel pad">
 <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px;color:#aeb6a8">
-<span><span style="color:var(--accent);font-weight:600">&#9921; Flash LittleFS</span> &nbsp; <span id="flash-text">...</span></span>
+<span><span style="color:var(--accent);font-weight:600" data-i18n="flash.label">&#9921; Flash LittleFS</span> &nbsp; <span id="flash-text">...</span></span>
 </div>
 <div class="bar"><i id="flash-inner" style="width:0%;background:var(--accent);box-shadow:0 0 8px rgba(52,211,192,.4)"></i></div>
 </section>
@@ -85,9 +91,9 @@ table.saved tr.on td{ background:rgba(110,168,255,.07); }
 <section class="panel">
 <div class="row">
 <div class="grp">
-<button class="btn green" onclick="startAcq()">&#9654; Старт</button>
-<button class="btn amber" onclick="stopAcq()">&#9632; Стоп</button>
-<button class="btn red" onclick="resetSpectrum()">&#8634; Сброс</button>
+<button class="btn green" onclick="startAcq()" data-i18n-html="btn.start">&#9654; Старт</button>
+<button class="btn amber" onclick="stopAcq()" data-i18n-html="btn.stop">&#9632; Стоп</button>
+<button class="btn red" onclick="resetSpectrum()" data-i18n-html="btn.reset">&#8634; Сброс</button>
 </div>
 <div class="ml" style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
 <span class="big" id="big-time">00:00:00</span><span class="mut">|</span>
@@ -96,40 +102,43 @@ table.saved tr.on td{ background:rgba(110,168,255,.07); }
 </div>
 </div>
 <div class="row">
-<div style="display:flex;align-items:center;gap:8px"><span class="lbl">Шкала Y</span><div class="seg" id="seg-scale"><button id="btn-lin" class="on" onclick="setLog(false)">Lin</button><button id="btn-log" onclick="setLog(true)">Log</button></div></div>
-<div style="display:flex;align-items:center;gap:8px"><span class="lbl">Величина</span><div class="seg" id="seg-y"><button id="btn-cnt" class="on" onclick="setCps(false)">Counts</button><button id="btn-cps" onclick="setCps(true)">CPS</button></div></div>
-<div style="display:flex;align-items:center;gap:8px"><span class="lbl">Ось X</span><div class="seg" id="seg-x"><button id="btn-ch" class="on" onclick="setKev(false)">Ch</button><button id="btn-kev" onclick="setKev(true)">keV</button></div></div>
-<div class="ml" style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:#6b756a"><span style="width:18px;height:3px;border-radius:2px;background:var(--accent);display:inline-block"></span>живой</div>
+<div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.scale">Шкала Y</span><div class="seg" id="seg-scale"><button id="btn-lin" class="on" onclick="setLog(false)">Lin</button><button id="btn-log" onclick="setLog(true)">Log</button></div></div>
+<div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.value">Величина</span><div class="seg" id="seg-y"><button id="btn-cnt" class="on" onclick="setCps(false)">Counts</button><button id="btn-cps" onclick="setCps(true)">CPS</button></div></div>
+<div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.x">Ось X</span><div class="seg" id="seg-x"><button id="btn-ch" class="on" onclick="setKev(false)">Ch</button><button id="btn-kev" onclick="setKev(true)">keV</button></div></div>
+<!-- #UI-3: оверлей энергетических линий нуклидов -->
+<div style="display:flex;align-items:center;gap:8px;position:relative">
+ <button class="btn sm" id="btn-nuc" onclick="toggleNucPanel()" data-i18n="nuc.toggle" title="" disabled style="opacity:.5">&#129516; Линии</button>
+ <div id="nuc-panel" style="display:none;position:absolute;top:calc(100% + 6px);left:0;z-index:10;background:#0e120d;border:1px solid #2a322a;border-radius:8px;padding:10px 12px;min-width:260px;box-shadow:0 6px 18px rgba(0,0,0,.5)"></div>
+</div>
+<div class="ml" style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:#6b756a"><span style="width:18px;height:3px;border-radius:2px;background:var(--accent);display:inline-block"></span><span data-i18n="legend.live">живой</span></div>
 </div>
 </section>
 
 <section class="panel pad">
 <div style="position:relative">
 <canvas id="sp" width="1200" height="400" style="width:100%;height:auto;display:block;cursor:crosshair"></canvas>
-<div class="overlay"><div id="cursor-info" style="color:#5b655a">наведите курсор</div></div>
+<canvas id="spcur" width="1200" height="400" style="position:absolute;left:0;top:0;width:100%;height:auto;pointer-events:none"></canvas>
+<div class="overlay"><div id="cursor-info" data-i18n="cursor.hint" style="color:#5b655a">наведите курсор</div></div>
 </div>
 </section>
 
 <div class="row" style="padding:0;gap:8px">
-<button class="btn sm green" onclick="saveSpectrum()">&#128190; Сохранить</button>
-<button class="btn sm" onclick="location.href='/api/export.xml'">Export XML</button>
-<button class="btn sm" onclick="location.href='/api/export.csv'">Export CSV</button>
-<button class="btn sm" onclick="requestInfo()">Инфо</button>
-<button class="btn sm" onclick="toggleLogPanel()">Лог</button>
-<button class="btn sm" onclick="clearOverlay()" id="btn-clear-ovl" style="display:none">Снять overlay</button>
+<button class="btn sm green" onclick="saveSpectrum()" data-i18n-html="btn.save">&#128190; Сохранить</button>
+<button class="btn sm" onclick="location.href='/api/export.xml'" data-i18n="btn.expXml">Export XML</button>
+<button class="btn sm" onclick="location.href='/api/export.csv'" data-i18n="btn.expCsv">Export CSV</button>
+<button class="btn sm" onclick="requestInfo()" data-i18n="btn.info">Инфо</button>
+<button class="btn sm" onclick="toggleLogPanel()" data-i18n="btn.log">Лог</button>
+<button class="btn sm" onclick="clearOverlay()" id="btn-clear-ovl" style="display:none" data-i18n="btn.clearOvl">Снять overlay</button>
 <span id="overlay-label"></span>
-<button class="btn sm red" onclick="rebootDevice()">Reboot прибора</button>
-<button class="btn sm red" onclick="rebootEsp()">Reboot ESP</button>
-<button class="btn sm" onclick="resetWifi()">WiFi Reset</button>
-<div class="grp ml"><input class="inp" id="cmd" placeholder="команда, напр. -inf" style="width:200px;max-width:44vw"><button class="btn sm green" onclick="sendCmd()">Send</button></div>
+<div class="grp ml"><input class="inp" id="cmd" data-i18n-placeholder="ph.cmd" placeholder="команда, напр. -inf" style="width:200px;max-width:44vw"><button class="btn sm green" onclick="sendCmd()" data-i18n="btn.send">Send</button></div>
 </div>
 
 <section class="panel">
 <div class="row" id="cal-head" style="cursor:pointer;border:none">
 <span id="cal-arrow" style="color:var(--accent)">&#9654;</span>
-<span style="font-size:13px;font-weight:600;color:#e8efe2">Калибровка энергии</span>
+<span style="font-size:13px;font-weight:600;color:#e8efe2" data-i18n="cal.title">Калибровка энергии</span>
 <span class="lbl">E(ch) = e + d&middot;ch + c&middot;ch&sup2; + b&middot;ch&sup3; + a&middot;ch&#8308;</span>
-<span class="ml" id="calib-status" style="font-size:11px;color:#5b655a;border:1px solid #2a322a;border-radius:999px;padding:3px 10px">Не задана</span>
+<span class="ml" id="calib-status" data-i18n="cal.unset" style="font-size:11px;color:#5b655a;border:1px solid #2a322a;border-radius:999px;padding:3px 10px">Не задана</span>
 </div>
 <div id="cal-body" style="display:none;padding:0 16px 14px">
 <div style="max-width:460px">
@@ -140,9 +149,9 @@ table.saved tr.on td{ background:rgba(110,168,255,.07); }
 <div class="cal-coef"><span>e (offset)</span><input id="cal-e" type="text" placeholder="0"></div>
 </div>
 <div class="grp" style="margin-top:8px;flex-wrap:wrap">
-<button class="btn sm green" onclick="applyCalib()">Применить</button>
-<button class="btn sm" onclick="clearCalib()">Очистить</button>
-<button class="btn sm" onclick="requestInfo()">Считать с прибора</button>
+<button class="btn sm green" onclick="applyCalib()" data-i18n="cal.apply">Применить</button>
+<button class="btn sm" onclick="clearCalib()" data-i18n="cal.clear">Очистить</button>
+<button class="btn sm" onclick="requestInfo()" data-i18n="cal.read">Считать с прибора</button>
 </div>
 </div>
 </section>
@@ -151,16 +160,134 @@ table.saved tr.on td{ background:rgba(110,168,255,.07); }
 
 <section class="panel pad">
 <div style="display:flex;justify-content:space-between;margin-bottom:12px">
-<span style="font-size:14px;font-weight:600;color:#e8efe2">Сохранённые спектры</span>
-<a class="lbl" href="/saved" style="color:var(--accent)">все &rarr;</a>
+<span style="font-size:14px;font-weight:600;color:#e8efe2" data-i18n="saved.title">Сохранённые спектры</span>
+<a class="lbl" href="/saved" style="color:var(--accent)" data-i18n-html="saved.all">все &rarr;</a>
 </div>
-<div id="saved"><span class="empty">Загрузка...</span></div>
+<div id="saved"><span class="empty" data-i18n="saved.loading">Загрузка...</span></div>
 </section>
 </div>
 
 <script>
 "use strict";
+var DICT={
+ ru:{
+  "device":"Прибор",
+  "nav.spectrum":"Спектр","nav.waterfall":"Водопад","nav.saved":"Сохранённые","nav.system":"Система",
+  "status.connecting":"Подключение...",
+  "status.rebooting":"Перезагрузка...",
+  "status.wifiSetup":"Настройка WiFi...",
+  "status.nodata":"Нет данных",
+  "flash.label":"&#9921; Flash LittleFS",
+  "flash.fmt":"%1 / %2 КБ (%3%) &middot; свободно %4 КБ",
+  "btn.start":"&#9654; Старт","btn.stop":"&#9632; Стоп","btn.reset":"&#8634; Сброс",
+  "btn.save":"&#128190; Сохранить",
+  "btn.expXml":"Export XML","btn.expCsv":"Export CSV",
+  "btn.info":"Инфо","btn.log":"Лог","btn.clearOvl":"Снять overlay",
+  "btn.rebootDev":"Reboot прибора","btn.rebootEsp":"Reboot ESP","btn.wifiReset":"WiFi Reset",
+  "btn.send":"Send",
+  "ph.cmd":"команда, напр. -inf",
+  "ctl.scale":"Шкала Y","ctl.value":"Величина","ctl.x":"Ось X",
+  "nuc.toggle":"&#129516; Линии","nuc.title":"Линии нуклидов",
+  "nuc.all":"Все","nuc.none":"Снять",
+  "nuc.need_cal":"Нужна калибровка энергии",
+  "legend.live":"живой",
+  "cursor.hint":"наведите курсор",
+  "cal.title":"Калибровка энергии",
+  "cal.unset":"Не задана","cal.set":"Задана","cal.applied":"Применена","cal.error":"Ошибка",
+  "cal.apply":"Применить","cal.clear":"Очистить","cal.read":"Считать с прибора",
+  "saved.title":"Сохранённые спектры","saved.all":"все &rarr;",
+  "saved.loading":"Загрузка...","saved.empty":"Нет сохранённых",
+  "ax.ch":"Channel","ax.kev":"keV","ax.cnt":"Counts","ax.cps":"CPS",
+  "cur.kev":"кэВ","cur.cnt":"counts",
+  "th.idx":"#","th.saved":"Сохранено","th.counts":"Counts","th.time":"Время","th.export":"Export",
+  "btn.overlay":"Overlay","btn.del":"Удал.",
+  "confirm.del":"Удалить спектр #%1?",
+  "confirm.rebootDev":"Перезагрузить спектрометр?",
+  "confirm.rebootEsp":"Перезагрузить ESP32?",
+  "confirm.wifiReset":"Сбросить WiFi?",
+  "saved.savedAs":"Сохранён #%1","saved.saveErr":"Save error",
+  "log.start":"Start sent","log.stop":"Stop sent","log.reset":"Reset sent","log.info":"Info requested",
+  "log.sent":"Sent: %1","log.ovlOk":"Overlay loaded: #%1","log.ovlErr":"Overlay error: %1","log.ovlClear":"Overlay cleared",
+  "log.del":"Deleted #%1","log.rebootDev":"Reboot device sent",
+  "log.cal":"Calibration: [%1]","log.calErr":"Calibration error: %1","log.calClear":"Calibration cleared",
+  "err.prefix":"Error: %1"
+ },
+ en:{
+  "device":"Device",
+  "nav.spectrum":"Spectrum","nav.waterfall":"Waterfall","nav.saved":"Saved","nav.system":"System",
+  "status.connecting":"Connecting...",
+  "status.rebooting":"Rebooting...",
+  "status.wifiSetup":"WiFi setup...",
+  "status.nodata":"No data",
+  "flash.label":"&#9921; Flash LittleFS",
+  "flash.fmt":"%1 / %2 KB (%3%) &middot; free %4 KB",
+  "btn.start":"&#9654; Start","btn.stop":"&#9632; Stop","btn.reset":"&#8634; Reset",
+  "btn.save":"&#128190; Save",
+  "btn.expXml":"Export XML","btn.expCsv":"Export CSV",
+  "btn.info":"Info","btn.log":"Log","btn.clearOvl":"Clear overlay",
+  "btn.rebootDev":"Reboot device","btn.rebootEsp":"Reboot ESP","btn.wifiReset":"WiFi Reset",
+  "btn.send":"Send",
+  "ph.cmd":"command, e.g. -inf",
+  "ctl.scale":"Y scale","ctl.value":"Value","ctl.x":"X axis",
+  "nuc.toggle":"&#129516; Lines","nuc.title":"Nuclide lines",
+  "nuc.all":"All","nuc.none":"None",
+  "nuc.need_cal":"Energy calibration required",
+  "legend.live":"live",
+  "cursor.hint":"hover the chart",
+  "cal.title":"Energy calibration",
+  "cal.unset":"Not set","cal.set":"Set","cal.applied":"Applied","cal.error":"Error",
+  "cal.apply":"Apply","cal.clear":"Clear","cal.read":"Read from device",
+  "saved.title":"Saved spectra","saved.all":"all &rarr;",
+  "saved.loading":"Loading...","saved.empty":"No saved spectra",
+  "ax.ch":"Channel","ax.kev":"keV","ax.cnt":"Counts","ax.cps":"CPS",
+  "cur.kev":"keV","cur.cnt":"counts",
+  "th.idx":"#","th.saved":"Saved","th.counts":"Counts","th.time":"Time","th.export":"Export",
+  "btn.overlay":"Overlay","btn.del":"Del",
+  "confirm.del":"Delete spectrum #%1?",
+  "confirm.rebootDev":"Reboot spectrometer?",
+  "confirm.rebootEsp":"Reboot ESP32?",
+  "confirm.wifiReset":"Reset WiFi?",
+  "saved.savedAs":"Saved #%1","saved.saveErr":"Save error",
+  "log.start":"Start sent","log.stop":"Stop sent","log.reset":"Reset sent","log.info":"Info requested",
+  "log.sent":"Sent: %1","log.ovlOk":"Overlay loaded: #%1","log.ovlErr":"Overlay error: %1","log.ovlClear":"Overlay cleared",
+  "log.del":"Deleted #%1","log.rebootDev":"Reboot device sent",
+  "log.cal":"Calibration: [%1]","log.calErr":"Calibration error: %1","log.calClear":"Calibration cleared",
+  "err.prefix":"Error: %1"
+ }
+};
+var LANG=(function(){try{return localStorage.getItem("aswf-lang")||"ru";}catch(e){return"ru";}})();
+function tr(k){var d=DICT[LANG]||DICT.ru;return(d[k]!==undefined)?d[k]:(DICT.ru[k]||k);}
+function tfmt(k){var s=tr(k); for(var i=1;i<arguments.length;i++){s=s.replace("%"+i,arguments[i]);} return s;}
+function lcl(){return LANG==="ru"?"ru-RU":"en-US";}
+function applyI18n(){
+ document.querySelectorAll("[data-i18n]").forEach(function(el){
+  var k=el.getAttribute("data-i18n"); el.textContent=tr(k);
+ });
+ document.querySelectorAll("[data-i18n-html]").forEach(function(el){
+  var k=el.getAttribute("data-i18n-html"); el.innerHTML=tr(k);
+ });
+ document.querySelectorAll("[data-i18n-placeholder]").forEach(function(el){
+  var k=el.getAttribute("data-i18n-placeholder"); el.placeholder=tr(k);
+ });
+ document.documentElement.lang=LANG;
+ var b=document.getElementById("langBtn"); if(b)b.textContent=(LANG==="ru")?"EN":"RU";
+ document.title="AtomSpectra · "+tr("nav.spectrum");
+}
+function setLang(l){
+ if(l!=="ru"&&l!=="en")l="ru";
+ LANG=l; try{localStorage.setItem("aswf-lang",l);}catch(e){}
+ applyI18n();
+ if(typeof populateNucPanel==="function")populateNucPanel();
+ if(lastD)draw(lastD);else clearCanvas();
+ loadFlashInfo();
+ loadSaved();
+ refreshCalibStatus();
+}
+
 var C=document.getElementById("sp"),X=C.getContext("2d");
+var Ccur=document.getElementById("spcur"),Xcur=Ccur.getContext("2d");
+(function(){var dpr=Math.max(2,window.devicePixelRatio||1);/* #UI-18: supersample ≥2× → в zoom-оверлее источник downscale'ится, цифры чёткие */function hidpi(c,ctx,w,h){c.width=Math.round(w*dpr);c.height=Math.round(h*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);}hidpi(C,X,1200,400);hidpi(Ccur,Xcur,1200,400);})();
+var cursorCh=-1;
 var logEl=document.getElementById("log");
 var overlayBins=null,overlayIdx=-1;
 var isLog=false,isCps=false,isKev=false;
@@ -174,8 +301,7 @@ function post(url,opts){opts=opts||{};opts.method="POST";opts.headers=Object.ass
 function lg(m){logEl.textContent+=m+"\n";logEl.scrollTop=logEl.scrollHeight}
 function fmtTime(s){var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return(h>0?h+"h ":"")+(m>0?m+"m ":"")+ss+"s"}
 function fmtHMS(s){var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(ss).padStart(2,"0")}
-function fmtNum(n){return Math.round(n).toLocaleString('ru-RU')}
-function togBtn(a,b,v){document.getElementById(a).className="tog"+(v?"":" on");document.getElementById(b).className="tog"+(v?" on":"")}
+function fmtNum(n){return Math.round(n).toLocaleString(lcl())}
 function setLog(v){isLog=v;setSeg(["btn-lin","btn-log"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
 function setCps(v){isCps=v;setSeg(["btn-cnt","btn-cps"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
 function setKev(v){isKev=v;setSeg(["btn-ch","btn-kev"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
@@ -189,41 +315,41 @@ function clearCanvas(){
  X.fillStyle="#0c0f0b";X.fillRect(0,0,1200,400);
  X.strokeStyle="#283024";X.lineWidth=1;X.strokeRect(PL+.5,PT+.5,PW,PH);
  X.fillStyle="#4a534a";X.font="14px ui-monospace,monospace";X.textAlign="center";
- X.fillText("Нет данных",PL+PW/2,PT+PH/2);
- X.font="11px ui-monospace,monospace";X.fillText(isKev&&calib?"keV":"Channel",PL+PW/2,PB+32);
- X.save();X.translate(12,PT+PH/2);X.rotate(-Math.PI/2);X.textAlign="center";X.fillText(isCps?"CPS":"Counts",0,0);X.restore();
+ X.fillText(tr("status.nodata"),PL+PW/2,PT+PH/2);
+ X.font="11px ui-monospace,monospace";X.fillText(isKev&&calib?tr("ax.kev"):tr("ax.ch"),PL+PW/2,PB+32);
+ X.save();X.translate(12,PT+PH/2);X.rotate(-Math.PI/2);X.textAlign="center";X.fillText(isCps?tr("ax.cps"):tr("ax.cnt"),0,0);X.restore();
 }
 
 async function update(){
  try{
   var r=await fetch("/api/spectrum.json");
-  if(!r.ok){clearCanvas();document.getElementById("status").textContent="Нет данных";return}
+  if(!r.ok){clearCanvas();document.getElementById("status").textContent=tr("status.nodata");return}
   var d=await r.json();
-  if(d.calib){calib=d.calib;if(!calibEditing)fillCalibFields(d.calib)}
+  if(d.calib){calib=d.calib;if(!calibEditing)fillCalibFields(d.calib);nucBtnEnable(true);} else if(!calib){nucBtnEnable(false);}
   if(d.serial)document.getElementById("device-chip").textContent=d.serial;
   document.getElementById("ip-chip").textContent=location.hostname;
   lastD=d;
   var stEl=document.getElementById("status");
   stEl.innerHTML='<span class="ac">CPS <span>'+d.cps+'</span></span><span class="sep">|</span>'+
-   '<span class="w"><span>'+d.total.toLocaleString('ru-RU')+'</span> <span class="mut">counts</span></span><span class="sep">|</span>'+
+   '<span class="w"><span>'+d.total.toLocaleString(lcl())+'</span> <span class="mut">'+tr("ax.cnt").toLowerCase()+'</span></span><span class="sep">|</span>'+
    '<span>'+fmtTime(d.time)+'</span><span class="sep">|</span>'+
    '<span>CPU <span>'+d.cpu+'</span>%</span><span class="sep">|</span>'+
    '<span>Lost <span>'+d.lost+'</span></span><span class="sep">|</span>'+
    '<span>T '+d.t1+'/'+d.t2+'/'+d.t3+' &deg;C</span>';
   document.getElementById("big-time").textContent=fmtHMS(d.time);
   document.getElementById("big-cps").textContent=d.cps;
-  document.getElementById("big-total").textContent=d.total.toLocaleString('ru-RU');
+  document.getElementById("big-total").textContent=d.total.toLocaleString(lcl());
   draw(d);
- }catch(e){clearCanvas();document.getElementById("status").textContent="Error: "+e}
+ }catch(e){clearCanvas();document.getElementById("status").textContent=tfmt("err.prefix",e)}
 }
 
 function draw(d){
  var bins=d.bins,time=d.time,N=bins.length;
- var t=time>0?time:1;
+ var tt=time>0?time:1;
  var yV=new Array(N);
- for(var i=0;i<N;i++)yV[i]=isCps?bins[i]/t:bins[i];
+ for(var i=0;i<N;i++)yV[i]=isCps?bins[i]/tt:bins[i];
  var yO=null;
- if(overlayBins){yO=new Array(overlayBins.length);for(var i=0;i<overlayBins.length;i++)yO[i]=isCps?overlayBins[i]/t:overlayBins[i]}
+ if(overlayBins){yO=new Array(overlayBins.length);for(var i=0;i<overlayBins.length;i++)yO[i]=isCps?overlayBins[i]/tt:overlayBins[i]}
  var mx=0;
  for(var i=0;i<N;i++)if(yV[i]>mx)mx=yV[i];
  if(yO)for(var i=0;i<yO.length;i++)if(yO[i]>mx)mx=yO[i];
@@ -250,50 +376,67 @@ function draw(d){
  var bw=PW/N;
  var accent=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#34d3c0';
  if(yO){X.fillStyle="rgba(110,168,255,0.28)";for(var i=0;i<yO.length;i++){var y=yMap(yO[i]);if(PB-y>0.3)X.fillRect(PL+i*bw,y,Math.max(bw-.3,.3),PB-y)}}
- // живой спектр — заливка градиентом + контур accent
  X.fillStyle=accent+"44";
  for(var i=0;i<N;i++){var y=yMap(yV[i]);if(PB-y>0.3)X.fillRect(PL+i*bw,y,Math.max(bw-.3,.3),PB-y)}
  if(yO){X.strokeStyle="#6ea8ff";X.lineWidth=1.1;X.setLineDash([5,4]);X.beginPath();for(var i=0;i<yO.length;i++){var px=PL+i*bw+bw/2,py=yMap(yO[i]);i===0?X.moveTo(px,py):X.lineTo(px,py)}X.stroke();X.setLineDash([])}
  X.restore();
+ drawNuclides(N);
  X.strokeStyle="#283024";X.lineWidth=1;X.strokeRect(PL+.5,PT+.5,PW,PH);
  X.fillStyle="#5a645a";X.font="11px ui-monospace,monospace";X.textAlign="right";
  for(var i=0;i<yTicks.length;i++){var y=yMap(yTicks[i]);if(y>=PT&&y<=PB)X.fillText(fmtY(yTicks[i]),PL-6,y+4)}
  X.textAlign="center";
  for(var i=0;i<xTicks.length;i++){X.strokeStyle="#283024";X.beginPath();X.moveTo(xTicks[i].x,PB);X.lineTo(xTicks[i].x,PB+5);X.stroke();X.fillStyle="#6b756a";X.fillText(xTicks[i].l,xTicks[i].x,PB+16)}
- X.fillStyle="#4a534a";X.fillText(isKev&&calib?"keV":"Channel",PL+PW/2,PB+32);
- X.save();X.translate(12,PT+PH/2);X.rotate(-Math.PI/2);X.textAlign="center";X.fillText(isCps?"CPS":"Counts",0,0);X.restore();
+ X.fillStyle="#4a534a";X.fillText(isKev&&calib?tr("ax.kev"):tr("ax.ch"),PL+PW/2,PB+32);
+ X.save();X.translate(12,PT+PH/2);X.rotate(-Math.PI/2);X.textAlign="center";X.fillText(isCps?tr("ax.cps"):tr("ax.cnt"),0,0);X.restore();
 }
 
+function drawCursor(){
+ Xcur.clearRect(0,0,1200,400);
+ if(cursorCh<0||!lastD)return;
+ var N=lastD.bins.length; if(N<=0)return;
+ var bw=PW/N;
+ var x=PL+(cursorCh+0.5)*bw;
+ if(x<PL||x>PR)return;
+ var accent=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#34d3c0';
+ Xcur.strokeStyle=accent; Xcur.lineWidth=1;
+ Xcur.setLineDash([4,3]);
+ Xcur.beginPath(); Xcur.moveTo(x+.5,PT); Xcur.lineTo(x+.5,PB); Xcur.stroke();
+ Xcur.setLineDash([]);
+}
 C.addEventListener("mousemove",function(e){
  if(!lastD)return;
  var rect=C.getBoundingClientRect();
  var mx=(e.clientX-rect.left)*(1200/rect.width);
  var my=(e.clientY-rect.top)*(400/rect.height);
  var info=document.getElementById("cursor-info");
- if(mx<PL||mx>PR||my<PT||my>PB){info.style.color="#5b655a";info.textContent="наведите курсор";return}
+ if(mx<PL||mx>PR||my<PT||my>PB){info.style.color="#5b655a";info.textContent=tr("cursor.hint");if(cursorCh!==-1){cursorCh=-1;drawCursor();}return}
  var ch=Math.floor((mx-PL)/PW*lastD.bins.length);
- if(ch<0||ch>=lastD.bins.length){info.style.color="#5b655a";info.textContent="наведите курсор";return}
+ if(ch<0||ch>=lastD.bins.length){info.style.color="#5b655a";info.textContent=tr("cursor.hint");if(cursorCh!==-1){cursorCh=-1;drawCursor();}return}
  var cnt=lastD.bins[ch];
  var s="ch "+ch;
- if(calib)s+=" &middot; "+ch2kev(ch).toFixed(1)+" кэВ";
- s+="<br><span style='color:#aeb6a8'>"+cnt+" counts";
+ if(calib)s+=" &middot; "+ch2kev(ch).toFixed(1)+" "+tr("cur.kev");
+ s+="<br><span style='color:#aeb6a8'>"+cnt+" "+tr("cur.cnt");
  if(lastD.time>0)s+=" &middot; "+(cnt/lastD.time).toFixed(2)+" CPS";
  s+="</span>";
  info.style.color=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#34d3c0';
  info.innerHTML=s;
+ if(ch!==cursorCh){cursorCh=ch;drawCursor();}
 });
-C.addEventListener("mouseleave",function(){var i=document.getElementById("cursor-info");i.style.color="#5b655a";i.textContent="наведите курсор"});
+C.addEventListener("mouseleave",function(){var i=document.getElementById("cursor-info");i.style.color="#5b655a";i.textContent=tr("cursor.hint");if(cursorCh!==-1){cursorCh=-1;drawCursor();}});
 
+function refreshCalibStatus(){
+ var s=document.getElementById("calib-status");
+ if(!s)return;
+ if(calib){s.textContent=tr("cal.set");s.style.color="var(--accent)";s.style.borderColor="rgba(52,211,192,.35)";}
+ else{s.textContent=tr("cal.unset");s.style.color="#5b655a";s.style.borderColor="#2a322a";}
+}
 function fillCalibFields(cal){
  document.getElementById("cal-e").value=cal[0]||0;
  document.getElementById("cal-d").value=cal[1]||0;
  document.getElementById("cal-c").value=cal[2]||0;
  document.getElementById("cal-b").value=cal[3]||0;
  document.getElementById("cal-a").value=cal[4]||0;
- var s=document.getElementById("calib-status");
- s.textContent="Задана";
- s.style.color="var(--accent)";
- s.style.borderColor="rgba(52,211,192,.35)";
+ refreshCalibStatus();
 }
 async function applyCalib(){
  var e=parseFloat(document.getElementById("cal-e").value)||0;
@@ -304,23 +447,24 @@ async function applyCalib(){
  var coeffs=[e,d,c,b,a];
  try{
   var r=await post("/api/calibration",{headers:{"Content-Type":"application/json"},body:JSON.stringify({coeffs:coeffs})});
-  if(r.ok){calibEditing=false;calib=coeffs;var s=document.getElementById("calib-status");s.textContent="Применена";s.style.color="var(--accent)";lg("Calibration: ["+coeffs.join(", ")+"]");if(lastD)draw(lastD)}
-  else{var s2=document.getElementById("calib-status");s2.textContent="Ошибка";s2.style.color="#ff8a82"}
- }catch(err){lg("Calibration error: "+err)}
+  if(r.ok){calibEditing=false;calib=coeffs;var s=document.getElementById("calib-status");s.textContent=tr("cal.applied");s.style.color="var(--accent)";lg(tfmt("log.cal",coeffs.join(", ")));nucBtnEnable(true);if(lastD)draw(lastD)}
+  else{var s2=document.getElementById("calib-status");s2.textContent=tr("cal.error");s2.style.color="#ff8a82"}
+ }catch(err){lg(tfmt("log.calErr",err))}
 }
 function clearCalib(){
  calibEditing=true;calib=null;
  ["cal-a","cal-b","cal-c","cal-d","cal-e"].forEach(function(id){document.getElementById(id).value=""});
- var s=document.getElementById("calib-status");s.textContent="Не задана";s.style.color="#5b655a";
+ refreshCalibStatus();
+ nucBtnEnable(false);
  if(isKev)setKev(false);else if(lastD)draw(lastD);
- lg("Calibration cleared");
+ lg(tr("log.calClear"));
 }
 async function loadFlashInfo(){
  try{
   var r=await(await fetch("/api/system")).json();
   var total=r.flash_total||0,used=r.flash_used||0,free=total-used;
   var pct=total>0?((used/total)*100).toFixed(1):0;
-  document.getElementById("flash-text").textContent=(used/1024).toFixed(0)+" / "+(total/1024).toFixed(0)+" КБ ("+pct+"%) &middot; свободно "+(free/1024).toFixed(0)+" КБ";
+  document.getElementById("flash-text").innerHTML=tfmt("flash.fmt",(used/1024).toFixed(0),(total/1024).toFixed(0),pct,(free/1024).toFixed(0));
   var fi=document.getElementById("flash-inner");
   fi.style.width=pct+"%";
   fi.style.background=pct>90?"#ff8a82":pct>70?"#f0c45a":"var(--accent)";
@@ -329,40 +473,39 @@ async function loadFlashInfo(){
 async function loadOverlay(idx){
  try{var r=await(await fetch("/api/saved/"+idx+"/spectrum.json")).json();overlayBins=r.bins;overlayIdx=idx;
  document.getElementById("overlay-label").textContent="Overlay: #"+idx;document.getElementById("btn-clear-ovl").style.display="";
- lg("Overlay loaded: #"+idx);if(lastD)draw(lastD);loadSaved();}catch(e){lg("Overlay error: "+e)}
+ lg(tfmt("log.ovlOk",idx));if(lastD)draw(lastD);loadSaved();}catch(e){lg(tfmt("log.ovlErr",e))}
 }
-function clearOverlay(){overlayBins=null;overlayIdx=-1;document.getElementById("overlay-label").textContent="";document.getElementById("btn-clear-ovl").style.display="none";lg("Overlay cleared");if(lastD)draw(lastD);loadSaved();}
+function clearOverlay(){overlayBins=null;overlayIdx=-1;document.getElementById("overlay-label").textContent="";document.getElementById("btn-clear-ovl").style.display="none";lg(tr("log.ovlClear"));if(lastD)draw(lastD);loadSaved();}
 async function loadSaved(){
  var el=document.getElementById("saved");
  try{
   var r=await(await fetch("/api/list")).json();
-  if(!r.spectra||r.spectra.length===0){el.innerHTML='<span class="empty">Нет сохранённых</span>';return}
-  var html='<table class="saved"><tr><th>#</th><th>Сохранено</th><th>Counts</th><th>Время</th><th>Export</th><th></th></tr>';
+  if(!r.spectra||r.spectra.length===0){el.innerHTML='<span class="empty">'+tr("saved.empty")+'</span>';return}
+  var html='<table class="saved"><tr><th>'+tr("th.idx")+'</th><th>'+tr("th.saved")+'</th><th>'+tr("th.counts")+'</th><th>'+tr("th.time")+'</th><th>'+tr("th.export")+'</th><th></th></tr>';
   for(var i=0;i<r.spectra.length;i++){
-   var s=r.spectra[i];var dt=s.saved_at>0?new Date(s.saved_at*1000).toLocaleString('ru-RU'):'—';
+   var s=r.spectra[i];var dt=s.saved_at>0?new Date(s.saved_at*1000).toLocaleString(lcl()):'—';
    var onCls=s.index===overlayIdx?' class="on"':'';
-   html+='<tr'+onCls+'><td>'+s.index+'</td><td>'+dt+'</td><td>'+s.counts.toLocaleString('ru-RU')+'</td><td>'+fmtTime(s.time)+'</td>'+
+   html+='<tr'+onCls+'><td>'+s.index+'</td><td>'+dt+'</td><td>'+s.counts.toLocaleString(lcl())+'</td><td>'+fmtTime(s.time)+'</td>'+
     '<td><a href="/api/saved/'+s.index+'/export.xml" style="color:var(--accent)">XML</a> &middot; <a href="/api/saved/'+s.index+'/export.csv" style="color:var(--accent)">CSV</a></td>'+
-    '<td><button class="btn sm" onclick="loadOverlay('+s.index+')">Overlay</button> <button class="btn sm red" onclick="delSaved('+s.index+')">Удал.</button></td></tr>';
+    '<td><button class="btn sm" onclick="loadOverlay('+s.index+')">'+tr("btn.overlay")+'</button> <button class="btn sm red" onclick="delSaved('+s.index+')">'+tr("btn.del")+'</button></td></tr>';
   }
   el.innerHTML=html+'</table>';
- }catch(e){el.innerHTML='<span class="empty">Error: '+e+'</span>'}
+ }catch(e){el.innerHTML='<span class="empty">'+tfmt("err.prefix",e)+'</span>'}
 }
-async function delSaved(idx){if(!confirm("Удалить спектр #"+idx+"?"))return;await post("/api/saved/"+idx+"/delete");lg("Deleted #"+idx);if(overlayIdx===idx)clearOverlay();loadSaved();loadFlashInfo()}
-async function startAcq(){await post("/api/command",{body:"-sta"});lg("Start sent")}
-async function stopAcq(){await post("/api/command",{body:"-sto"});lg("Stop sent")}
-async function resetSpectrum(){clearCanvas();lastD=null;document.getElementById("big-time").textContent="00:00:00";document.getElementById("big-cps").textContent="0";document.getElementById("big-total").textContent="0";await post("/api/reset");lg("Reset sent")}
-async function saveSpectrum(){var r=await(await post("/api/save")).json();lg(r.ok?"Сохранён #"+r.index:"Save error");if(r.ok){loadSaved();loadFlashInfo()}}
-async function requestInfo(){calibEditing=false;await post("/api/command",{body:"-inf"});lg("Info requested");setTimeout(update,500)}
-async function sendCmd(){var c=document.getElementById("cmd").value;if(!c)return;await post("/api/command",{body:c});lg("Sent: "+c);setTimeout(update,500)}
+async function delSaved(idx){if(!confirm(tfmt("confirm.del",idx)))return;await post("/api/saved/"+idx+"/delete");lg(tfmt("log.del",idx));if(overlayIdx===idx)clearOverlay();loadSaved();loadFlashInfo()}
+async function startAcq(){await post("/api/command",{body:"-sta"});lg(tr("log.start"))}
+async function stopAcq(){await post("/api/command",{body:"-sto"});lg(tr("log.stop"))}
+async function resetSpectrum(){clearCanvas();lastD=null;document.getElementById("big-time").textContent="00:00:00";document.getElementById("big-cps").textContent="0";document.getElementById("big-total").textContent="0";await post("/api/reset");lg(tr("log.reset"))}
+async function saveSpectrum(){var r=await(await post("/api/save")).json();lg(r.ok?tfmt("saved.savedAs",r.index):tr("saved.saveErr"));if(r.ok){loadSaved();loadFlashInfo()}}
+async function requestInfo(){calibEditing=false;await post("/api/command",{body:"-inf"});lg(tr("log.info"));setTimeout(update,500)}
+async function sendCmd(){var c=document.getElementById("cmd").value;if(!c)return;await post("/api/command",{body:c});lg(tfmt("log.sent",c));setTimeout(update,500)}
 function toggleLogPanel(){logEl.style.display=logEl.style.display==="none"?"block":"none"}
-async function rebootDevice(){if(!confirm("Перезагрузить спектрометр?"))return;await post("/api/reboot-device");lg("Reboot device sent")}
-async function rebootEsp(){if(!confirm("Перезагрузить ESP32?"))return;await post("/api/reboot-esp");document.getElementById("status").textContent="Перезагрузка..."}
-async function resetWifi(){if(!confirm("Сбросить WiFi?"))return;await post("/api/wifi/reset");document.getElementById("status").textContent="Настройка WiFi..."}
+async function rebootDevice(){if(!confirm(tr("confirm.rebootDev")))return;await post("/api/reboot-device");lg(tr("log.rebootDev"))}
+async function rebootEsp(){if(!confirm(tr("confirm.rebootEsp")))return;await post("/api/reboot-esp");document.getElementById("status").textContent=tr("status.rebooting")}
+async function resetWifi(){if(!confirm(tr("confirm.wifiReset")))return;await post("/api/wifi/reset");document.getElementById("status").textContent=tr("status.wifiSetup")}
 document.getElementById("cmd").addEventListener("keydown",function(e){if(e.key==="Enter")sendCmd()});
 ["cal-a","cal-b","cal-c","cal-d","cal-e"].forEach(function(id){document.getElementById(id).addEventListener("focus",function(){calibEditing=true})});
 
-// разворачивание калибровочной панели
 document.getElementById("cal-head").onclick=function(){
  var b=document.getElementById("cal-body");
  var open=b.style.display==="none";
@@ -372,19 +515,272 @@ document.getElementById("cal-head").onclick=function(){
 
 async function initCalib(){
  try{var r=await(await fetch("/api/device")).json();
- if(r.calibration){calib=r.calibration;if(!calibEditing)fillCalibFields(r.calibration)}
+ if(r.calibration){calib=r.calibration;if(!calibEditing)fillCalibFields(r.calibration);nucBtnEnable(true);}
  if(r.serial){document.getElementById("device-chip").textContent=r.serial}}catch(e){}
 }
+
+applyI18n();
+document.getElementById("langBtn").onclick=function(){setLang(LANG==="ru"?"en":"ru");};
+
+/* #UI-3: оверлей энергетических линий нуклидов */
+var NUCLIDES=[
+ {id:"k40",   name:"K-40",   color:"#f0c45a", lines:[1460.8]},
+ {id:"cs137", name:"Cs-137", color:"#ff8a82", lines:[661.7]},
+ {id:"co60",  name:"Co-60",  color:"#7ed4ff", lines:[1173.2,1332.5]},
+ {id:"tl208", name:"Tl-208", color:"#c78bff", lines:[583.2,2614.5]},
+ {id:"ac228", name:"Ac-228", color:"#9ad17a", lines:[338.3,911.2,968.9]},
+ {id:"pb214", name:"Pb-214", color:"#ff9a55", lines:[242.0,295.2,351.9]},
+ {id:"bi214", name:"Bi-214", color:"#ffd16a", lines:[609.3,1120.3,1764.5]},
+ {id:"am241", name:"Am-241", color:"#ff6ec0", lines:[59.5]},
+ {id:"na22",  name:"Na-22",  color:"#6ea8ff", lines:[511.0,1274.5]},
+ {id:"i131",  name:"I-131",  color:"#5fe7c3", lines:[364.5]},
+ {id:"mn54",  name:"Mn-54",  color:"#d0d36a", lines:[834.8]},
+ {id:"ann",   name:"e⁺/e⁻ 511", color:"#8a9686", lines:[511.0]}
+];
+var nucShow=(function(){
+ try{var raw=localStorage.getItem("aswf-nuc");if(raw){var o=JSON.parse(raw);if(o&&typeof o==="object")return o;}}catch(e){}
+ return {};
+})();
+function nucSave(){try{localStorage.setItem("aswf-nuc",JSON.stringify(nucShow));}catch(e){}}
+function setNuc(id,v){nucShow[id]=!!v;nucSave();if(lastD)draw(lastD);}
+function nucAll(v){for(var i=0;i<NUCLIDES.length;i++){nucShow[NUCLIDES[i].id]=!!v;var cb=document.getElementById("nuc-cb-"+NUCLIDES[i].id);if(cb)cb.checked=!!v;}nucSave();if(lastD)draw(lastD);}
+function populateNucPanel(){
+ var p=document.getElementById("nuc-panel");if(!p)return;
+ var h='<div style="font-size:11px;color:var(--accent);font-weight:600;margin-bottom:6px">'+tr("nuc.title")+'</div>';
+ h+='<div style="display:flex;gap:6px;margin-bottom:6px"><button class="btn sm" onclick="nucAll(true)">'+tr("nuc.all")+'</button><button class="btn sm" onclick="nucAll(false)">'+tr("nuc.none")+'</button></div>';
+ h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:11.5px;max-height:260px;overflow:auto">';
+ for(var i=0;i<NUCLIDES.length;i++){
+  var n=NUCLIDES[i];var chk=nucShow[n.id]?" checked":"";
+  h+='<label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:#cfd6cd">'+
+     '<input type="checkbox" id="nuc-cb-'+n.id+'"'+chk+' onchange="setNuc(\''+n.id+'\',this.checked)">'+
+     '<span style="display:inline-block;width:10px;height:3px;background:'+n.color+';border-radius:1px"></span>'+
+     '<span>'+n.name+'</span></label>';
+ }
+ h+='</div>';
+ p.innerHTML=h;
+}
+function toggleNucPanel(){
+ var b=document.getElementById("btn-nuc");if(b.disabled)return;
+ var p=document.getElementById("nuc-panel");
+ p.style.display=(p.style.display==="none"||!p.style.display)?"block":"none";
+}
+function nucBtnEnable(on){
+ var b=document.getElementById("btn-nuc");if(!b)return;
+ b.disabled=!on;b.style.opacity=on?"1":".5";
+ b.title=on?"":tr("nuc.need_cal");
+ if(!on){var p=document.getElementById("nuc-panel");if(p)p.style.display="none";}
+}
+function drawNuclides(N){
+ if(!calib||!lastD)return;
+ var any=false;for(var k in nucShow){if(nucShow[k]){any=true;break;}}
+ if(!any)return;
+ X.save();X.beginPath();X.rect(PL,PT,PW,PH);X.clip();
+ X.font="10.5px ui-monospace,monospace";X.textBaseline="bottom";
+ for(var i=0;i<NUCLIDES.length;i++){
+  var n=NUCLIDES[i];if(!nucShow[n.id])continue;
+  for(var j=0;j<n.lines.length;j++){
+   var keV=n.lines[j];
+   var c=kev2ch(keV);
+   if(c<0||c>=N)continue;
+   var x=PL+(c+0.5)*(PW/N);
+   if(x<PL||x>PR)continue;
+   X.strokeStyle=n.color;X.lineWidth=1;X.setLineDash([4,3]);
+   X.beginPath();X.moveTo(x+.5,PT);X.lineTo(x+.5,PB);X.stroke();
+   X.setLineDash([]);
+   X.fillStyle=n.color;X.textAlign="left";
+   var lbl=n.name+" "+keV.toFixed(1);
+   var tw=X.measureText(lbl).width;
+   var tx=(x+tw+4>PR)?(x-tw-4):(x+3);
+   X.fillText(lbl,tx,PT+12+(j%3)*12);
+  }
+ }
+ X.restore();
+}
+
 (async function(){
  document.getElementById("ip-chip").textContent=location.hostname;
  await loadCsrf();
- setInterval(update,1000);
+ populateNucPanel();
+ setInterval(update,2000);   /* #UI-15: 1000→2000ms — chunked /api/spectrum.json ел сокеты при F5; макс. uri_handlers=11 */
  setInterval(loadFlashInfo,10000);
  clearCanvas();
  initCalib();
  update();
  loadSaved();
  loadFlashInfo();
+})();
+</script>
+<style>
+.zoom-overlay{position:fixed;inset:0;background:#000;z-index:9999;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.zoom-overlay canvas{touch-action:none;cursor:grab;background:#000;display:block}
+.zoom-overlay.dragging canvas{cursor:grabbing}
+.zoom-overlay .zo-x{position:absolute;top:14px;right:14px;background:rgba(20,24,18,.85);color:#cfd6cd;border:1px solid #2b3327;border-radius:8px;padding:8px 14px;font:600 16px system-ui;cursor:pointer;z-index:2}
+.zoom-overlay .zo-x:hover{border-color:#34d3c0;color:#34d3c0}
+.zoom-overlay .zo-hint{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);background:rgba(20,24,18,.7);color:#8a9686;border:1px solid #20281e;border-radius:8px;padding:6px 12px;font:12px system-ui;pointer-events:none;white-space:nowrap}
+#sp{cursor:zoom-in!important}
+</style>
+<script>
+(function(){
+if(window.openZoomOverlay)return;
+window.openZoomOverlay=function(sourcesFn,opts){
+ opts=opts||{};
+ var ov=document.createElement("div");ov.className="zoom-overlay";
+ var cv=document.createElement("canvas");
+ var btn=document.createElement("button");btn.className="zo-x";btn.textContent="✕";
+ var hint=document.createElement("div");hint.className="zo-hint";
+ hint.textContent=(window.LANG==="en")?"wheel / pinch = zoom · drag = pan · dblclick = reset · Esc = close":"колесо / щипок = зум · drag = pan · 2× клик = сброс · Esc = выход";
+ ov.appendChild(cv);ov.appendChild(btn);ov.appendChild(hint);
+ document.body.appendChild(ov);
+ var prevOvf=document.body.style.overflow;document.body.style.overflow="hidden"; /* #UI-24: лок прокрутки фона */
+ var zoom=1,panX=0,panY=0,W=0,H=0,raf=0,closed=false;
+ /* #UI-19: живой маркер курсора в оверлее */
+ var mouse={x:0,y:0,inside:false};
+ var cmap=null; /* {x0,w} первого источника в T-space (CSS px) для readout */
+ function resize(){W=ov.clientWidth;H=ov.clientHeight;var dpr=window.devicePixelRatio||1;cv.style.width=W+"px";cv.style.height=H+"px";cv.width=Math.floor(W*dpr);cv.height=Math.floor(H*dpr);}
+ resize();window.addEventListener("resize",resize);
+ function render(){
+  if(closed)return;
+  var srcs=sourcesFn();
+  var ctx=cv.getContext("2d");
+  var dpr=window.devicePixelRatio||1;
+  ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle="#000";ctx.fillRect(0,0,cv.width,cv.height);
+  cmap=null;
+  var pclip=null; /* #UI-22: экранные границы панели по вертикали (для обрезки курсора) */
+  if(srcs&&srcs.length){
+   /* #UI-20: все источники одной display-шириной Wd → выровнены по оси каналов.
+      Высота каждого по собственному аспекту; supersample (#UI-18) сохраняется (downscale=чётко). */
+   var ratios=srcs.map(function(s){return s.canvas.height/s.canvas.width;});
+   var sumR=ratios.reduce(function(a,b){return a+b;},0);
+   /* #UI-23: fill — растягиваем на весь вьюпорт по ширине и высоте (аспект не сохраняем).
+      hScale делит totH между источниками пропорционально их аспектам. */
+   var Wd=0.98*W;
+   var totH=0.96*H;
+   var hScale=totH/sumR;
+   var ox=(W-Wd)/2,oy0=(H-totH)/2;
+   /* #UI-24: контент закреплён — pan не выпускает панель за края; на fit-зуме строго по центру. */
+   var L0=(ox-W/2)*zoom+W/2, R0=(ox+Wd-W/2)*zoom+W/2;
+   if(Wd*zoom>=W) panX=Math.min(-L0,Math.max(W-R0,panX)); else panX=(W-Wd*zoom)/2-L0;
+   var T0=(oy0-H/2)*zoom+H/2, B0=(oy0+totH-H/2)*zoom+H/2;
+   if(totH*zoom>=H) panY=Math.min(-T0,Math.max(H-B0,panY)); else panY=(H-totH*zoom)/2-T0;
+   /* #UI-22/#UI-26: экранные границы панели по обеим осям через pan/zoom */
+   pclip={top:T0+panY, bot:B0+panY, left:L0+panX, right:R0+panX};
+   ctx.setTransform(dpr,0,0,dpr,0,0);
+   ctx.imageSmoothingEnabled=false; /* #UI-28: без интерполяции — чётко, без размытия */
+   ctx.translate(W/2+panX,H/2+panY);ctx.scale(zoom,zoom);ctx.translate(-W/2,-H/2);
+   var dy=oy0;
+   srcs.forEach(function(s,i){
+    var h=ratios[i]*hScale;
+    ctx.drawImage(s.canvas,ox,dy,Wd,h);
+    if(i===0)cmap={x0:ox,w:Wd,y0:dy,h:h}; /* #UI-29: + вертикаль панели для fracY */
+    dy+=h;
+   });
+  }
+  /* #UI-19: вертикальный маркер курсора (screen-space CSS px) + readout */
+  if(mouse.inside){
+   ctx.setTransform(dpr,0,0,dpr,0,0);
+   ctx.strokeStyle="#34d3c0";ctx.lineWidth=1;ctx.setLineDash([5,4]);
+   /* #UI-22: линия курсора обрезана по рамке панели, не на всю высоту канваса */
+   var ly0=pclip?Math.max(0,pclip.top):0, ly1=pclip?Math.min(H,pclip.bot):H;
+   if(ly1>ly0){ctx.beginPath();ctx.moveTo(mouse.x+0.5,ly0);ctx.lineTo(mouse.x+0.5,ly1);ctx.stroke();}
+   /* #UI-26: горизонтальная линия курсора (перекрестье), обрезана по рамке панели */
+   var lx0=pclip?Math.max(0,pclip.left):0, lx1=pclip?Math.min(W,pclip.right):W;
+   if(lx1>lx0){ctx.beginPath();ctx.moveTo(lx0,mouse.y+0.5);ctx.lineTo(lx1,mouse.y+0.5);ctx.stroke();}
+   ctx.setLineDash([]);
+   if(opts.readout&&cmap){
+    /* #UI-29: значения (cps/E/время) у перекрестья — multi-line бокс рядом с курсором */
+    var Tx=(mouse.x-W/2-panX)/zoom+W/2, Ty=(mouse.y-H/2-panY)/zoom+H/2;
+    var fracX=(Tx-cmap.x0)/cmap.w, fracY=(Ty-cmap.y0)/cmap.h;
+    var lbl=(fracX>=0&&fracX<=1)?opts.readout(fracX,fracY):null;
+    if(lbl){
+     ctx.font="600 13px ui-monospace,monospace";
+     var lines=(""+lbl).split("\n");
+     var lh=17,padX=7,padY=5,tw=0;
+     for(var qi=0;qi<lines.length;qi++){var qw=ctx.measureText(lines[qi]).width;if(qw>tw)tw=qw;}
+     var bw=tw+padX*2,bh=lines.length*lh+padY*2;
+     var bx=mouse.x+16;if(bx+bw>W-4)bx=mouse.x-16-bw;if(bx<4)bx=4;
+     var by=mouse.y+16;if(by+bh>H-4)by=mouse.y-16-bh;if(by<4)by=4;
+     ctx.fillStyle="rgba(10,14,9,.88)";ctx.fillRect(bx,by,bw,bh);
+     ctx.fillStyle="#34d3c0";ctx.textBaseline="top";ctx.textAlign="left";
+     for(var qi2=0;qi2<lines.length;qi2++)ctx.fillText(lines[qi2],bx+padX,by+padY+qi2*lh);
+    }
+   }
+  }
+  raf=requestAnimationFrame(render);
+ }
+ raf=requestAnimationFrame(render);
+ function close(){if(closed)return;closed=true;cancelAnimationFrame(raf);window.removeEventListener("keydown",onKey);window.removeEventListener("resize",resize);document.body.style.overflow=prevOvf;if(ov.parentNode)ov.parentNode.removeChild(ov);}
+ function onKey(e){if(e.key==="Escape")close();}
+ window.addEventListener("keydown",onKey);
+ btn.addEventListener("click",close);
+ cv.addEventListener("dblclick",function(){zoom=1;panX=0;panY=0;});
+ cv.addEventListener("mousemove",function(e){var r=cv.getBoundingClientRect();mouse.x=e.clientX-r.left;mouse.y=e.clientY-r.top;mouse.inside=true;});
+ cv.addEventListener("mouseleave",function(){mouse.inside=false;});
+ cv.addEventListener("wheel",function(e){
+  e.preventDefault();
+  var rect=cv.getBoundingClientRect();
+  var cx=e.clientX-rect.left-W/2,cy=e.clientY-rect.top-H/2;
+  var f=e.deltaY<0?1.15:1/1.15;
+  var nz=Math.max(1,Math.min(60,zoom*f)); /* #UI-25: не меньше fit (вписанного окна) */
+  panX=cx-(cx-panX)*nz/zoom;panY=cy-(cy-panY)*nz/zoom;zoom=nz;
+ },{passive:false});
+ var drag=null;
+ cv.addEventListener("pointerdown",function(e){if(e.pointerType==="touch")return;try{cv.setPointerCapture(e.pointerId);}catch(_){}drag={x:e.clientX,y:e.clientY,px:panX,py:panY};ov.classList.add("dragging");});
+ cv.addEventListener("pointermove",function(e){if(!drag)return;panX=drag.px+(e.clientX-drag.x);panY=drag.py+(e.clientY-drag.y);});
+ cv.addEventListener("pointerup",function(e){drag=null;ov.classList.remove("dragging");try{cv.releasePointerCapture(e.pointerId);}catch(_){}});
+ var pinch=null,tdrag=null;
+ cv.addEventListener("touchstart",function(e){
+  if(e.touches.length===2){
+   tdrag=null;
+   var t1=e.touches[0],t2=e.touches[1];
+   var dx=t2.clientX-t1.clientX,dy=t2.clientY-t1.clientY;
+   pinch={d:Math.hypot(dx,dy),zoom:zoom,cx:(t1.clientX+t2.clientX)/2,cy:(t1.clientY+t2.clientY)/2,panX:panX,panY:panY};
+  }else if(e.touches.length===1){
+   tdrag={x:e.touches[0].clientX,y:e.touches[0].clientY,px:panX,py:panY};
+  }
+ },{passive:true});
+ cv.addEventListener("touchmove",function(e){
+  if(e.touches.length===2&&pinch){
+   e.preventDefault();
+   var t1=e.touches[0],t2=e.touches[1];
+   var dx=t2.clientX-t1.clientX,dy=t2.clientY-t1.clientY;
+   var d=Math.hypot(dx,dy);
+   var f=d/Math.max(1,pinch.d);
+   var nz=Math.max(1,Math.min(60,pinch.zoom*f)); /* #UI-25: не меньше fit */
+   var rect=cv.getBoundingClientRect();
+   var cx=pinch.cx-rect.left-W/2,cy=pinch.cy-rect.top-H/2;
+   panX=cx-(cx-pinch.panX)*nz/pinch.zoom;panY=cy-(cy-pinch.panY)*nz/pinch.zoom;zoom=nz;
+  }else if(e.touches.length===1&&tdrag){
+   e.preventDefault();
+   panX=tdrag.px+(e.touches[0].clientX-tdrag.x);
+   panY=tdrag.py+(e.touches[0].clientY-tdrag.y);
+  }
+ },{passive:false});
+ cv.addEventListener("touchend",function(e){if(e.touches.length<2)pinch=null;if(e.touches.length<1)tdrag=null;});
+ return {close:close};
+};
+})();
+(function(){
+ var sp=document.getElementById("sp");
+ if(!sp)return;
+ function compose(a,b){var c=document.createElement("canvas");c.width=a.width;c.height=a.height;var cx=c.getContext("2d");cx.drawImage(a,0,0);if(b)cx.drawImage(b,0,0,a.width,a.height);return c;}
+ sp.addEventListener("click",function(){
+  if(typeof lastD!=="undefined"&&!lastD)return;
+  var sc=document.getElementById("spcur");
+  window.openZoomOverlay(function(){return [{canvas:sc?compose(sp,sc):sp}];},{
+   /* #UI-19: frac [0..1] по ширине источника → логический канвас 1200 (PL=65,PW=1120) → канал/кэВ/отсчёты */
+   readout:function(frac){
+    if(typeof lastD==="undefined"||!lastD||!lastD.bins||!lastD.bins.length)return null;
+    var cx=frac*1200; if(cx<PL||cx>PR)return null;
+    var N=lastD.bins.length;
+    var ch=Math.floor((cx-PL)/PW*N); if(ch<0||ch>=N)return null;
+    /* #UI-29: cps (отсчёты/время), E (энергия канала), t (время набора) */
+    var cnt=lastD.bins[ch];
+    var cps=(lastD.time>0)?(cnt/lastD.time):0;
+    var eStr=calib?(ch2kev(ch).toFixed(1)+" "+tr("cur.kev")):("ch "+ch);
+    return "CPS "+cps.toFixed(2)+"\nE "+eStr+"\nt "+fmtTime(lastD.time);
+   }
+  });
+ });
 })();
 </script>
 </body>

@@ -840,6 +840,13 @@ void web_server_init(void)
     config.max_open_sockets = 11;        // из 16 LWIP-сокетов; запас для tcp_bridge + sntp
     config.lru_purge_enable = true;      // при исчерпании пула закрыть LRU-соединение, не отказывать (errno 23)
     config.uri_match_fn = httpd_uri_match_wildcard;
+    // #UI-15 P0: чистим WS-реестр при ЛЮБОМ закрытии сокета (RST/FIN/LRU/F5);
+    // без callback зомбирующиеся fd ломают broadcast после нескольких F5.
+    config.close_fn = web_waterfall_on_close;
+    // #UI-15 P2: сжимаем default recv/send (~5 c) — освобождаем сокеты быстрее
+    // под давлением F5+poll, иначе пул держит «полудохлые» соединения долго.
+    config.recv_wait_timeout = 3;
+    config.send_wait_timeout = 3;
 
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) != ESP_OK) {
