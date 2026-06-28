@@ -127,6 +127,8 @@ table.saved tr.on td{ background:rgba(110,168,255,.07); }
 <button class="btn sm green" onclick="saveSpectrum()" data-i18n-html="btn.save">&#128190; Сохранить</button>
 <button class="btn sm" onclick="location.href='/api/export.xml'" data-i18n="btn.expXml">Export XML</button>
 <button class="btn sm" onclick="location.href='/api/export.csv'" data-i18n="btn.expCsv">Export CSV</button>
+<button class="btn sm" onclick="location.href='/api/export.n42'" data-i18n="btn.expN42">Export N42</button>
+<button class="btn sm" onclick="location.href='/api/export.spe'" data-i18n="btn.expSpe">Export SPE</button>
 <button class="btn sm" onclick="requestInfo()" data-i18n="btn.info">Инфо</button>
 <button class="btn sm" onclick="toggleLogPanel()" data-i18n="btn.log">Лог</button>
 <button class="btn sm" onclick="clearOverlay()" id="btn-clear-ovl" style="display:none" data-i18n="btn.clearOvl">Снять overlay</button>
@@ -182,7 +184,7 @@ var DICT={
   "flash.fmt":"%1 / %2 КБ (%3%) &middot; свободно %4 КБ",
   "btn.start":"&#9654; Старт","btn.stop":"&#9632; Стоп","btn.reset":"&#8634; Сброс",
   "btn.save":"&#128190; Сохранить",
-  "btn.expXml":"Export XML","btn.expCsv":"Export CSV",
+  "btn.expXml":"Export XML","btn.expCsv":"Export CSV","btn.expN42":"Export N42","btn.expSpe":"Export SPE",
   "btn.info":"Инфо","btn.log":"Лог","btn.clearOvl":"Снять overlay",
   "btn.rebootDev":"Reboot прибора","btn.rebootEsp":"Reboot ESP","btn.wifiReset":"WiFi Reset",
   "btn.send":"Send",
@@ -211,6 +213,7 @@ var DICT={
   "log.sent":"Sent: %1","log.ovlOk":"Overlay loaded: #%1","log.ovlErr":"Overlay error: %1","log.ovlClear":"Overlay cleared",
   "log.del":"Deleted #%1","log.rebootDev":"Reboot device sent",
   "log.cal":"Calibration: [%1]","log.calErr":"Calibration error: %1","log.calClear":"Calibration cleared",
+  "st.real":"Реал.","st.live":"Живое","st.dead":"Мёртв.",
   "err.prefix":"Error: %1"
  },
  en:{
@@ -224,7 +227,7 @@ var DICT={
   "flash.fmt":"%1 / %2 KB (%3%) &middot; free %4 KB",
   "btn.start":"&#9654; Start","btn.stop":"&#9632; Stop","btn.reset":"&#8634; Reset",
   "btn.save":"&#128190; Save",
-  "btn.expXml":"Export XML","btn.expCsv":"Export CSV",
+  "btn.expXml":"Export XML","btn.expCsv":"Export CSV","btn.expN42":"Export N42","btn.expSpe":"Export SPE",
   "btn.info":"Info","btn.log":"Log","btn.clearOvl":"Clear overlay",
   "btn.rebootDev":"Reboot device","btn.rebootEsp":"Reboot ESP","btn.wifiReset":"WiFi Reset",
   "btn.send":"Send",
@@ -253,6 +256,7 @@ var DICT={
   "log.sent":"Sent: %1","log.ovlOk":"Overlay loaded: #%1","log.ovlErr":"Overlay error: %1","log.ovlClear":"Overlay cleared",
   "log.del":"Deleted #%1","log.rebootDev":"Reboot device sent",
   "log.cal":"Calibration: [%1]","log.calErr":"Calibration error: %1","log.calClear":"Calibration cleared",
+  "st.real":"Real","st.live":"Live","st.dead":"Dead",
   "err.prefix":"Error: %1"
  }
 };
@@ -300,7 +304,7 @@ async function loadCsrf(){try{var r=await(await fetch("/api/csrf-token")).json()
 function post(url,opts){opts=opts||{};opts.method="POST";opts.headers=Object.assign({},opts.headers||{},{"X-CSRF-Token":csrfToken});return fetch(url,opts)}
 
 function lg(m){logEl.textContent+=m+"\n";logEl.scrollTop=logEl.scrollHeight}
-function fmtTime(s){var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return(h>0?h+"h ":"")+(m>0?m+"m ":"")+ss+"s"}
+function fmtTime(s){s=Math.round(s);var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return(h>0?h+"h ":"")+(m>0?m+"m ":"")+ss+"s"}
 function fmtHMS(s){var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(ss).padStart(2,"0")}
 function fmtNum(n){return Math.round(n).toLocaleString(lcl())}
 function setLog(v){isLog=v;setSeg(["btn-lin","btn-log"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
@@ -331,12 +335,18 @@ async function update(){
   document.getElementById("ip-chip").textContent=location.hostname;
   lastD=d;
   var stEl=document.getElementById("status");
+  var lv=(typeof d.live==="number")?d.live:d.time;
+  var dpct=(d.time>0)?((d.time-lv)/d.time*100):0;
+  var tStr=''+d.t1;
+  if(d.t2>0)tStr+='/'+d.t2;
+  if(d.t3>0)tStr+='/'+d.t3;
   stEl.innerHTML='<span class="ac">CPS <span>'+d.cps+'</span></span><span class="sep">|</span>'+
    '<span class="w"><span>'+d.total.toLocaleString(lcl())+'</span> <span class="mut">'+tr("ax.cnt").toLowerCase()+'</span></span><span class="sep">|</span>'+
-   '<span>'+fmtTime(d.time)+'</span><span class="sep">|</span>'+
-   '<span>CPU <span>'+d.cpu+'</span>%</span><span class="sep">|</span>'+
+   '<span><span class="mut">'+tr("st.real")+'</span> '+fmtTime(d.time)+'</span><span class="sep">|</span>'+
+   '<span><span class="mut">'+tr("st.live")+'</span> '+fmtTime(lv)+'</span><span class="sep">|</span>'+
+   '<span><span class="mut">'+tr("st.dead")+'</span> '+dpct.toFixed(2)+'%</span><span class="sep">|</span>'+
    '<span>Lost <span>'+d.lost+'</span></span><span class="sep">|</span>'+
-   '<span>T '+d.t1+'/'+d.t2+'/'+d.t3+' &deg;C</span>';
+   '<span>T '+tStr+' &deg;C</span>';
   document.getElementById("big-time").textContent=fmtHMS(d.time);
   document.getElementById("big-cps").textContent=d.cps;
   document.getElementById("big-total").textContent=d.total.toLocaleString(lcl());

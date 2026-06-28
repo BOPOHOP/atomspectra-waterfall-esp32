@@ -82,18 +82,6 @@ static void xml_escape(const char *in, char *out, size_t cap)
     out[o] = '\0';
 }
 
-// P3-9: serial в CSV → выкинуть переводы строк/запятые/управляющие символы.
-static void csv_sanitize(const char *in, char *out, size_t cap)
-{
-    size_t o = 0;
-    for (const char *p = in; *p && o + 1 < cap; p++) {
-        unsigned char c = (unsigned char)*p;
-        if (c == '\n' || c == '\r' || c == ',' || c < 0x20) continue;
-        out[o++] = (char)c;
-    }
-    out[o] = '\0';
-}
-
 static esp_err_t handle_csrf_token(httpd_req_t *req)
 {
     char buf[48];
@@ -163,6 +151,24 @@ static esp_err_t handle_spectrum(httpd_req_t *req)
     return ESP_OK;
 }
 
+// #DT-1: live_time через геометрию импульса, а не загрузку CPU.
+// Мёртвое время = total_counts * (RISE+FALL+Srise+Sfall)/F [с], где RISE/FALL/Srise/Sfall —
+// отсчёты АЦП из выдачи -inf, F — частота оцифровки (Гц). Ширина импульса = (RISE+FALL+Srise+Sfall)
+// отсчётов; делёж на F даёт секунды на импульс; умножение на число импульсов — суммарное dead-time.
+// live_time = total_time - dead_time. Если -inf ещё не прочитан (di->valid==false) или F<=0 —
+// фоллбэк на live=real (dead=0), чтобы экспорт не врал в обратную сторону.
+static float compute_live_time(const spectrum_data_t *sp)
+{
+    const device_info_t *di = spectrum_get_device_info();
+    float total = (float)sp->total_time_sec;
+    if (!di->valid || di->freq <= 0.0f) return total;
+    float width = (float)((uint32_t)di->rise + di->fall + di->srise + di->sfall);
+    float dead = (float)sp->total_counts * width / di->freq;
+    if (dead < 0.0f) dead = 0.0f;
+    if (dead > total) dead = total;
+    return total - dead;
+}
+
 static esp_err_t render_spectrum_json(httpd_req_t *req, const spectrum_data_t *sp)
 {
     char *buf = malloc(4096);
@@ -182,10 +188,10 @@ static esp_err_t render_spectrum_json(httpd_req_t *req, const spectrum_data_t *s
     }
     if (pos > 0) httpd_resp_send_chunk(req, buf, pos);
     int n = snprintf(buf, 4096,
-        "],\"total\":%" PRIu32 ",\"cpu\":%u,\"cps\":%" PRIu32 ",\"lost\":%" PRIu32 ",\"time\":%" PRIu32 ","
+        "],\"total\":%" PRIu32 ",\"cpu\":%u,\"cps\":%" PRIu32 ",\"lost\":%" PRIu32 ",\"time\":%" PRIu32 ",\"live\":%.1f,"
         "\"t1\":%.1f,\"t2\":%.1f,\"t3\":%.1f,\"serial\":\"%s\"",
         sp->total_counts, sp->cpu_load, sp->cps, sp->lost_impulses,
-        sp->total_time_sec,
+        sp->total_time_sec, compute_live_time(sp),
         sp->temperature[0], sp->temperature[1], sp->temperature[2],
         sp->serial_number[0] ? sp->serial_number : "");
     httpd_resp_send_chunk(req, buf, n);
@@ -399,9 +405,7 @@ static esp_err_t render_spectrum_xml(httpd_req_t *req, const spectrum_data_t *sp
             "        </EnergyCalibration>\r\n");
     }
 
-    float live_time = (float)sp->total_time_sec;
-    if (sp->cpu_load > 0 && sp->cpu_load < 10000)
-        live_time *= (1.0f - (float)sp->cpu_load / 10000.0f);
+    float live_time = compute_live_time(sp);
 
     n = snprintf(buf, 4096,
         "        <ValidPulseCount>%" PRIu32 "</ValidPulseCount>\r\n"
@@ -452,55 +456,184 @@ static esp_err_t render_spectrum_csv(httpd_req_t *req, const spectrum_data_t *sp
     snprintf(disp, sizeof(disp), "attachment; filename=\"%s\"", filename);
     httpd_resp_set_hdr(req, "Content-Disposition", disp);
 
-    char serial_csv[80];
-    csv_sanitize(sp->serial_number[0] ? sp->serial_number : "AtomSpectra",
-                 serial_csv, sizeof(serial_csv));
-
-    if (sp->calib_valid) {
-        // #PR-2: InterSpec/SpecUtils-формат именованных коэффициентов. SpecUtils
-        // (SpecFile_csv.cpp) парсит как poly={d,c,b,a}: d=offset(calib[0]), c=calib[1],
-        // b=calib[2], a=старший calib[3]. Буква жёстко привязана к индексу ('a'+(3-i)) —
-        // не сползает при calib_order<3. Точность %.15g сохранена (energy-калибровка).
-        int pos = snprintf(buf, 4096, "calibcoeff:");
-        for (int i = 3; i >= 0; i--)
-            if (i <= sp->calib_order)
-                pos += snprintf(buf + pos, 4096 - pos, " %c=%.15g", 'a' + (3 - i), sp->calibration[i]);
-        pos += snprintf(buf + pos, 4096 - pos, "\n");
-        httpd_resp_send_chunk(req, buf, pos);
-    }
-
-    int n = snprintf(buf, 4096, "remark: %s\n", serial_csv);
-    httpd_resp_send_chunk(req, buf, n);
-
-    float live_time = (float)sp->total_time_sec;
-    if (sp->cpu_load > 0 && sp->cpu_load < 10000)
-        live_time *= (1.0f - (float)sp->cpu_load / 10000.0f);
-
-    time_t end_time = (sp->saved_at > 0) ? sp->saved_at : time(NULL);
-    struct tm ts;
-    time_t t_start = end_time - sp->total_time_sec;
-    localtime_r(&t_start, &ts);
-
-    n = snprintf(buf, 4096,
-        "livetime: %.1f\n"
-        "realtime: %" PRIu32 "\n"
-        "detectorname: Atom Spectra\n"
-        "SerialNumber: %s\n"
-        "starttime: %04d-%02d-%02dT%02d:%02d:%02d\nch,data\n",   // #PR-2: заголовок столбцов для InterSpec
-        live_time, sp->total_time_sec,
-        serial_csv,
-        ts.tm_year+1900, ts.tm_mon+1, ts.tm_mday,
-        ts.tm_hour, ts.tm_min, ts.tm_sec);
+    // #CSV-1 (2026-06-28): нативный формат Atom Spectra. Эталон оператора —
+    // "spectrum (10).csv": одна строка-заголовок "Channel,Counts (TotalTime=<realtime>.0s)",
+    // далее "канал,счёт" с канала 0 (не 1), без пробела после запятой, окончания CRLF,
+    // 8192 канала. TotalTime = реальное (измерительное) время total_time_sec, формат %.1f.
+    // Перекрывает прежний InterSpec/SpecUtils-заголовок #PR-2 по явному указанию оператора.
+    int n = snprintf(buf, 4096,
+        "Channel,Counts (TotalTime=%.1fs)\r\n", (double)sp->total_time_sec);
     httpd_resp_send_chunk(req, buf, n);
 
     for (int i = 0; i < SPECTRUM_CHANNELS; ) {
         int pos = 0;
         for (int j = 0; j < 200 && i < SPECTRUM_CHANNELS; j++, i++) {
-            pos += snprintf(buf + pos, 4096 - pos, "%d, %" PRIu32 "\n", i + 1, sp->bins[i]);
+            pos += snprintf(buf + pos, 4096 - pos, "%d,%" PRIu32 "\r\n", i, sp->bins[i]);
         }
         httpd_resp_send_chunk(req, buf, pos);
     }
 
+    httpd_resp_send_chunk(req, NULL, 0);
+    free(buf);
+    return ESP_OK;
+}
+
+// #EXP-1 (2026-06-28): нативный N42-2011 экспорт. Эталон оператора — "spectrum (10).N42"
+// (родная выгрузка Atom Spectra через BecqMoni). Байт-точно: UTF-8 BOM, CRLF, БЕЗ финального
+// перевода строки, отступы 2 пробела, блок RadInstrumentInformation дословно, CoefficientValues
+// и ChannelData с замыкающим пробелом. Значения — живые из снимка спектра.
+static esp_err_t render_spectrum_n42(httpd_req_t *req, const spectrum_data_t *sp, const char *filename)
+{
+    char *buf = malloc(4096);
+    if (!buf) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/octet-stream");
+    char disp[80];
+    snprintf(disp, sizeof(disp), "attachment; filename=\"%s\"", filename);
+    httpd_resp_set_hdr(req, "Content-Disposition", disp);
+    uint32_t r0 = esp_random(), r1 = esp_random(), r2 = esp_random(), r3 = esp_random();
+    char uuid[40];
+    snprintf(uuid, sizeof(uuid), "%08lx-%04lx-%04lx-%04lx-%04lx%08lx",
+             (unsigned long)r0,
+             (unsigned long)(r1 >> 16), (unsigned long)(r1 & 0xffff),
+             (unsigned long)(r2 >> 16), (unsigned long)(r2 & 0xffff),
+             (unsigned long)r3);
+    int n = snprintf(buf, 4096,
+        "\xEF\xBB\xBF"
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n"
+        "<RadInstrumentData xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\""
+        " xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\""
+        " n42DocUUID=\"%s\" xmlns=\"http://physics.nist.gov/N42/2011/N42\">\r\n",
+        uuid);
+    httpd_resp_send_chunk(req, buf, n);
+    httpd_resp_sendstr_chunk(req,
+        "  <RadInstrumentInformation id=\"RadInstrument\">\r\n"
+        "    <RadInstrumentManufacturerName>KB Radar</RadInstrumentManufacturerName>\r\n"
+        "    <RadInstrumentModelName>ATOM Spectra</RadInstrumentModelName>\r\n"
+        "    <RadInstrumentClassCode>Radionuclide Identifier</RadInstrumentClassCode>\r\n"
+        "    <RadInstrumentVersion>\r\n"
+        "      <RadInstrumentComponentName>Hardware</RadInstrumentComponentName>\r\n"
+        "      <RadInstrumentComponentVersion />\r\n"
+        "    </RadInstrumentVersion>\r\n"
+        "    <RadInstrumentVersion>\r\n"
+        "      <RadInstrumentComponentName>SoftwareName</RadInstrumentComponentName>\r\n"
+        "      <RadInstrumentComponentVersion>BecqMoni</RadInstrumentComponentVersion>\r\n"
+        "    </RadInstrumentVersion>\r\n"
+        "    <RadInstrumentVersion>\r\n"
+        "      <RadInstrumentComponentName>Software</RadInstrumentComponentName>\r\n"
+        "      <RadInstrumentComponentVersion>2026.6.15.1</RadInstrumentComponentVersion>\r\n"
+        "    </RadInstrumentVersion>\r\n"
+        "  </RadInstrumentInformation>\r\n");
+    if (sp->calib_valid) {
+        httpd_resp_sendstr_chunk(req,
+            "  <EnergyCalibration id=\"SpectrumCalibration-0\">\r\n"
+            "    <CoefficientValues>");
+        int cpos = 0;
+        for (int i = 0; i <= sp->calib_order; i++)
+            cpos += snprintf(buf + cpos, 4096 - cpos, "%.15G ", sp->calibration[i]);
+        httpd_resp_send_chunk(req, buf, cpos);
+        httpd_resp_sendstr_chunk(req,
+            "</CoefficientValues>\r\n"
+            "  </EnergyCalibration>\r\n");
+    }
+    time_t end_time = (sp->saved_at > 0) ? sp->saved_at : time(NULL);
+    struct tm ts;
+    time_t t_start = end_time - sp->total_time_sec;
+    localtime_r(&t_start, &ts);
+    n = snprintf(buf, 4096,
+        "  <RadMeasurement id=\"SpectrumMeasurement-0\">\r\n"
+        "    <MeasurementClassCode>Foreground</MeasurementClassCode>\r\n"
+        "    <StartDateTime>%02d.%02d.%04d %02d:%02d:%02d</StartDateTime>\r\n"
+        "    <RealTimeDuration>PT%" PRIu32 "S</RealTimeDuration>\r\n",
+        ts.tm_mday, ts.tm_mon + 1, ts.tm_year + 1900, ts.tm_hour, ts.tm_min, ts.tm_sec,
+        sp->total_time_sec);
+    httpd_resp_send_chunk(req, buf, n);
+    if (sp->calib_valid) {
+        httpd_resp_sendstr_chunk(req,
+            "    <Spectrum id=\"SpectrumData\" radDetectorInformationReference=\"Detector\""
+            " energyCalibrationReference=\"SpectrumCalibration-0\">\r\n");
+    } else {
+        httpd_resp_sendstr_chunk(req,
+            "    <Spectrum id=\"SpectrumData\" radDetectorInformationReference=\"Detector\">\r\n");
+    }
+    n = snprintf(buf, 4096,
+        "      <LiveTimeDuration>PT%.1fS</LiveTimeDuration>\r\n"
+        "      <ChannelData compressionCode=\"None\">",
+        compute_live_time(sp));
+    httpd_resp_send_chunk(req, buf, n);
+    for (int i = 0; i < SPECTRUM_CHANNELS; ) {
+        int pos = 0;
+        for (int j = 0; j < 80 && i < SPECTRUM_CHANNELS; j++, i++)
+            pos += snprintf(buf + pos, 4096 - pos, "%" PRIu32 " ", sp->bins[i]);
+        httpd_resp_send_chunk(req, buf, pos);
+    }
+    n = snprintf(buf, 4096,
+        "</ChannelData>\r\n"
+        "    </Spectrum>\r\n"
+        "    <GrossCounts id=\"GrossForeground\" radDetectorInformationReference=\"Detector\">\r\n"
+        "      <TotalCounts>%" PRIu32 "</TotalCounts>\r\n"
+        "    </GrossCounts>\r\n"
+        "  </RadMeasurement>\r\n"
+        "</RadInstrumentData>",
+        sp->total_counts + sp->lost_impulses);
+    httpd_resp_send_chunk(req, buf, n);
+    httpd_resp_send_chunk(req, NULL, 0);
+    free(buf);
+    return ESP_OK;
+}
+
+// #EXP-2 (2026-06-28): экспорт ЛСРМ SpectraLine *.spe (бинарный вариант), как у SpectraVibe
+// (gamma.io.lsrm_spe.write_lsrm_spe): CP-1251 заголовок KEY=VALUE\r\n, маркер "SPECTR=", затем
+// бинарный блок счётов uint32 little-endian (по каналу, без разделителей). Значения ASCII.
+static esp_err_t render_spectrum_spe(httpd_req_t *req, const spectrum_data_t *sp, const char *filename)
+{
+    char *buf = malloc(4096);
+    if (!buf) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/octet-stream");
+    char disp[80];
+    snprintf(disp, sizeof(disp), "attachment; filename=\"%s\"", filename);
+    httpd_resp_set_hdr(req, "Content-Disposition", disp);
+    time_t end_time = (sp->saved_at > 0) ? sp->saved_at : time(NULL);
+    struct tm ts;
+    time_t t_start = end_time - sp->total_time_sec;
+    localtime_r(&t_start, &ts);
+    int pos = snprintf(buf, 4096,
+        "SHIFR=%s\r\n"
+        "CONFIGNAME=Atom Spectra\r\n"
+        "MEASBEGIN=%02d-%02d-%02d %02d:%02d:%02d.00\r\n"
+        "TLIVE=%.2f\r\n"
+        "TREAL=%.2f\r\n"
+        "DETECTOR=Atom Spectra\r\n",
+        sp->serial_number[0] ? sp->serial_number : "AtomSpectra",
+        ts.tm_mday, ts.tm_mon + 1, (ts.tm_year + 1900) % 100,
+        ts.tm_hour, ts.tm_min, ts.tm_sec,
+        compute_live_time(sp), (double)sp->total_time_sec);
+    if (sp->calib_valid) {
+        double emax = 0.0;
+        for (int i = sp->calib_order; i >= 0; i--)
+            emax = emax * (SPECTRUM_CHANNELS - 1) + sp->calibration[i];
+        if (emax < 0.0) emax = 0.0;
+        pos += snprintf(buf + pos, 4096 - pos, "ENBOUNDS=0,%d\r\n", (int)(emax + 0.5));
+        pos += snprintf(buf + pos, 4096 - pos, "ENERGY=%d", sp->calib_order);
+        for (int i = 0; i < 7; i++) {
+            double c = (i <= sp->calib_order) ? sp->calibration[i] : 0.0;
+            pos += snprintf(buf + pos, 4096 - pos, ",%.10g", c);
+        }
+        pos += snprintf(buf + pos, 4096 - pos, "\r\n");
+    }
+    pos += snprintf(buf + pos, 4096 - pos, "SPECTRSIZE=%d\r\nSPECTR=", SPECTRUM_CHANNELS);
+    httpd_resp_send_chunk(req, buf, pos);
+    for (int i = 0; i < SPECTRUM_CHANNELS; ) {
+        int cnt = SPECTRUM_CHANNELS - i;
+        if (cnt > 1024) cnt = 1024;
+        httpd_resp_send_chunk(req, (const char *)&sp->bins[i], cnt * 4);
+        i += cnt;
+    }
     httpd_resp_send_chunk(req, NULL, 0);
     free(buf);
     return ESP_OK;
@@ -519,6 +652,40 @@ static esp_err_t handle_export_xml(httpd_req_t *req)
         return ESP_FAIL;
     }
     esp_err_t ret = render_spectrum_xml(req, sp, "spectrum.xml");
+    free(sp);
+    return ret;
+}
+
+static esp_err_t handle_export_spe(httpd_req_t *req)
+{
+    spectrum_data_t *sp = malloc(sizeof(*sp));
+    if (!sp) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+    if (!spectrum_get_snapshot(sp)) {
+        free(sp);
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "No spectrum data");
+        return ESP_FAIL;
+    }
+    esp_err_t ret = render_spectrum_spe(req, sp, "spectrum.spe");
+    free(sp);
+    return ret;
+}
+
+static esp_err_t handle_export_n42(httpd_req_t *req)
+{
+    spectrum_data_t *sp = malloc(sizeof(*sp));
+    if (!sp) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+    if (!spectrum_get_snapshot(sp)) {
+        free(sp);
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "No spectrum data");
+        return ESP_FAIL;
+    }
+    esp_err_t ret = render_spectrum_n42(req, sp, "spectrum.n42");
     free(sp);
     return ret;
 }
@@ -870,6 +1037,8 @@ void web_server_init(void)
         {"/api/list",                    HTTP_GET,  handle_list,             NULL},
         {"/api/export.xml",              HTTP_GET,  handle_export_xml,       NULL},
         {"/api/export.csv",              HTTP_GET,  handle_export_csv,       NULL},
+        {"/api/export.n42",              HTTP_GET,  handle_export_n42,       NULL},
+        {"/api/export.spe",              HTTP_GET,  handle_export_spe,       NULL},
         {"/api/saved/*",                 HTTP_GET,  handle_saved_get,        NULL},
         {"/api/saved/*",                 HTTP_POST, handle_saved_delete,     NULL},
         {"/api/device",                  HTTP_GET,  handle_device,           NULL},

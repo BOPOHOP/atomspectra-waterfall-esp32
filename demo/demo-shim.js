@@ -53,8 +53,12 @@
       var bins = new Array(CH), total = 0;
       for (var c2 = 0; c2 < CH; c2++) { bins[c2] = acc[c2]; total += acc[c2]; }
       var time = NROWS * IVS;
+      // live_time как в прошивке: dead = total * ширина_импульса / F.
+      // Ширина для AtomSpectra = RISE(11)+FALL(27)+Srise(0)+Sfall(0) = 38 отсчётов АЦП, F = 14 МГц.
+      var dead = total * 38 / 14000000;
+      if (dead > time) dead = time;
       SPEC = {
-        calib: CAL, serial: "", bins: bins, total: total, time: time,
+        calib: CAL, serial: "", bins: bins, total: total, time: time, live: time - dead,
         cps: Math.round(total / Math.max(1, time)), cpu: 12, lost: 0, t1: 24, t2: 25, t3: 25
       };
     }
@@ -167,8 +171,11 @@
     setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   }
   function exportCSV() {
-    var s = curSpectrum(), out = "channel,counts\n";
-    for (var i = 0; i < s.bins.length; i++) out += i + "," + s.bins[i] + "\n";
+    // #CSV-1: нативный формат Atom Spectra (как в прошивке render_spectrum_csv) —
+    // "Channel,Counts (TotalTime=<realtime>.0s)" + "канал,счёт" с 0, CRLF.
+    var s = curSpectrum();
+    var out = "Channel,Counts (TotalTime=" + s.time.toFixed(1) + "s)\r\n";
+    for (var i = 0; i < s.bins.length; i++) out += i + "," + s.bins[i] + "\r\n";
     dl("atomspectra-demo.csv", out, "text/csv");
   }
   function exportXML() {
@@ -182,11 +189,86 @@
       '<Spectrum>' + data + '</Spectrum></EnergySpectrum></ResultData></ResultDataFile>\n';
     dl("atomspectra-demo.xml", xml, "application/xml");
   }
+  function fmtG(v) {
+    if (!isFinite(v)) return "0";
+    var s = v.toPrecision(15);
+    if (/[.]/.test(s) && !/[eE]/.test(s)) s = s.replace(/0+$/, "").replace(/[.]$/, "");
+    return s;
+  }
+  function uuid4() {
+    var h = "";
+    for (var i = 0; i < 32; i++) h += Math.floor(Math.random() * 16).toString(16);
+    return h.slice(0, 8) + "-" + h.slice(8, 12) + "-" + h.slice(12, 16) + "-" + h.slice(16, 20) + "-" + h.slice(20, 32);
+  }
+  function n42Info() {
+    return "  <RadInstrumentInformation id=\"RadInstrument\">\r\n" +
+      "    <RadInstrumentManufacturerName>KB Radar</RadInstrumentManufacturerName>\r\n" +
+      "    <RadInstrumentModelName>ATOM Spectra</RadInstrumentModelName>\r\n" +
+      "    <RadInstrumentClassCode>Radionuclide Identifier</RadInstrumentClassCode>\r\n" +
+      "    <RadInstrumentVersion>\r\n      <RadInstrumentComponentName>Hardware</RadInstrumentComponentName>\r\n      <RadInstrumentComponentVersion />\r\n    </RadInstrumentVersion>\r\n" +
+      "    <RadInstrumentVersion>\r\n      <RadInstrumentComponentName>SoftwareName</RadInstrumentComponentName>\r\n      <RadInstrumentComponentVersion>BecqMoni</RadInstrumentComponentVersion>\r\n    </RadInstrumentVersion>\r\n" +
+      "    <RadInstrumentVersion>\r\n      <RadInstrumentComponentName>Software</RadInstrumentComponentName>\r\n      <RadInstrumentComponentVersion>2026.6.15.1</RadInstrumentComponentVersion>\r\n    </RadInstrumentVersion>\r\n" +
+      "  </RadInstrumentInformation>\r\n";
+  }
+  function n42Cal(cal) {
+    var c = "";
+    for (var i = 0; i < cal.length; i++) c += fmtG(cal[i]) + " ";
+    return "  <EnergyCalibration id=\"SpectrumCalibration-0\">\r\n" +
+      "    <CoefficientValues>" + c + "</CoefficientValues>\r\n" +
+      "  </EnergyCalibration>\r\n";
+  }
   function exportN42() {
-    var s = curSpectrum();
-    dl("atomspectra-demo.n42",
-      "AtomSpectra demo export (real .aswf data)\nChannels: " + s.bins.length +
-      "\nLiveTime(s): " + s.time + "\n" + s.bins.join(" ") + "\n", "text/plain");
+    var s = curSpectrum(), cal = s.calib || [];
+    var d = new Date(Date.now() - Math.round(s.time) * 1000);
+    var p2 = function (x) { return (x < 10 ? "0" : "") + x; };
+    var dt = p2(d.getDate()) + "." + p2(d.getMonth() + 1) + "." + d.getFullYear() + " " +
+      p2(d.getHours()) + ":" + p2(d.getMinutes()) + ":" + p2(d.getSeconds());
+    var out = "﻿<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n" +
+      "<RadInstrumentData xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\"" +
+      " xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"" +
+      " n42DocUUID=\"" + uuid4() + "\" xmlns=\"http://physics.nist.gov/N42/2011/N42\">\r\n" +
+      n42Info() + (cal.length ? n42Cal(cal) : "");
+    out += "  <RadMeasurement id=\"SpectrumMeasurement-0\">\r\n" +
+      "    <MeasurementClassCode>Foreground</MeasurementClassCode>\r\n" +
+      "    <StartDateTime>" + dt + "</StartDateTime>\r\n" +
+      "    <RealTimeDuration>PT" + Math.round(s.time) + "S</RealTimeDuration>\r\n" +
+      (cal.length ? "    <Spectrum id=\"SpectrumData\" radDetectorInformationReference=\"Detector\" energyCalibrationReference=\"SpectrumCalibration-0\">\r\n"
+                  : "    <Spectrum id=\"SpectrumData\" radDetectorInformationReference=\"Detector\">\r\n") +
+      "      <LiveTimeDuration>PT" + s.live.toFixed(1) + "S</LiveTimeDuration>\r\n" +
+      "      <ChannelData compressionCode=\"None\">";
+    for (var i = 0; i < s.bins.length; i++) out += (s.bins[i] >>> 0) + " ";
+    out += "</ChannelData>\r\n    </Spectrum>\r\n" +
+      "    <GrossCounts id=\"GrossForeground\" radDetectorInformationReference=\"Detector\">\r\n" +
+      "      <TotalCounts>" + (Math.round(s.total) + (s.lost || 0)) + "</TotalCounts>\r\n" +
+      "    </GrossCounts>\r\n  </RadMeasurement>\r\n</RadInstrumentData>";
+    dl("atomspectra-demo.n42", out, "application/octet-stream");
+  }
+  function exportSPE() {
+    var s = curSpectrum(), cal = s.calib || [], n = s.bins.length;
+    var d = new Date(Date.now() - Math.round(s.time) * 1000);
+    var p2 = function (x) { return (x < 10 ? "0" : "") + x; };
+    var h = "SHIFR=" + (s.serial || "AtomSpectra") + "\r\n" +
+      "CONFIGNAME=Atom Spectra\r\n" +
+      "MEASBEGIN=" + p2(d.getDate()) + "-" + p2(d.getMonth() + 1) + "-" + p2(d.getFullYear() % 100) + " " +
+      p2(d.getHours()) + ":" + p2(d.getMinutes()) + ":" + p2(d.getSeconds()) + ".00\r\n" +
+      "TLIVE=" + s.live.toFixed(2) + "\r\n" +
+      "TREAL=" + Math.round(s.time).toFixed(2) + "\r\n" +
+      "DETECTOR=Atom Spectra\r\n";
+    if (cal.length) {
+      var emax = 0;
+      for (var i = cal.length - 1; i >= 0; i--) emax = emax * (n - 1) + cal[i];
+      if (emax < 0) emax = 0;
+      h += "ENBOUNDS=0," + Math.round(emax) + "\r\nENERGY=" + (cal.length - 1);
+      for (var j = 0; j < 7; j++) h += "," + (j < cal.length ? cal[j] : 0);
+      h += "\r\n";
+    }
+    h += "SPECTRSIZE=" + n + "\r\nSPECTR=";
+    var hb = new TextEncoder().encode(h);
+    var out = new Uint8Array(hb.length + n * 4);
+    out.set(hb, 0);
+    var dv = new DataView(out.buffer, hb.length);
+    for (var k = 0; k < n; k++) dv.setUint32(k * 4, s.bins[k] >>> 0, true);
+    dl("atomspectra-demo.spe", out, "application/octet-stream");
   }
   document.addEventListener("DOMContentLoaded", function () {
     try {
@@ -195,6 +277,7 @@
         if (oc.indexOf("/api/export.csv") >= 0) el.onclick = function (e) { e.preventDefault(); exportCSV(); return false; };
         else if (oc.indexOf("/api/export.xml") >= 0) el.onclick = function (e) { e.preventDefault(); exportXML(); return false; };
         else if (oc.indexOf("export.n42") >= 0) el.onclick = function (e) { e.preventDefault(); exportN42(); return false; };
+        else if (oc.indexOf("export.spe") >= 0) el.onclick = function (e) { e.preventDefault(); exportSPE(); return false; };
       });
     } catch (e) { }
   });

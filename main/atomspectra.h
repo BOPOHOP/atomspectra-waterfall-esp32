@@ -46,6 +46,8 @@ typedef struct {
     uint8_t  version;
     uint16_t rise;
     uint16_t fall;
+    uint16_t srise;
+    uint16_t sfall;
     uint16_t noise;
     float    freq;
     uint32_t max_integral;

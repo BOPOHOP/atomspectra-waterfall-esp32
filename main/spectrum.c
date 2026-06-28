@@ -158,6 +158,8 @@ void spectrum_process_info_response(const char *text)
         else if (strcmp(key, "VERSION") == 0) d->version = atoi(p);
         else if (strcmp(key, "RISE") == 0) d->rise = atoi(p);
         else if (strcmp(key, "FALL") == 0) d->fall = atoi(p);
+        else if (strcmp(key, "Srise") == 0) d->srise = atoi(p);
+        else if (strcmp(key, "Sfall") == 0) d->sfall = atoi(p);
         else if (strcmp(key, "NOISE") == 0) d->noise = atoi(p);
         else if (strcmp(key, "F") == 0) d->freq = atof(p);
         else if (strcmp(key, "MAX") == 0) d->max_integral = atoi(p);
