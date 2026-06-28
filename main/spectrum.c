@@ -112,7 +112,11 @@ void spectrum_process_info_response(const char *text)
         char hcat[256] = {0};
         for (int i = 0; i < 10; i++)
             strncat(hcat, lbuf[i], sizeof(hcat) - strlen(hcat) - 1);
-        uint32_t cc = 0;
+        // #CMD-1: прибор считает СТАНДАРТНЫЙ CRC32 (init 0xFFFFFFFF, рефлексия,
+        // финальный XOR 0xFFFFFFFF) по ASCII-конкатенации регистров L[0..9].
+        // Подтверждено на реальном дампе -cal: CRC32("BFF9A132...00000000")=DF786A7E,
+        // совпадает с регистром L[10]. Прежний init=0 без финального XOR давал mismatch.
+        uint32_t cc = 0xFFFFFFFF;
         for (int i = 0; hcat[i]; i++) {
             cc ^= (uint8_t)hcat[i];
             for (int j = 0; j < 8; j++) {
@@ -120,6 +124,7 @@ void spectrum_process_info_response(const char *text)
                 else cc >>= 1;
             }
         }
+        cc ^= 0xFFFFFFFF;
         uint32_t ce = (uint32_t)strtoul(lbuf[10], NULL, 16);
         if (cc == ce) {
             for (int c = 0; c < CALIB_COEFFS && (c*2+1) < 10; c++) {

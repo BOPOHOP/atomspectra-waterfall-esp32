@@ -1,5 +1,6 @@
 #include "atomspectra.h"
 #include "shproto.h"
+#include "spectrogram.h"
 #include "esp_log.h"
 #include <inttypes.h>
 #include "usb/cdc_acm_host.h"
@@ -33,6 +34,26 @@ static int s_rx_cb_count = 0;
 
 static char s_text_accum[4096];
 static int  s_text_accum_len = 0;
+
+// #CMD-1: распознать завершённый ответ на -cal (дамп 40 регистров).
+// Формат подтверждён на реальном приборе (Text(400), один CDC-пакет):
+// строки ровно по 8 hex, разделённые \r\n; первые 12 — калибровка+CRC, 39-я — серийник.
+// Первая строка = 8 hex + перевод строки, и накоплено >=40 строк → дамп целиком.
+static bool is_complete_cal(const char *s)
+{
+    int h = 0;
+    while (h < 8) {
+        char c = s[h];
+        if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')))
+            return false;
+        h++;
+    }
+    if (s[8] != '\n' && s[8] != '\r') return false;
+    int nl = 0;
+    for (const char *q = s; *q; q++) if (*q == '\n') nl++;
+    return nl >= 39;
+}
+
 static void handle_rx_packet(void)
 {
     switch (s_rx_packet.cmd) {
@@ -48,13 +69,20 @@ static void handle_rx_packet(void)
             int cp = (int)s_rx_packet.len < sp ? (int)s_rx_packet.len : sp;
             memcpy(s_text_accum+s_text_accum_len, s_rx_packet.data, cp);
             s_text_accum_len += cp; s_text_accum[s_text_accum_len] = '\0';
-            // #PR-1: ждём ПОЗДНИЙ маркер "PileUpThr " — он приходит в конце -inf ответа,
-            // когда весь блок (калибровка L0..L10, серийник L39) уже накоплен из нескольких
-            // CDC-пакетов. Раньше триггер по "DEV "+"VERSION " срабатывал слишком рано
-            // (эти токены ранние) → spectrum_process_info_response видел неполный текст и
-            // калибровка не разбиралась. "VERSION " оставлен как sanity-guard.
-            if (strstr(s_text_accum,"PileUpThr ") && strstr(s_text_accum,"VERSION ")) {
+            // #CMD-1: два РАЗНЫХ ответа прибора, каждый завершает накопление и СБРАСЫВАЕТ
+            // аккумулятор немедленно, чтобы они не склеивались (доказано на дампе: -cal,
+            // не сброшенный, прилипал к следующему -inf → 48 строк вместо 40, CRC mismatch).
+            //  • -inf  → один Text(404) с параметрами (VERSION..PileUpThr). Калибровки НЕ
+            //            содержит (прежний #PR-1 комментарий про «калибровку в -inf» был
+            //            НЕВЕРЕН — опровергнуто реальным дампом). Триггер: "PileUpThr "+"VERSION ".
+            //  • -cal  → один Text(400) с дампом 40 регистров (по 8 hex, \r\n). Калибровка
+            //            (L0..L9 = 5 double), CRC L10, серийник L39. Триггер: is_complete_cal().
+            if (is_complete_cal(s_text_accum) ||
+                (strstr(s_text_accum,"PileUpThr ") && strstr(s_text_accum,"VERSION "))) {
                 spectrum_process_info_response(s_text_accum);
+                s_text_accum_len = 0;
+            } else if (s_text_accum_len >= (int)sizeof(s_text_accum) - 128) {
+                ESP_LOGW(TAG, "text accum overflow without trigger, reset");
                 s_text_accum_len = 0;
             }
         }
@@ -181,6 +209,15 @@ static void try_open_device(void)
     shproto_packet_complete(&s_tx_packet);
     esp_err_t txerr = cdc_acm_host_data_tx_blocking(s_cdc_dev, s_tx_packet.data, s_tx_packet.len, 1000);
     ESP_LOGI(TAG, "Sent -inf (%u bytes) rc=%s", (unsigned)s_tx_packet.len, esp_err_to_name(txerr));
+
+    // #REC-6: если на момент (ре)коннекта водопад пишется — возобновить набор
+    // спектра на приборе (-sta). Защищает от случайной остановки анализатора и
+    // от ситуации «ESP ребутнулся, восстановил запись, но прибор уже не набирает».
+    if (spectrogram_is_recording()) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        usb_host_send_text_command("-sta");
+        ESP_LOGW(TAG, "recording active — resent -sta to resume acquisition");
+    }
 }
 
 static void usb_connect_task(void *arg)

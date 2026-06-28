@@ -498,7 +498,7 @@ async function startAcq(){await post("/api/command",{body:"-sta"});lg(tr("log.st
 async function stopAcq(){await post("/api/command",{body:"-sto"});lg(tr("log.stop"))}
 async function resetSpectrum(){clearCanvas();lastD=null;document.getElementById("big-time").textContent="00:00:00";document.getElementById("big-cps").textContent="0";document.getElementById("big-total").textContent="0";await post("/api/reset");lg(tr("log.reset"))}
 async function saveSpectrum(){var r=await(await post("/api/save")).json();lg(r.ok?tfmt("saved.savedAs",r.index):tr("saved.saveErr"));if(r.ok){loadSaved();loadFlashInfo()}}
-async function requestInfo(){calibEditing=false;await post("/api/command",{body:"-inf"});lg(tr("log.info"));setTimeout(update,500)}
+async function requestInfo(){calibEditing=false;await post("/api/command",{body:"-inf"});await post("/api/command",{body:"-cal"});lg(tr("log.info"));setTimeout(update,800)}
 async function sendCmd(){var c=document.getElementById("cmd").value;if(!c)return;await post("/api/command",{body:c});lg(tfmt("log.sent",c));setTimeout(update,500)}
 function toggleLogPanel(){logEl.style.display=logEl.style.display==="none"?"block":"none"}
 async function rebootDevice(){if(!confirm(tr("confirm.rebootDev")))return;await post("/api/reboot-device");lg(tr("log.rebootDev"))}
