@@ -45,7 +45,8 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 .ind{ display:inline-flex; align-items:center; gap:8px; font-size:12px; color:#aeb6a8; }
 .ind b{ color:#e8efe2; font-weight:600; }
 #state{ font-size:12.5px; }
-.st{ color:#aeb6a8; } .warn{ color:#f0c45a; } .err{ color:#ff8a82; }
+.st{ color:#aeb6a8; } .warn{ color:#f0c45a; } .err{ color:#ff8a82; } .rec{ color:#ff5247; font-weight:600; }
+#state{ border:1px solid; border-radius:8px; padding:6px 12px; font-size:12.5px; line-height:1; white-space:nowrap; }
 #rectime{ font-size:14px; letter-spacing:1px; color:var(--accent); font-weight:600; }
 #wrap-wf{ position:relative; display:block; border:1px solid var(--bd); border-radius:8px; overflow:hidden; }
 #wf{ display:block; background:#000; cursor:crosshair; width:100%; height:auto; max-width:100%; image-rendering:pixelated; image-rendering:crisp-edges; }
@@ -102,7 +103,6 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <button class="btn" id="bExportN42"><span data-i18n="btn.export_n42">&#11015; Экспорт .n42</span></button>
 <button class="btn" id="bDisk" data-i18n-title="btn.disk_title" title="Сохранять входящий стрим в .aswf-файл на диске ПК"><span id="bDiskTxt" data-i18n="btn.disk">&#128190; Стрим на диск&hellip;</span></button>
 </div>
-<span class="ml st" id="state">&hellip;</span>
 </div>
 
 <div class="row">
@@ -113,10 +113,11 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 </div>
 
 <div class="row" id="indic">
+<span class="st" id="state">&hellip;</span>
 <span class="ind"><span data-i18n="lbl.rec_time">&#9201; Время записи:</span> <b id="rectime">00:00:00</b></span>
 <span class="ind" data-i18n-title="lbl.ring_title" title="заполнение кольца в PSRAM — последние строки"><span data-i18n="lbl.ring">Кольцо ОЗУ</span> <b id="ringtxt">0/0</b><span class="bar"><i id="ringfi" style="width:0%;background:var(--accent)"></i></span></span>
 <span class="ind" id="flashwrap" data-i18n-title="lbl.flash_title" title="занятость флэш-памяти платы"><span data-i18n="lbl.flash">Flash</span> <b id="flashtxt">—</b><span class="bar"><i id="flashfi" style="width:0%;background:var(--accent)"></i></span></span>
-<span class="ind" id="diskwrap" style="display:none"><span data-i18n="lbl.disk">&#128190; Диск:</span> <b id="disktxt">—</b></span>
+<span class="ind" id="diskwrap" data-i18n-title="lbl.disk_title" title="Файл, в который идёт запись стрима (браузер показывает только имя, не путь к папке)" style="display:none"><span data-i18n="lbl.disk">&#128190; Диск:</span> <b id="disktxt">—</b></span>
 </div>
 </section>
 
@@ -197,6 +198,8 @@ var DICT={
   "lbl.persist_title":"Выбор места хранения водопада",
   "lbl.rec_time":"⏱ Время записи:","lbl.ring":"Кольцо ОЗУ","lbl.ring_title":"заполнение кольца в PSRAM — последние строки",
   "lbl.flash":"Flash","lbl.flash_title":"занятость флэш-памяти платы","lbl.disk":"💾 Диск:",
+  "lbl.disk_title":"Файл, в который идёт запись стрима. Браузер по приватности не раскрывает путь к папке — показано только имя файла (папку вы выбрали в диалоге «Сохранить как»).",
+  "disk.ind":"%1 · %2 стр. · %3 МБ · %4","disk.ram_tag":" · буфер ОЗУ (скачается на «Стоп»)",
   "help.summary":"❓ Куда идёт стрим на ПК и где выбор места хранения",
   "help.body":"<p><b>Стрим на ПК</b> — отдельно включать не нужно. Плата раздаёт каждую новую строку по WebSocket всем, кто открыл эту страницу. Источник — буфер в RAM в момент рождения строки, а <b>не</b> Flash; работает и при выключенном «хранить во Flash», и когда Flash переполнен.</p><p><b>Запись в файл на ПК — две опции:</b><br>&bull; кнопка <code>💾 Стрим на диск</code>: в Chrome/Edge/Opera — нативный «Сохранить как» + потоковая запись каждой строки в .aswf (шапка обновляется каждые ~30 с); в Firefox/Safari — буфер ОЗУ + blob-download на «Стоп».<br>&bull; скрипты в <code>scripts/</code>: <code>waterfall_n42.py</code> (экспорт .n42 одним выстрелом) и <code>waterfall_client.py</code> (непрерывный захват).</p><p><b>Выбор места хранения на плате</b> — галочка «📍 хранить во Flash»:<br>&bull; <b>выкл</b> (по умолчанию) — водопад живёт только в кольце ОЗУ (последние ~256 строк; старое затирается новым). Экспорт .n42 берёт данные из кольца.<br>&bull; <b>вкл</b> — каждая строка дополнительно пишется во Flash (переживает перезагрузку).</p>",
   "lbl.axis_x":"Ось X","opt.channels":"каналы","opt.kev":"кэВ","lbl.brightness":"Яркость",
@@ -233,6 +236,8 @@ var DICT={
   "lbl.persist_title":"Where to keep the waterfall",
   "lbl.rec_time":"⏱ Rec time:","lbl.ring":"RAM ring","lbl.ring_title":"PSRAM ring fill — last rows",
   "lbl.flash":"Flash","lbl.flash_title":"on-board flash usage","lbl.disk":"💾 Disk:",
+  "lbl.disk_title":"The file the stream is being written to. For privacy the browser does not reveal the folder path — only the file name is shown (you chose the folder in the «Save As» dialog).",
+  "disk.ind":"%1 · %2 rows · %3 MB · %4","disk.ram_tag":" · RAM buffer (downloads on «Stop»)",
   "help.summary":"❓ Where the stream goes on the PC and where to choose storage",
   "help.body":"<p><b>PC streaming</b> — no need to enable it separately. The board broadcasts every new row over WebSocket to anyone with this page open. Source is the RAM buffer at the moment the row is born, <b>not</b> Flash; works even with «store in Flash» off and when Flash is full.</p><p><b>Recording to PC disk — two options:</b><br>&bull; the <code>💾 Stream to disk</code> button: in Chrome/Edge/Opera — native «Save As» + streaming write of every row to .aswf (header refreshed every ~30 s); in Firefox/Safari — RAM buffer + blob download on «Stop».<br>&bull; scripts in <code>scripts/</code>: <code>waterfall_n42.py</code> (one-shot .n42 export) and <code>waterfall_client.py</code> (continuous capture).</p><p><b>Storage choice on the board</b> — the «📍 store in Flash» checkbox:<br>&bull; <b>off</b> (default) — waterfall lives only in the RAM ring (last ~256 rows; old rows overwritten). .n42 export reads from the ring.<br>&bull; <b>on</b> — each row is also written to Flash (survives reboot).</p>",
   "lbl.axis_x":"Axis X","opt.channels":"channels","opt.kev":"keV","lbl.brightness":"Brightness",
@@ -279,6 +284,7 @@ function setLang(l){
  if(l!=="ru"&&l!=="en")l="ru";
  LANG=l; try{localStorage.setItem("aswf-lang",l);}catch(e){}
  applyI18n();
+ try{if((dskWritable||dskMemChunks)&&typeof updDiskInd==="function")updDiskInd();}catch(e){}
  try{if(typeof draw==="function")draw();}catch(e){}
 }
 
@@ -777,10 +783,8 @@ async function refreshStatus(){
   var ivEl=document.getElementById("iv"); if(document.activeElement!==ivEl)ivEl.value=s.interval_sec;
   document.getElementById("persist").checked=!!s.persist;
   var st=document.getElementById("state");
-  st.textContent=(s.recording?t("state.rec"):t("state.stop"))+
-   "  ·  "+t("state.total")+" "+s.total_rows+"  ·  "+t("state.ring")+" "+s.ring_count+"/"+s.ring_capacity+
-   (s.persist?("  ·  Flash: "+s.flash_rows):"");
-  st.className=s.recording?"st":"warn";
+  st.textContent=s.recording?t("state.rec"):t("state.stop");   // #REC-4: счётчики строк/кольца/Flash дублируют строку #indic с барами ниже — убраны
+  st.className=s.recording?"rec":"warn";                        // #REC-4: «● ЗАПИСЬ» — красный
   var fs=document.getElementById("flashst");
   fs.textContent=s.flash_full?t("flash.full"):"";
   fs.className=s.flash_full?"err":"st";
@@ -946,8 +950,12 @@ function beforeUnloadDisk(e){
 }
 function updDiskInd(){
  var sec=Math.floor((Date.now()-dskStart)/1000);
+ var tag=(!dskWritable&&dskMemChunks)?t("disk.ram_tag"):"";   // ОЗУ-режим (Firefox/Safari) — файл скачается на «Стоп»
  document.getElementById("disktxt").textContent=
-  dskRows+" стр. · "+(dskBytes/1048576).toFixed(2)+" МБ · "+fmtHMS(sec);
+  tfmt("disk.ind",dskName,dskRows,(dskBytes/1048576).toFixed(2),fmtHMS(sec))+tag;
+ // #REC-5: цвет надписи «💾 Диск:» по назначению записи — красный=файл на диске, янтарный=буфер ОЗУ.
+ // Имя файла (b#disktxt) остаётся near-white по правилу «.ind b» — читаемо.
+ document.getElementById("diskwrap").style.color=dskWritable?"#ff5247":"#f0c45a";
 }
 
 var csrfToken="";
