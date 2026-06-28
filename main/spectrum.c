@@ -90,6 +90,7 @@ void spectrum_process_info_response(const char *text)
     memset(d, 0, sizeof(*d));
     // static: 3 КБ парс-буфера не на стеке CDC-таска (P1-1). Функция целиком
     // выполняется под SPEC_LOCK, единственный путь вызова — безопасно.
+    if (0) {
     static char lbuf[48][64];
     int lcount = 0;
     const char *lp = text;
@@ -140,6 +141,7 @@ void spectrum_process_info_response(const char *text)
             ESP_LOGW(TAG, "Calibration CRC mismatch: computed=%08x expected=%08x", (unsigned)cc, (unsigned)ce);
         }
     }
+    }
     const char *p = text;
     while (*p) {
         while (*p == ' ' || *p == '\n' || *p == '\r') p++;
@@ -174,6 +176,7 @@ void spectrum_process_info_response(const char *text)
     s_spectrum.temperature[1] = d->t2;
     s_spectrum.temperature[2] = d->t3;
     SPEC_UNLOCK();
+    ESP_LOGW(TAG, "inf valid temperature %f/%f/%f", d->t1, d->t2, d->t3);
 }
 void spectrum_reset(void)
 {

@@ -48,7 +48,7 @@ static void handle_rx_packet(void)
             int cp = (int)s_rx_packet.len < sp ? (int)s_rx_packet.len : sp;
             memcpy(s_text_accum+s_text_accum_len, s_rx_packet.data, cp);
             s_text_accum_len += cp; s_text_accum[s_text_accum_len] = '\0';
-            if (strstr(s_text_accum,"DEV ") && strstr(s_text_accum,"VERSION ")) {
+            if (strcasestr(s_text_accum,"PileUpThr ") && strstr(s_text_accum,"VERSION ")) {
                 spectrum_process_info_response(s_text_accum);
                 s_text_accum_len = 0;
             }
