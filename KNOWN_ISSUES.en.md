@@ -22,6 +22,41 @@ The instrument serial number (`serial_number`) stays empty after connection.
 
 ## Fixed
 
+### BUG-AS-06: Waterfall stream-to-disk recording stops on its own
+
+**Status:** fixed (see `web/waterfall.html`, write serializer `dskEnqueue`)
+
+While recording the waterfall to a file ("💾 Stream to disk", `.aswf` format via the
+browser File System Access API) the recording would stop on its own after a while —
+the recording indicator went off and the file stopped growing, even though the
+WebSocket stream kept arriving. It reproduced more reliably the more frequently rows
+arrived (smaller waterfall interval); at larger intervals it happened less often but
+still systematically.
+
+**Cause:** incoming WS rows were written to the `FileSystemWritableFileStream` with
+`dskWritable.write(...)` **without `await`**, while every 30 seconds the
+`flushDiskHeader` timer rewrote the file header (several more `write()` calls).
+`FileSystemWritableFileStream.write()` is asynchronous: starting a new write while a
+previous one is still pending throws **synchronously** (the stream is locked,
+`The stream is locked`). At the "data-row write ↔ header rewrite" boundary the
+exception occurred systematically (roughly every 30 seconds); it was caught by the
+write error handler, which called `stopDiskStream()` — so the recording disabled
+itself.
+
+**Fix:** all writes to the stream are serialized through a single Promise queue
+(`dskEnqueue`) — the next write starts only after the previous one completes, never
+two concurrent `write()` calls. Write positions use explicit byte offsets
+(`{type:"write",position:…}`) instead of the implicit cursor: the header (positions 0
+and 8) and the data rows (position ≥ `8 + header reserve`) no longer overlap.
+`stopDiskStream()` drains the queue (`await dskQueue`) before the final header write
+and `close()`; a reentrancy guard `dskStopping` was added.
+
+**Verification:** firmware build (ESP-IDF v5.4) with no errors; `node --check` of the
+embedded JS — no syntax errors; the change is mirrored into the demo
+(`demo/waterfall.html`). On-device functional test: waterfall recording at a 5 s
+interval (rows arrive more often than the 30 s header flush fires) — the recording
+keeps running without self-disabling.
+
 ### BUG-AS-05: Web UI breaks on repeated Ctrl+F5 (HTTP 431)
 
 **Status:** fixed (see `sdkconfig.defaults`, key `CONFIG_HTTPD_MAX_REQ_HDR_LEN`)

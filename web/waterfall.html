@@ -360,6 +360,14 @@ var dskRows=0, dskStart=0, dskName="", dskBytes=0;
 var dskHdrReserve=4096;
 var dskFlushTimer=null;
 var dskMemChunks=null;
+var dskQueue=Promise.resolve();   // сериализатор записи: ни одного конкурентного write() в поток
+var dskDataPos=0;                 // текущий байтовый офсет данных (явная позиция вместо неявного курсора)
+var dskStopping=false;            // реентранси-гард для stopDiskStream
+function dskEnqueue(fn){
+ dskQueue=dskQueue.then(function(){if(!dskWritable)return;return fn();})
+  .catch(function(e){lg(t("log.disk_write_err")+e);stopDiskStream();});
+ return dskQueue;
+}
 var wf=document.getElementById("wf"), wfx=wf.getContext("2d");
 var cur=document.getElementById("cur"), curx=cur.getContext("2d");
 var slc=document.getElementById("slc"), slcx=slc.getContext("2d");
@@ -741,11 +749,10 @@ function connectWS(){
   if(u16.length!==CH&&u16.length>0)CH=u16.length;
   pushRow(u16);
   if(dskWritable){
-   try{
-    dskWritable.write(new Uint8Array(ev.data));
-    dskRows++; dskBytes+=ev.data.byteLength;
-    updDiskInd();
-   }catch(e){lg(t("log.disk_write_err")+e);stopDiskStream();}
+   var dbuf=new Uint8Array(ev.data), dpos=dskDataPos;
+   dskDataPos+=dbuf.byteLength; dskRows++; dskBytes+=dbuf.byteLength;
+   dskEnqueue(function(){return dskWritable.write({type:"write",position:dpos,data:dbuf});});
+   updDiskInd();
   }else if(dskMemChunks){
    dskMemChunks.push(new Uint8Array(ev.data));
    dskRows++; dskBytes+=ev.data.byteLength;
@@ -850,17 +857,18 @@ function dskHeaderObj(finalRows){
   saved_at:Math.floor(Date.now()/1000)
  };
 }
-async function writeDiskHeader(finalRows){
- if(!dskWritable)return;
+function writeDiskHeader(finalRows){
+ // Заголовок пишется по явным позициям 0 и 8; данные идут по dskDataPos.
+ // Никакого seek — поэтому header-запись не сдвигает курсор данных и не пересекается с потоком строк.
+ if(!dskWritable)return Promise.resolve();
  var hdr=padJson(dskHeaderObj(finalRows),dskHdrReserve);
  var prefix=new Uint8Array(8);
  prefix[0]=0x41;prefix[1]=0x53;prefix[2]=0x57;prefix[3]=0x46;
- var dv=new DataView(prefix.buffer);
- dv.setUint32(4,dskHdrReserve,true);
- await dskWritable.write({type:"write",position:0,data:prefix});
- await dskWritable.write({type:"write",position:8,data:hdr});
- var tail=8+dskHdrReserve+dskRows*CH*2;
- await dskWritable.write({type:"seek",position:tail});
+ new DataView(prefix.buffer).setUint32(4,dskHdrReserve,true);
+ return dskEnqueue(function(){
+  return dskWritable.write({type:"write",position:0,data:prefix})
+   .then(function(){return dskWritable.write({type:"write",position:8,data:hdr});});
+ });
 }
 async function startDiskStream(){
  var host=(location.hostname||"esp").replace(/[^a-zA-Z0-9_.-]/g,"_");
@@ -874,6 +882,8 @@ async function startDiskStream(){
    });
    dskWritable=await handle.createWritable();
    dskName=handle.name||name;
+   dskQueue=Promise.resolve(); dskStopping=false;
+   dskDataPos=8+dskHdrReserve;        // данные начинаются сразу за зарезервированным заголовком
    await writeDiskHeader(0);
    dskFlushTimer=setInterval(flushDiskHeader,30000);
    lg(tfmt("log.disk_start_fsa",dskName));
@@ -892,15 +902,17 @@ async function startDiskStream(){
  updDiskInd();
  window.addEventListener("beforeunload",beforeUnloadDisk);
 }
-async function flushDiskHeader(){
+function flushDiskHeader(){
  if(!dskWritable)return;
- try{await writeDiskHeader(dskRows);}catch(e){lg(t("log.disk_flush_err")+e);}
+ writeDiskHeader(dskRows);   // ставится в общую очередь, сериализуется со стримом строк
 }
 async function stopDiskStream(){
+ if(dskStopping)return; dskStopping=true;
  if(dskFlushTimer){clearInterval(dskFlushTimer);dskFlushTimer=null;}
  window.removeEventListener("beforeunload",beforeUnloadDisk);
  var w=dskWritable;dskWritable=null;
  var mem=dskMemChunks;dskMemChunks=null;
+ try{await dskQueue;}catch(e){}   // дождаться завершения всех записей строк, прежде чем писать финальный заголовок и close()
  try{
   if(w){
    var hdr=padJson(dskHeaderObj(dskRows),dskHdrReserve);
