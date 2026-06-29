@@ -290,6 +290,28 @@ atomspectra-esp32/
 └── README.en.md               this file
 ```
 
+## ⚠ Disclaimer
+
+**All experiments with spectrometers and connected equipment are performed entirely at
+your own risk.** The project is provided "as is", without any warranty of any kind. The
+authors and contributors are **not liable** for any damage, direct or indirect: damage to
+the spectrometer, the detector, the PMT, the ESP32 board, your computer or any other
+equipment, nor for any loss of data or of the instrument's settings.
+
+In particular:
+- The instrument's configuration commands (`-ris`, `-fall`, `-nos`, `-max`, `-hyst`,
+  `-U`, `-V`, `-step`, etc.) change the **internal signal-processing configuration and the
+  hardware HV/gain parameters** (`POT` / `POT2`). Wrong values can corrupt the detector's
+  factory tuning or **damage the instrument**. These parameters are specific to each
+  individual unit — **do not write them blind** and do not copy values from another unit.
+  See [`KNOWN_ISSUES.en.md`](KNOWN_ISSUES.en.md) (BUG-AS-08).
+- The detector's high voltage (HV) can be hazardous to the instrument if set incorrectly.
+- Restoring corrupted detector tuning is done with the **manufacturer's stock
+  application**, not with this gateway.
+
+By using this project you acknowledge that you understand these risks and accept full
+responsibility for your actions with the equipment.
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE).

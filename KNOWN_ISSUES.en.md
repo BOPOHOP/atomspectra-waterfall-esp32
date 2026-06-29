@@ -6,6 +6,47 @@ A list of known bugs, limitations, and fixed issues for the AtomSpectra ESP32 Ga
 
 ## Open
 
+### BUG-AS-08: ⚠ The gateway does not back up the instrument's factory DSP tuning
+
+**Status:** limitation by design + warning (not a gateway-firmware bug).
+
+The "Atom Spectra" instrument stores its pulse-processing tuning (DSP tuning) **inside
+itself**: pulse-shape thresholds `RISE` / `FALL` / `NOISE`, `MAX` / `HYST` / `MODE` /
+`STEP`, the sampling frequency `F`, the hardware HV/gain potentiometers `POT` / `POT2`,
+and the pile-up / thermal-compensation profiles. These values are visible in the
+instrument's reply to the `-inf` command.
+
+**What was observed.** A case was recorded where this entire tuning **reset to zero**:
+`-inf` started returning `RISE 0 FALL 0 NOISE 0 F 1.00 MAX 0 HYST 0 ... POT 0 POT2 0`,
+while the instrument itself stayed online and still answered `VERSION`. With zero
+thresholds the instrument physically cannot discriminate pulses — counting stops
+(`total_counts = 0`, `cps = 0`) even though the USB/CDC link is fine. **Re-plugging USB
+does NOT restore the tuning.**
+
+**Impact:** until the DSP tuning is restored the instrument acquires no spectrum (zero
+counts). The gateway, WiFi, Web UI, TCP bridge, and the **energy calibration** (the
+`E(ch)` polynomial, stored on the gateway in `calib.bin`) are **not affected** — this is
+a state of the instrument itself, not of the gateway firmware.
+
+**⚠ Warning — do NOT restore "blind" with tuning commands.**
+Although the instrument protocol has configuration commands (`-ris`, `-fall`, `-nos`,
+`-max`, `-hyst`, `-U`, `-V`, `-step`, etc.), **you must not write them at random**:
+- `POT` / `POT2` are hardware HV/gain potentiometers, **specific to each individual**
+  detector. Values from another unit (including examples in documentation) can set the
+  wrong bias/gain and damage the instrument.
+- Only the factory calibration procedure for that specific unit knows the correct
+  thresholds and HV.
+
+**Workaround / recovery:** connect the instrument to the **manufacturer's stock
+AtomSpectra application** (KB Radar) and run its built-in re-tune / restore of the
+detector profile. The ESP32 gateway is not needed for this — the instrument can be
+connected to a PC directly (FTDI, 600000 baud).
+
+**Recommendation going forward:** the gateway can **read** `-inf` (it shows the fields in
+the Web UI) but does not back them up. It is worth saving the full working `-inf` reply
+once (a reference "snapshot" of the DSP configuration) while the instrument is correctly
+tuned — then a future reset can be compared against it and restored correctly.
+
 ### BUG-AS-03: Serial number is not read
 
 **Status:** open
