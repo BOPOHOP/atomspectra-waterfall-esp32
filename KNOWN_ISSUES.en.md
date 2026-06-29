@@ -37,15 +37,15 @@ Although the instrument protocol has configuration commands (`-ris`, `-fall`, `-
 - Only the factory calibration procedure for that specific unit knows the correct
   thresholds and HV.
 
-**Workaround / recovery:** connect the instrument to the **manufacturer's stock
-AtomSpectra application** (KB Radar) and run its built-in re-tune / restore of the
-detector profile. The ESP32 gateway is not needed for this — the instrument can be
-connected to a PC directly (FTDI, 600000 baud).
+**Workaround / recovery:** contact the **instrument's manufacturer (KB Radar)** —
+restoring the factory detector profile is done by the manufacturer. Do not try to write
+the tuning parameters yourself "blind" (see the warning above).
 
 **Recommendation going forward:** the gateway can **read** `-inf` (it shows the fields in
 the Web UI) but does not back them up. It is worth saving the full working `-inf` reply
 once (a reference "snapshot" of the DSP configuration) while the instrument is correctly
-tuned — then a future reset can be compared against it and restored correctly.
+tuned — then a future reset can be detected and the snapshot handed to the manufacturer
+as a reference.
 
 ### BUG-AS-03: Serial number is not read
 

@@ -306,8 +306,9 @@ In particular:
   individual unit — **do not write them blind** and do not copy values from another unit.
   See [`KNOWN_ISSUES.en.md`](KNOWN_ISSUES.en.md) (BUG-AS-08).
 - The detector's high voltage (HV) can be hazardous to the instrument if set incorrectly.
-- Restoring corrupted detector tuning is done with the **manufacturer's stock
-  application**, not with this gateway.
+- Restoring corrupted detector tuning is done by the **instrument's manufacturer
+  (KB Radar)**, not by this gateway. If the factory detector profile is lost, contact the
+  manufacturer — do not try to restore the parameters yourself.
 
 By using this project you acknowledge that you understand these risks and accept full
 responsibility for your actions with the equipment.
