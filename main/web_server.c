@@ -191,9 +191,11 @@ static esp_err_t render_spectrum_json(httpd_req_t *req, const spectrum_data_t *s
     if (pos > 0) httpd_resp_send_chunk(req, buf, pos);
     int n = snprintf(buf, 4096,
         "],\"total\":%" PRIu32 ",\"cpu\":%u,\"cps\":%" PRIu32 ",\"lost\":%" PRIu32 ",\"time\":%" PRIu32 ",\"live\":%.1f,"
+        "\"bridge_drop\":%" PRIu32 ","
         "\"t1\":%.1f,\"t2\":%.1f,\"t3\":%.1f,\"serial\":\"%s\"",
         sp->total_counts, sp->cpu_load, sp->cps, sp->lost_impulses,
         sp->total_time_sec, compute_live_time(sp),
+        tcp_bridge_dropped_bytes(),
         sp->temperature[0], sp->temperature[1], sp->temperature[2],
         sp->serial_number[0] ? sp->serial_number : "");
     httpd_resp_send_chunk(req, buf, n);

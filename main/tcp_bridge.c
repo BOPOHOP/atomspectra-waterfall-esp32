@@ -1,10 +1,12 @@
 #include "atomspectra.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "lwip/sockets.h"
 #include "lwip/inet.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "freertos/stream_buffer.h"
 #include <string.h>
 #include <errno.h>
 
@@ -13,21 +15,90 @@ static const char *TAG = "tcp_bridge";
 static int s_client_fd = -1;
 static int s_server_fd = -1;
 
-// P2-4: s_client_fd трогают три задачи (usb_to_tcp_cb send / tcp_rx_task
-// recv+close / tcp_server_task accept). Мьютекс закрывает use-after-close;
-// блокирующий recv() делаем вне лока.
+// P2-4: s_client_fd трогают четыре задачи (usb_to_tcp_cb feed / tcp_tx_task
+// send+close / tcp_rx_task recv+close / tcp_server_task accept). Мьютекс
+// закрывает use-after-close; блокирующие recv()/send() делаем вне лока.
 static SemaphoreHandle_t s_fd_mutex = NULL;
 #define FD_LOCK()   do { if (s_fd_mutex) xSemaphoreTake(s_fd_mutex, portMAX_DELAY); } while (0)
 #define FD_UNLOCK() do { if (s_fd_mutex) xSemaphoreGive(s_fd_mutex); } while (0)
 
+// #TCP-1: декаплинг USB-RX ↔ TCP-TX через PSRAM-кольцо (StreamBuffer).
+// Корень бага: раньше usb_to_tcp_cb звал send(fd,…,MSG_DONTWAIT) прямо из
+// CDC-задачи и игнорировал возврат — при переполнении крошечного LWIP-буфера
+// (CONFIG_LWIP_TCP_SND_BUF_DEFAULT) байты молча терялись посреди потока →
+// рассинхрон sh_proto-фрейминга у клиента («битые пакеты», ~41% на 61 с).
+// Наивный блокирующий send() из CDC-задачи нельзя: она же читает USB →
+// застрянет USB → потеря уедет в device lostImp. Поэтому producer
+// (usb_to_tcp_cb) НИКОГДА не блокирует — только кладёт в кольцо; consumer
+// (tcp_tx_task) блокирующе шлёт в сокет с SO_SNDTIMEO + partial-loop.
+#define TX_RING_BYTES   (256 * 1024)   // ~4.4 с потока @ 58 КБ/с — буфер на WiFi-джиттер
+#define TX_RING_TRIGGER 1              // будить consumer как только есть ≥1 байт
+#define TX_CHUNK_BYTES  4096           // сколько тянем из кольца за раз
+#define TX_SNDTIMEO_MS  1000           // потолок блокировки send() на застрявшем клиенте
+
+static StreamBufferHandle_t s_tx_ring = NULL;
+static StaticStreamBuffer_t s_tx_ring_struct;   // во внутренней RAM (маленькая)
+static uint8_t *s_tx_ring_storage = NULL;       // в PSRAM
+static volatile uint32_t s_bridge_dropped = 0;  // байт потеряно (overflow кольца + send-timeout)
+
+// producer: вызывается из CDC-задачи на каждый де-FTDI'нутый кусок. Не блокирует.
 static void usb_to_tcp_cb(const uint8_t *data, size_t len)
 {
     FD_LOCK();
     int fd = s_client_fd;
-    if (fd >= 0) {
+    FD_UNLOCK();
+    if (fd < 0) return;                  // нет клиента — не копим зря
+
+    if (s_tx_ring) {
+        size_t put = xStreamBufferSend(s_tx_ring, data, len, 0);   // 0 = без блокировки
+        if (put < len) s_bridge_dropped += (uint32_t)(len - put);  // кольцо переполнено
+    } else {
+        // фоллбэк, если PSRAM-кольцо не выделилось: деградированный прямой режим
         send(fd, data, len, MSG_DONTWAIT);
     }
-    FD_UNLOCK();
+}
+
+// consumer: единственный, кто шлёт в TCP. Блокирующий send с таймаутом и partial-loop.
+static void tcp_tx_task(void *arg)
+{
+    uint8_t *buf = heap_caps_malloc(TX_CHUNK_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buf) buf = malloc(TX_CHUNK_BYTES);
+    if (!buf) {
+        ESP_LOGE(TAG, "tx_task buffer alloc failed");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    while (1) {
+        if (!s_tx_ring) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
+
+        size_t n = xStreamBufferReceive(s_tx_ring, buf, TX_CHUNK_BYTES, pdMS_TO_TICKS(200));
+        if (n == 0) continue;            // таймаут, данных нет
+
+        FD_LOCK();
+        int fd = s_client_fd;
+        FD_UNLOCK();
+        if (fd < 0) continue;            // клиент ушёл — слитые байты выбрасываем
+
+        size_t off = 0;
+        while (off < n) {
+            int w = send(fd, buf + off, n - off, 0);   // блокирующий (с SO_SNDTIMEO)
+            if (w > 0) { off += (size_t)w; continue; }
+            if (w < 0 && errno == EINTR) continue;
+            if (w < 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
+                // send-timeout: клиент тормозит дольше TX_SNDTIMEO_MS. Бросаем
+                // остаток куска (last-resort), считаем, не вешаем USB.
+                s_bridge_dropped += (uint32_t)(n - off);
+                break;
+            }
+            // реальная ошибка сокета → закрываем клиента
+            ESP_LOGI(TAG, "tx send error, closing client (errno=%d)", errno);
+            FD_LOCK();
+            if (s_client_fd == fd) { close(fd); s_client_fd = -1; }
+            FD_UNLOCK();
+            break;
+        }
+    }
 }
 
 static void tcp_rx_task(void *arg)
@@ -46,8 +117,7 @@ static void tcp_rx_task(void *arg)
         if (n <= 0) {
             ESP_LOGI(TAG, "Client disconnected");
             FD_LOCK();
-            close(fd);
-            s_client_fd = -1;
+            if (s_client_fd == fd) { close(fd); s_client_fd = -1; }
             FD_UNLOCK();
             continue;
         }
@@ -107,6 +177,19 @@ static void tcp_server_task(void *arg)
         if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay)) < 0)
             ESP_LOGW(TAG, "TCP_NODELAY failed: errno=%d", errno);
 
+        // #TCP-1: ограничиваем блокировку send() в tcp_tx_task, чтобы застрявший
+        // клиент не держал задачу бесконечно (после таймаута бросаем остаток).
+        struct timeval snd_to = { .tv_sec = TX_SNDTIMEO_MS / 1000,
+                                  .tv_usec = (TX_SNDTIMEO_MS % 1000) * 1000 };
+        if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &snd_to, sizeof(snd_to)) < 0)
+            ESP_LOGW(TAG, "SO_SNDTIMEO failed: errno=%d", errno);
+
+        // Сбрасываем кольцо от хвоста прошлой сессии ДО публикации fd: producer
+        // ещё гейтится s_client_fd<0 и не пишет, так что reset без гонки. Если
+        // tx_task сейчас заблокирован в receive (reset вернёт fail) — кольцо и
+        // так пусто, новому клиенту хвост не уедет.
+        if (s_tx_ring) xStreamBufferReset(s_tx_ring);
+
         FD_LOCK();
         s_client_fd = fd;
         FD_UNLOCK();
@@ -117,13 +200,32 @@ static void tcp_server_task(void *arg)
 void tcp_bridge_init(void)
 {
     s_fd_mutex = xSemaphoreCreateMutex();
+
+    // PSRAM-кольцо + статическая управляющая структура (см. #TCP-1 выше).
+    s_tx_ring_storage = heap_caps_malloc(TX_RING_BYTES + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (s_tx_ring_storage) {
+        s_tx_ring = xStreamBufferCreateStatic(TX_RING_BYTES, TX_RING_TRIGGER,
+                                              s_tx_ring_storage, &s_tx_ring_struct);
+    }
+    if (!s_tx_ring) {
+        ESP_LOGE(TAG, "TX ring alloc failed — fallback to direct non-blocking send");
+    } else {
+        ESP_LOGI(TAG, "TX ring %d KB in PSRAM", TX_RING_BYTES / 1024);
+    }
+
     usb_host_cdc_set_raw_rx_cb(usb_to_tcp_cb);
     xTaskCreate(tcp_server_task, "tcp_srv", 4096, NULL, 5, NULL);
-    xTaskCreate(tcp_rx_task, "tcp_rx", 4096, NULL, 5, NULL);
+    xTaskCreate(tcp_tx_task,     "tcp_tx",  4096, NULL, 6, NULL);
+    xTaskCreate(tcp_rx_task,     "tcp_rx",  4096, NULL, 5, NULL);
     ESP_LOGI(TAG, "TCP bridge initialized, port %d", TCP_BRIDGE_PORT);
 }
 
 bool tcp_bridge_client_connected(void)
 {
     return s_client_fd >= 0;
+}
+
+uint32_t tcp_bridge_dropped_bytes(void)
+{
+    return s_bridge_dropped;
 }

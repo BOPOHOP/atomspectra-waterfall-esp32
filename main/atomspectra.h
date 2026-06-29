@@ -79,6 +79,7 @@ void web_server_init(void);
 
 void tcp_bridge_init(void);
 bool tcp_bridge_client_connected(void);
+uint32_t tcp_bridge_dropped_bytes(void);
 
 void spectrum_init(void);
 void spectrum_process_histogram_chunk(const uint8_t *data, size_t len);
