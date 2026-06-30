@@ -110,7 +110,7 @@ void spectrum_process_info_response(const char *text)
         ESP_LOGI(TAG, "Serial: %s", s_spectrum.serial_number);
     }
     ESP_LOGI(TAG, "Info response: %d lines", lcount);
-    for (int i = 0; i < lcount && i < 12; i++)
+    for (int i = 0; 0 && i < lcount && i < 12; i++)
         ESP_LOGI(TAG, "  L[%d]: \"%s\"", i, lbuf[i]);
     if (lcount >= 11) {
         char hcat[256] = {0};

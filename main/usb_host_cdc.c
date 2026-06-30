@@ -35,6 +35,9 @@ static int s_rx_cb_count = 0;
 static char s_text_accum[4096];
 static int  s_text_accum_len = 0;
 
+static unsigned packets_good = 0;
+static unsigned packets_bad = 0;
+
 // #FW-2/#FW-3: однократные действия при ПЕРВОМ USB-коннекте после ребута.
 // Значения задаёт usb_host_cdc_set_autostart() из main.c (читая boot_config из NVS).
 static bool s_boot_autostart_spec = false;
@@ -106,9 +109,18 @@ static void handle_rx_packet(void)
 }
 
 static void feed_shproto(const uint8_t *d, size_t n) {
+    static char printed = 0;
     for (size_t i = 0; i < n; i++) {
         shproto_byte_received(&s_rx_packet, d[i]);
-        if (s_rx_packet.ready) { s_rx_packet.ready = false; handle_rx_packet(); }
+	if (s_rx_packet.dropped)  {
+		packets_bad++;
+		printed = 0;
+	}
+	if ((s_rx_packet.dropped || s_rx_packet.ready) && !s_rx_packet.started && !printed && (packets_good%1000 == 0  || packets_bad%1000 == 0)) {
+        	ESP_LOGI(TAG, "shproto pkts: %u good, %u bad", packets_good, packets_bad);
+		printed = 1;
+	}
+        if (s_rx_packet.ready) { packets_good++; s_rx_packet.ready = false; handle_rx_packet(); }
     }
 }
 static bool handle_rx(const uint8_t *data, size_t data_len, void *arg) {
