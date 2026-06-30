@@ -59,7 +59,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "All subsystems initialized");
 
-    int info_tick = 0, autosave_tick = 0;
+    int info_tick = 0, autosave_tick = 0, autostart_tick = 0;
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(10000));
         const spectrum_data_t *sp = spectrum_get_current();
@@ -73,7 +73,17 @@ void app_main(void)
             info_tick = 0;
             usb_host_send_text_command("-inf");
         }
-        if (++autosave_tick >= 6) {
+        if (usb_host_cdc_is_connected() && autostart_tick >= 0 && ++autostart_tick >= 18 && autostart_tick < 30) {
+            ESP_LOGI(TAG, "cmd -cal");
+            usb_host_send_text_command("-cal");
+	    autostart_tick = 30;
+        }
+        if (usb_host_cdc_is_connected() && autostart_tick >= 0 && ++autostart_tick >= 40) {
+            ESP_LOGI(TAG, "cmd -sta");
+            autostart_tick = -1;
+            usb_host_send_text_command("-sta");
+        }
+        if (++autosave_tick >= 3600) {
             autosave_tick = 0;
             spectrum_autosave();
         }
