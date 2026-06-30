@@ -116,7 +116,8 @@ static void feed_shproto(const uint8_t *d, size_t n) {
 		packets_bad++;
 		printed = 0;
 	}
-	if ((s_rx_packet.dropped || s_rx_packet.ready) && !s_rx_packet.started && !printed && (packets_good%1000 == 0  || packets_bad%1000 == 0)) {
+	if ((s_rx_packet.dropped || s_rx_packet.ready) && !s_rx_packet.started && !printed && 
+			((packets_good&&(packets_good%1000 == 0))  || (packets_bad &&(packets_bad%1000 == 0)))) {
         	ESP_LOGI(TAG, "shproto pkts: %u good, %u bad", packets_good, packets_bad);
 		printed = 1;
 	}
@@ -124,7 +125,7 @@ static void feed_shproto(const uint8_t *d, size_t n) {
     }
 }
 static bool handle_rx(const uint8_t *data, size_t data_len, void *arg) {
-    if (++s_rx_cb_count <= 10) {
+    if (++s_rx_cb_count <= 10) { // || data_len > 2048) {
         char h[80]; size_t p=0, show = data_len<16?data_len:16;
         for (size_t i=0;i<show;i++) p+=snprintf(h+p,sizeof(h)-p,"%02x ",data[i]);
         ESP_LOGI(TAG,"RX#%d len=%u: %s",s_rx_cb_count,(unsigned)data_len,h);
@@ -183,7 +184,8 @@ static void try_open_device(void)
     const cdc_acm_host_device_config_t dev_config = {
         .connection_timeout_ms = 5000,
         .out_buffer_size = 1024,
-        .in_buffer_size = 1024,
+        //.in_buffer_size = 1024,
+        .in_buffer_size = 1024*36,
         .event_cb = handle_event,
         .data_cb = handle_rx,
         .user_arg = NULL,
@@ -209,7 +211,9 @@ static void try_open_device(void)
     }
 
     cdc_acm_host_send_custom_request(s_cdc_dev,FTDI_REQTYPE_OUT,FTDI_SIO_RESET,0,0,0,NULL);
-    cdc_acm_host_send_custom_request(s_cdc_dev,FTDI_REQTYPE_OUT,FTDI_SIO_SET_BAUDRATE,5,0,0,NULL);
+    cdc_acm_host_send_custom_request(s_cdc_dev,FTDI_REQTYPE_OUT,FTDI_SIO_SET_BAUDRATE,5,0,0,NULL); // bag 600000
+    // cdc_acm_host_send_custom_request(s_cdc_dev,FTDI_REQTYPE_OUT,FTDI_SIO_SET_BAUDRATE,0x8003,0,0,NULL); // bag  921600
+    // cdc_acm_host_send_custom_request(s_cdc_dev,FTDI_REQTYPE_OUT,FTDI_SIO_SET_BAUDRATE,0x4006,0,0,NULL); // bag  460800
     cdc_acm_host_send_custom_request(s_cdc_dev,FTDI_REQTYPE_OUT,FTDI_SIO_SET_DATA,0x0008,0,0,NULL);
     cdc_acm_host_send_custom_request(s_cdc_dev,FTDI_REQTYPE_OUT,FTDI_SIO_SET_FLOW_CTRL,0,0,0,NULL);
     cdc_acm_host_send_custom_request(s_cdc_dev,FTDI_REQTYPE_OUT,FTDI_SIO_SET_MODEM_CTRL,0x0303,0,0,NULL);
