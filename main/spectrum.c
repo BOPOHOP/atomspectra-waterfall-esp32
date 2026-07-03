@@ -202,6 +202,8 @@ void spectrum_process_histogram_chunk(const uint8_t *data, size_t len)
             // #FW-13 фикс №2: сигнал «burst кончился, тихое окно открыто».
             for (int i = 0; i < COMMIT_LISTENERS_MAX; i++)
                 if (s_commit_listeners[i]) xSemaphoreGive(s_commit_listeners[i]);
+            if (s_hist_commits > 0 && s_hist_commits%10 == 0)
+	    	ESP_LOGW(TAG, "histogram received, hist_commits=%u", (unsigned)s_hist_commits);
         } else {
             s_hist_drops++;
             ESP_LOGW(TAG, "histogram sweep dropped (gap in chunks), drops=%" PRIu32, s_hist_drops);
@@ -290,7 +292,7 @@ void spectrum_process_info_response(const char *text)
     // приёма. FTDI FT232R держит 256 Б FIFO = 4.3 мс при 600000 бод → overflow,
     // gap в chunk-ах, свип дропался (30-секундная сетка hist_drop).
     ESP_LOGD(TAG, "Info response: %d lines", lcount);
-    for (int i = 0; i < lcount && i < 12; i++)
+    for (int i = 0; 0 && i < lcount && i < 12; i++)
         ESP_LOGD(TAG, "  L[%d]: \"%s\"", i, lbuf[i]);
     if (lcount >= 11) {
         char hcat[256] = {0};

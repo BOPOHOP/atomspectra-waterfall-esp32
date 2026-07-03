@@ -144,10 +144,22 @@ static void handle_rx_packet(void)
     }
 }
 
+static unsigned packets_good = 0;
+static unsigned packets_bad = 0;
+
 static void feed_shproto(const uint8_t *d, size_t n) {
+    static char printed = 0;
     for (size_t i = 0; i < n; i++) {
         shproto_byte_received(&s_rx_packet, d[i]);
-        if (s_rx_packet.ready) { s_rx_packet.ready = false; handle_rx_packet(); }
+	if (s_rx_packet.dropped)  {
+		packets_bad++;
+		printed = 0;
+	}
+	if ((s_rx_packet.dropped || s_rx_packet.ready) && !s_rx_packet.started && !printed && (packets_good%1000 == 0  || packets_bad%1000 == 0)) {
+        	ESP_LOGI(TAG, "shproto pkts: %u good, %u bad", packets_good, packets_bad);
+		printed = 1;
+	}
+        if (s_rx_packet.ready) { packets_good++; s_rx_packet.ready = false; handle_rx_packet(); }
     }
 }
 static bool handle_rx(const uint8_t *data, size_t data_len, void *arg) {
@@ -211,7 +223,8 @@ static void try_open_device(void)
     const cdc_acm_host_device_config_t dev_config = {
         .connection_timeout_ms = 5000,
         .out_buffer_size = 1024,
-        .in_buffer_size = 1024,  /* #TCP-5 ОТКАТ: 1024*36 → ESP_ERR_NO_MEM на нашей S3 (DMA-RAM < 36КБ, мост мёртв). Вернул проверенный 1024; #TCP-5 переоткрыт — нужен подбор размера/освобождение DMA-RAM */
+        // .in_buffer_size = 1024,  /* #TCP-5 ОТКАТ: 1024*36 → ESP_ERR_NO_MEM на нашей S3 (DMA-RAM < 36КБ, мост мёртв). Вернул проверенный 1024; #TCP-5 переоткрыт — нужен подбор размера/освобождение DMA-RAM */
+        .in_buffer_size = 128*1,  /* #TCP-5 ОТКАТ: 1024*36 → ESP_ERR_NO_MEM на нашей S3 (DMA-RAM < 36КБ, мост мёртв). Вернул проверенный 1024; #TCP-5 переоткрыт — нужен подбор размера/освобождение DMA-RAM */
         .event_cb = handle_event,
         .data_cb = handle_rx,
         .user_arg = NULL,
