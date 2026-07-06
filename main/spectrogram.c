@@ -3,6 +3,7 @@
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_littlefs.h"
+#include "esp_timer.h"   // #FW-21: монотонные часы для elapsed_sec (не зависят от NTP)
 #include "nvs.h"   // #FW-15: настройки интервала/persist переживают ребут и clr_wf
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -44,9 +45,18 @@ static uint16_t        *s_dur;       // #FW-5: кольцо реальных д�
 static uint32_t         s_prev_time; // #FW-5: предыдущее device total_time_sec (дельта = живое время среза)
 static spectrum_data_t *s_snap;     // start()/seg_header_build() (serial/calib для шапки)
 static spectrum_data_t *s_wf_snap;  // приватный буфер периодического wf_task (P3-4)
+static uint32_t        *s_baseline;     // PSRAM: 8192×uint32 — снимок накопительного спектра при start()
+static float            s_dose_k;       // µSv/h per cps из NVS (0.0 → NaN в dose_rate строк)
+static float           *s_dose_lut;     // PSRAM: 8192×float LUT кривой МД (NULL → scalar k)
+static int              s_dose_curve_n; // точек загружено (0 → scalar k)
 
 static wf_status_t       s_status;
 static wf_row_cb_t       s_row_cb;
+// #FW-21: монотонная база старта ТЕКУЩЕЙ сессии записи (esp_timer, мкс от boot).
+// Заводится в start() и restore() (обе точки total_rows=0). Из неё get_status
+// считает elapsed_sec — честное «Время записи» без зависимости от NTP/wall-time.
+// 0 = запись не идёт. Под s_lock (как и s_status).
+static int64_t           s_started_uptime_us;
 static SemaphoreHandle_t s_lock;     // защищает s_status / кольцо
 static SemaphoreHandle_t s_fs_lock;  // защищает файловые операции с сегментами
 
@@ -122,7 +132,79 @@ static void settings_load(void)
         s_status.interval_sec = iv;
     if (nvs_get_u8(h, "persist", &ps) == ESP_OK)
         s_status.persist = (ps != 0);
+    uint32_t dose_bits = 0;
+    if (nvs_get_u32(h, "dose_k_bits", &dose_bits) == ESP_OK)
+        memcpy(&s_dose_k, &dose_bits, 4);
     nvs_close(h);
+}
+
+#define DOSE_CURVE_PATH       "/storage/dose_curve.csv"
+#define DOSE_CURVE_MAX_POINTS 512
+
+static void build_dose_lut(const float *ch_arr, const float *k_arr, int n)
+{
+    if (!s_dose_lut || n <= 0) return;
+    int pi = 0;
+    for (int ci = 0; ci < WF_CHANNELS; ci++) {
+        float ch = (float)ci;
+        if (n == 1) { s_dose_lut[ci] = k_arr[0]; continue; }
+        if (ch <= ch_arr[0])   { s_dose_lut[ci] = k_arr[0];   continue; }
+        if (ch >= ch_arr[n-1]) { s_dose_lut[ci] = k_arr[n-1]; continue; }
+        while (pi + 1 < n - 1 && ch_arr[pi + 1] <= ch) pi++;
+        float t = (ch - ch_arr[pi]) / (ch_arr[pi+1] - ch_arr[pi]);
+        s_dose_lut[ci] = k_arr[pi] + t * (k_arr[pi+1] - k_arr[pi]);
+    }
+}
+
+void spectrogram_load_dose_curve(void)
+{
+    if (!s_dose_lut) { s_dose_curve_n = 0; return; }
+    static float ch_buf[DOSE_CURVE_MAX_POINTS];
+    static float k_buf[DOSE_CURVE_MAX_POINTS];
+    int n = 0;
+    FILE *f = fopen(DOSE_CURVE_PATH, "r");
+    if (!f) { s_dose_curve_n = 0; ESP_LOGI(TAG, "dose_curve: no file"); return; }
+    char line[80];
+    while (fgets(line, sizeof(line), f) && n < DOSE_CURVE_MAX_POINTS) {
+        char *p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '#' || *p == '\n' || *p == '\r' || *p == '\0') continue;
+        if (*p != '.' && (*p < '0' || *p > '9')) continue; // заголовок
+        float ch, k;
+        if (sscanf(p, "%f,%f", &ch, &k) == 2 && ch >= 0.0f && ch < WF_CHANNELS && k >= 0.0f)
+            ch_buf[n] = ch, k_buf[n] = k, n++;
+    }
+    fclose(f);
+    if (n < 1) { s_dose_curve_n = 0; ESP_LOGW(TAG, "dose_curve: 0 valid points"); return; }
+    // insertion sort по channel
+    for (int i = 1; i < n; i++) {
+        float tc = ch_buf[i], tk = k_buf[i]; int j = i - 1;
+        while (j >= 0 && ch_buf[j] > tc) { ch_buf[j+1] = ch_buf[j]; k_buf[j+1] = k_buf[j]; j--; }
+        ch_buf[j+1] = tc; k_buf[j+1] = tk;
+    }
+    build_dose_lut(ch_buf, k_buf, n);
+    s_dose_curve_n = n;
+    ESP_LOGI(TAG, "dose_curve: %d points loaded", n);
+}
+
+int spectrogram_get_dose_curve_n(void) { return s_dose_curve_n; }
+
+float spectrogram_compute_dose_rate(const uint16_t *bins, uint32_t dur)
+{
+    uint32_t nan_bits = 0x7FC00000u;
+    float result;
+    memcpy(&result, &nan_bits, 4);
+    if (dur == 0) return result;
+    if (s_dose_lut && s_dose_curve_n > 0) {
+        double wsum = 0.0;
+        for (int i = 0; i < WF_CHANNELS; i++) wsum += (double)bins[i] * s_dose_lut[i];
+        result = (float)(wsum / (double)dur);
+    } else if (s_dose_k > 0.0f) {
+        uint64_t total = 0;
+        for (int i = 0; i < WF_CHANNELS; i++) total += bins[i];
+        result = ((float)total / (float)dur) * s_dose_k;
+    }
+    return result;
 }
 
 static void settings_save(uint32_t interval_sec, bool persist)
@@ -167,23 +249,38 @@ static bool seg_name_index(const char *name, uint32_t *idx)
     return true;
 }
 
-// Собрать JSON-шапку сегмента в s_hdr (добита пробелами до WF_HDR_RESERVE).
-// saved_rows/saved_at — первыми, фикс. ширины (патчатся позже). started_at —
-// время открытия ЭТОГО сегмента (каждый .aswf самосогласован по времени).
+// Собрать JSON-шапку сегмента v3 в s_hdr (добита пробелами до WF_HDR_RESERVE).
+// saved_rows/saved_at — первыми, фикс. ширины (#FW-14: всегда 0). started_at —
+// время открытия ЭТОГО сегмента. row_fields — полное самоописание строки v3.
 static void seg_header_build(uint32_t rows, long saved_at, long started_at)
 {
     int cap = (int)sizeof(s_hdr);
-    // #FW-5: v2 — после 16384 Б спектра каждая строка несёт 2 Б реальной
-    // длительности (uint16 LE, сек). Шапка самоописываема: row_stride = размер
-    // записи строки, row_time.offset = смещение длительности внутри записи.
     int n = snprintf(s_hdr, sizeof(s_hdr),
         WF_F_PRE "%*" PRIu32 WF_F_MID "%*ld"
-        ",\"format\":\"atomspectra-waterfall\",\"version\":2"
+        ",\"format\":\"atomspectra-waterfall\",\"version\":3"
         ",\"channels\":%d,\"dtype\":\"uint16\",\"byte_order\":\"little\""
-        ",\"row_stride\":%d,\"row_time\":{\"dtype\":\"uint16\",\"unit\":\"sec\",\"offset\":%d}"
+        ",\"row_stride\":%d"
+        ",\"row_fields\":["
+        "{\"name\":\"spectrum\",\"dtype\":\"uint16\",\"channels\":%d,\"offset\":0},"
+        "{\"name\":\"duration\",\"dtype\":\"uint16\",\"unit\":\"sec\",\"offset\":%d},"
+        "{\"name\":\"timestamp\",\"dtype\":\"uint32\",\"unit\":\"unix_sec\",\"offset\":%d},"
+        "{\"name\":\"latitude\",\"dtype\":\"float32\",\"unit\":\"deg\",\"offset\":%d},"
+        "{\"name\":\"longitude\",\"dtype\":\"float32\",\"unit\":\"deg\",\"offset\":%d},"
+        "{\"name\":\"dose_rate\",\"dtype\":\"float32\",\"unit\":\"usv_h\",\"offset\":%d}"
+        "]"
+        ",\"baseline\":{\"dtype\":\"uint32\",\"channels\":%d,\"byte_order\":\"little\"}"
+        ",\"compressed\":false"
         ",\"interval_sec\":%" PRIu32 ",\"started_at\":%ld",
         WF_F_W, rows, WF_F_W, saved_at,
-        WF_CHANNELS, WF_ROW_STRIDE, WF_ROW_BYTES, s_status.interval_sec, started_at);
+        WF_CHANNELS, WF_ROW_STRIDE,
+        WF_CHANNELS,                                              // spectrum.channels
+        WF_ROW_BYTES,                                             // duration.offset=16384
+        WF_ROW_BYTES + WF_DUR_BYTES,                             // timestamp.offset=16386
+        WF_ROW_BYTES + WF_DUR_BYTES + WF_TS_BYTES,              // latitude.offset=16390
+        WF_ROW_BYTES + WF_DUR_BYTES + WF_TS_BYTES + 4,         // longitude.offset=16394
+        WF_ROW_BYTES + WF_DUR_BYTES + WF_TS_BYTES + 8,         // dose_rate.offset=16398
+        WF_CHANNELS,                                              // baseline.channels
+        s_status.interval_sec, started_at);
     if (n > 0 && n < cap && s_snap && s_snap->serial_number[0])
         n += snprintf(s_hdr + n, cap - n, ",\"serial\":\"%s\"", s_snap->serial_number);
     if (n > 0 && n < cap && s_snap && s_snap->calib_valid) {
@@ -194,8 +291,8 @@ static void seg_header_build(uint32_t rows, long saved_at, long started_at)
     }
     if (n > 0 && n < cap) n += snprintf(s_hdr + n, cap - n, "}");
     if (n < 0)   n = 0;
-    if (n > cap) n = cap;            // защита от переполнения (на практике ~250 Б)
-    memset(s_hdr + n, ' ', cap - n); // добить пробелами — читатели trim-ят
+    if (n > cap) n = cap;
+    memset(s_hdr + n, ' ', cap - n);
 }
 
 // Записать префикс "ASWF"+u32(reserve) и s_hdr с начала файла.
@@ -272,6 +369,22 @@ static bool seg_open_new(void)
         ESP_LOGE(TAG, "header write failed %s", p);
         fclose(f); unlink(p); return false;
     }
+    // v3: baseline секция (WF_CHANNELS×uint32 LE) между header и payload
+    if (s_baseline) {
+        if (fwrite(s_baseline, 4, WF_CHANNELS, f) != (size_t)WF_CHANNELS) {
+            ESP_LOGE(TAG, "baseline write failed %s", p);
+            fclose(f); unlink(p); return false;
+        }
+    } else {
+        // s_baseline не выделен (OOM) — пишем нули (32 КБ по 128 Б за раз)
+        static const uint8_t zeroes[128] = {0};
+        for (int c = 0; c < WF_BASELINE_BYTES / (int)sizeof(zeroes); c++) {
+            if (fwrite(zeroes, 1, sizeof(zeroes), f) != sizeof(zeroes)) {
+                ESP_LOGE(TAG, "baseline zeros write failed %s", p);
+                fclose(f); unlink(p); return false;
+            }
+        }
+    }
     fflush(f); fsync(fileno(f));
     s_seg_fp        = f;
     s_seg_cur       = s_seg_next;
@@ -336,10 +449,9 @@ static void seg_delete_all(void)
     closedir(d);
 }
 
-// #FW-5: определить размер записи строки в существующем сегменте по JSON-шапке.
-// v2 (есть "row_stride":NNNNN) → это значение (16386); legacy v1 (нет поля) →
-// WF_ROW_BYTES (16384, без длительностей). Читает только начало шапки; позиция
-// файла восстанавливается на 0. Так reconcile-по-размеру корректен для обоих форматов.
+// Определить stride и payload-offset существующего сегмента по JSON-шапке.
+// v3: stride=16402, payload_offset=4104+32768; v2: stride=16386, offset=4104;
+// v1 (нет row_stride): stride=16384, offset=4104. Позиция файла → 0 после вызова.
 static uint32_t seg_detect_stride(FILE *f)
 {
     char hdr[320];
@@ -350,9 +462,31 @@ static uint32_t seg_detect_stride(FILE *f)
     const char *p = strstr(hdr, "\"row_stride\":");
     if (p) {
         unsigned long v = strtoul(p + 13, NULL, 10);   // 13 = strlen("\"row_stride\":")
-        if (v >= WF_ROW_BYTES && v <= (unsigned long)WF_ROW_BYTES + 64) return (uint32_t)v;
+        if (v >= WF_ROW_BYTES && v <= (unsigned long)WF_ROW_BYTES + 128) return (uint32_t)v;
     }
     return WF_ROW_BYTES;   // legacy v1 — без длительностей
+}
+
+static int seg_detect_version(FILE *f)
+{
+    char hdr[320];
+    if (fseek(f, 8, SEEK_SET) != 0) { fseek(f, 0, SEEK_SET); return 2; }
+    size_t rd = fread(hdr, 1, sizeof(hdr) - 1, f);
+    fseek(f, 0, SEEK_SET);
+    hdr[rd] = '\0';
+    const char *p = strstr(hdr, "\"version\":");
+    if (p) {
+        int v = (int)strtol(p + 10, NULL, 10);   // 10 = strlen("\"version\":")
+        if (v >= 1 && v <= 9) return v;
+    }
+    return 2;   // default
+}
+
+static long seg_payload_offset(FILE *f)
+{
+    return seg_detect_version(f) >= 3
+        ? (long)(8 + WF_HDR_RESERVE + WF_BASELINE_BYTES)
+        : (long)(8 + WF_HDR_RESERVE);
 }
 
 // boot-реконсиляция: пройти каталог, для каждого сегмента rows = из размера файла.
@@ -375,8 +509,9 @@ static void seg_reconcile(void)
             if (stat(p, &sb) != 0) continue;
             FILE *f = fopen(p, "rb");
             if (!f) continue;
-            uint32_t stride = seg_detect_stride(f);   // #FW-5: v2=16386 (с длит.), v1=16384
-            long payload = (long)sb.st_size - WF_SEG_HEADER;
+            uint32_t stride = seg_detect_stride(f);   // v3=16402, v2=16386, v1=16384
+            long poff = seg_payload_offset(f);         // v3=36872, v1/v2=4104
+            long payload = (long)sb.st_size - poff;
             uint32_t rows = payload > 0 ? (uint32_t)(payload / stride) : 0;
             if (rows == 0) { fclose(f); unlink(p); continue; }
             fclose(f);
@@ -425,9 +560,15 @@ void spectrogram_init(void)
     s_dur  = heap_caps_malloc((size_t)s_capacity * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
     s_prev = heap_caps_malloc(WF_CHANNELS * sizeof(uint32_t), MALLOC_CAP_SPIRAM);
     s_row  = heap_caps_malloc(WF_ROW_BYTES, MALLOC_CAP_SPIRAM);
-    s_snap = heap_caps_malloc(sizeof(spectrum_data_t), MALLOC_CAP_SPIRAM);
-    s_wf_snap = heap_caps_malloc(sizeof(spectrum_data_t), MALLOC_CAP_SPIRAM);
-    s_fs_buf  = heap_caps_malloc(WF_ROW_BYTES, MALLOC_CAP_SPIRAM);   // #FW-6 consumer
+    s_snap     = heap_caps_malloc(sizeof(spectrum_data_t), MALLOC_CAP_SPIRAM);
+    s_wf_snap  = heap_caps_malloc(sizeof(spectrum_data_t), MALLOC_CAP_SPIRAM);
+    s_fs_buf   = heap_caps_malloc(WF_ROW_BYTES, MALLOC_CAP_SPIRAM);   // #FW-6 consumer
+    // v3: baseline (32 КБ) — не критично, пишем нули если нет PSRAM
+    s_baseline = heap_caps_calloc(WF_CHANNELS, sizeof(uint32_t), MALLOC_CAP_SPIRAM);
+    if (!s_baseline) ESP_LOGW(TAG, "baseline alloc failed — zeros on start");
+    // v3: LUT кривой мощности дозы (32 КБ PSRAM, nullable)
+    s_dose_lut = heap_caps_malloc(WF_CHANNELS * sizeof(float), MALLOC_CAP_SPIRAM);
+    if (!s_dose_lut) ESP_LOGW(TAG, "dose_lut alloc failed — curve disabled");
 
     if (!s_ring || !s_dur || !s_prev || !s_row || !s_snap || !s_wf_snap || !s_fs_buf) {
         ESP_LOGE(TAG, "PSRAM alloc failed");
@@ -450,6 +591,7 @@ void spectrogram_init(void)
     xTaskCreatePinnedToCore(wf_fs_task, "wf_fs", 8192, NULL, 2, NULL, 1);
     // stack 8192: producer теперь без FS, но оставляем запас (snapshot + row_cb).
     xTaskCreatePinnedToCore(wf_task, "wf", 8192, NULL, 3, NULL, 1);
+    spectrogram_load_dose_curve(); // попытка; FS смонтирована в main до вызова init()
 }
 
 // #FW-6: запись одной строки в сегмент. Вызывается ТОЛЬКО из wf_fs_task без
@@ -469,15 +611,43 @@ static void seg_write_row(const uint8_t *row, uint16_t dur)
     if (!s_seg_fp) seg_open_new();
     if (s_seg_fp) {
         uint8_t durle[WF_DUR_BYTES] = { (uint8_t)(dur & 0xFF), (uint8_t)(dur >> 8) };
-        size_t wr  = fwrite(row, 1, WF_ROW_BYTES, s_seg_fp);
-        size_t wrd = (wr == WF_ROW_BYTES) ? fwrite(durle, 1, WF_DUR_BYTES, s_seg_fp) : 0;
-        if (wr != WF_ROW_BYTES || wrd != WF_DUR_BYTES || fflush(s_seg_fp) != 0) {
+        // v3 суффикс: timestamp + lat(NaN) + lon(NaN) + dose_rate
+        uint8_t v3tail[WF_TS_BYTES + WF_GPS_BYTES + WF_DOSE_BYTES];
+        {
+            uint32_t ts = (uint32_t)time(NULL);
+            uint32_t nan_bits = 0x7FC00000u;
+            float lat_v, lon_v, dose_v;
+            memcpy(&lat_v,  &nan_bits, 4);
+            memcpy(&lon_v,  &nan_bits, 4);
+            memcpy(&dose_v, &nan_bits, 4);
+            if (s_dose_lut && s_dose_curve_n > 0 && dur > 0) {
+                // кривая: взвешенная сумма bins[i]*lut[i]
+                double wsum = 0.0;
+                const uint16_t *sp = (const uint16_t *)row;
+                for (int ci = 0; ci < WF_CHANNELS; ci++) wsum += (double)sp[ci] * s_dose_lut[ci];
+                dose_v = (float)(wsum / (double)dur);
+            } else if (s_dose_k > 0.0f && dur > 0) {
+                uint64_t sum = 0;
+                const uint16_t *sp = (const uint16_t *)row;
+                for (int ci = 0; ci < WF_CHANNELS; ci++) sum += sp[ci];
+                dose_v = ((float)sum / (float)dur) * s_dose_k;
+            }
+            memcpy(v3tail + 0,  &ts,    4);
+            memcpy(v3tail + 4,  &lat_v, 4);
+            memcpy(v3tail + 8,  &lon_v, 4);
+            memcpy(v3tail + 12, &dose_v, 4);
+        }
+        size_t wr  = fwrite(row,    1, WF_ROW_BYTES,    s_seg_fp);
+        size_t wrd = (wr  == WF_ROW_BYTES)  ? fwrite(durle,  1, WF_DUR_BYTES,       s_seg_fp) : 0;
+        size_t wrv = (wrd == WF_DUR_BYTES)  ? fwrite(v3tail, 1, sizeof(v3tail),     s_seg_fp) : 0;
+        if (wr != WF_ROW_BYTES || wrd != WF_DUR_BYTES || wrv != sizeof(v3tail) || fflush(s_seg_fp) != 0) {
             ESP_LOGE(TAG, "seg row write failed (wr=%zu) — drop segment", wr);
             fclose(s_seg_fp); s_seg_fp = NULL; s_seg_cur = 0xFFFFFFFFu; s_seg_rows = 0;
         } else {
-            fsync(fileno(s_seg_fp));
             s_seg_rows++;
             LOCK(); s_status.flash_rows++; UNLOCK();
+            if (s_seg_rows % WF_FSYNC_BATCH == 0)
+                fsync(fileno(s_seg_fp));
             // #FW-8: место под хвост текущего сегмента + весь следующий освобождаем
             // ЗАРАНЕЕ, в середине сегмента. Иначе unlink 1МБ кольцом (десятки секунд
             // стираний Flash с заморозкой кэша) фазово совпадал с ролловером
@@ -592,6 +762,15 @@ void spectrogram_get_status(wf_status_t *out)
     if (!out) return;
     LOCK();
     *out = s_status;
+    // #FW-21: elapsed_sec из монотонных часов — честная длительность сессии,
+    // не зависит от NTP/started_at. Клиент показывает это число напрямую (F5
+    // не сбрасывает: значение живёт на плате, не в памяти вкладки).
+    if (s_status.recording && s_started_uptime_us > 0) {
+        int64_t d = (esp_timer_get_time() - s_started_uptime_us) / 1000000;
+        out->elapsed_sec = (d > 0) ? (uint32_t)d : 0;
+    } else {
+        out->elapsed_sec = 0;
+    }
     UNLOCK();
 }
 
@@ -620,6 +799,10 @@ void spectrogram_restore(void)
 
     // Возобновляем запись в НОВЫЙ сегмент (wf_task откроет лениво на первом тике).
     spectrum_get_snapshot(s_snap);
+    // v3: baseline при resume — накопительный спектр на момент восстановления
+    if (s_baseline) {
+        for (int i = 0; i < WF_CHANNELS; i++) s_baseline[i] = s_snap->bins[i];
+    }
     LOCK();
     memcpy(s_prev, s_snap->bins, WF_CHANNELS * sizeof(uint32_t));
     s_prev_total          = s_snap->total_counts;
@@ -633,6 +816,7 @@ void spectrogram_restore(void)
     s_status.persist      = (st.persist != 0);
     s_status.interval_sec = st.interval_sec;
     s_status.started_at   = (time_t)st.started_at;
+    s_started_uptime_us   = esp_timer_get_time();  // #FW-21: новая сессия по счёту строк
     s_status.recording    = true;
     UNLOCK();
     ESP_LOGW(TAG, "restore: resumed recording in new segment, interval=%" PRIu32 "s",
@@ -662,6 +846,10 @@ int spectrogram_start(void)
     }
 
     spectrum_get_snapshot(s_snap);
+    // v3: снимок накопительного спектра → baseline секция каждого сегмента
+    if (s_baseline) {
+        for (int i = 0; i < WF_CHANNELS; i++) s_baseline[i] = s_snap->bins[i];
+    }
 
     FSLOCK();
     if (s_seg_fp) seg_finalize();          // закрыть огрызок от прошлой записи
@@ -677,6 +865,7 @@ int spectrogram_start(void)
     s_status.flash_full = false;
     s_status.flash_rows = 0;
     s_status.started_at = time(NULL);
+    s_started_uptime_us = esp_timer_get_time();  // #FW-21: монотонная база elapsed_sec
     s_status.recording  = true;            // старые сегменты НЕ трогаем (монотонный индекс)
     UNLOCK();
     FSUNLOCK();
@@ -691,6 +880,7 @@ int spectrogram_stop(void)
 {
     LOCK();
     s_status.recording = false;
+    s_started_uptime_us = 0;   // #FW-21: сессия окончена — elapsed_sec → 0
     UNLOCK();
 
     // #FW-6: дождаться, пока consumer допишет хвост строк из кольца (он —
@@ -726,6 +916,7 @@ int spectrogram_clear(void)
     s_status.flash_full = false;
     s_status.seg_count  = 0;
     s_status.seg_dropped = 0;
+    s_started_uptime_us = 0;     // #FW-21: очистка — сессии нет
     UNLOCK();
 
     if (s_seg_fp) { fclose(s_seg_fp); s_seg_fp = NULL; }
@@ -924,4 +1115,21 @@ bool spectrogram_seg_delete(uint32_t idx)
     }
     FSUNLOCK();
     return ok;
+}
+
+// v3: дозовый коэффициент µSv/h per cps. Сохраняется в NVS как IEEE-754 bits.
+void spectrogram_set_dose_k(float k)
+{
+    s_dose_k = k;
+    nvs_handle_t h;
+    if (nvs_open(WF_SETTINGS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    uint32_t bits; memcpy(&bits, &k, 4);
+    nvs_set_u32(h, "dose_k_bits", bits);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+float spectrogram_get_dose_k(void)
+{
+    return s_dose_k;
 }

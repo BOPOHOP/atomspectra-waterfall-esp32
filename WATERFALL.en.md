@@ -120,6 +120,17 @@ Total storage capacity ≈ **763 rows**. At a 10-min interval that's ≈ **5.3 d
 continuous recording, at a 1-hour interval ≈ **31 days** (before the keep-last ring
 engages).
 
+> **Stability (#STAB-2, 2026-07-04):** a 9.40 h board-path recording run — 0 reboots, 0
+> `seg_dropped`, every `SEG_ROLLOVER` clean (see the #WF-1 fix in
+> [`KNOWN_ISSUES.en.md`](KNOWN_ISSUES.en.md)). Full report: [`docs/stab2_report.md`](docs/stab2_report.md).
+>
+> **⚠ #FW-19:** the n42 export only returns the last **256 rows** (~4.25 h at a ~60 s
+> cadence) — a separate limit from the `ring_capacity` field (`/api/waterfall/status`),
+> smaller than the ~763-row partition-capacity estimate above. For recordings longer than
+> ~4.25 h, pull segments periodically via `/api/waterfall/segment` (see below) instead of
+> waiting until the end of the recording. Details: [`docs/stab2_report.md`](docs/stab2_report.md)
+> §6, [`KNOWN_ISSUES.en.md`](KNOWN_ISSUES.en.md) (#FW-19).
+
 > Serving a segment (`/api/waterfall/segment?name=…`) is **strictly read-only**: the
 > board never deletes the file. Deletion is only by the keep-last ring (or the future
 > A2 uploader after a successful send). So a browser/receiver can never erase data that
@@ -138,7 +149,10 @@ engages).
 | `/api/waterfall/window` | GET | Ring snapshot (**ASWW** binary, up to 256 rows) |
 | `/api/waterfall/segments` | GET | **List of flash segments** (JSON array, see below). No CSRF needed |
 | `/api/waterfall/segment?name=seg_NNNNN.aswf` | GET | **Raw segment file** (`application/octet-stream`, read-only). Strict name validation (anti-traversal): `seg_`+digits+`.aswf`. `400 bad name` / `404 not found` |
+| `/api/waterfall/segment/delete?name=seg_NNNNN.aswf` | POST | Delete a segment from flash **after** confirmed receipt on the PC (`wf_pull_client.py`, #REC-12). `{"ok":true}` / `{"ok":false,"err":"not-deletable"}` — segment still being written or pinned |
 | `/api/waterfall/export.n42` | GET | **Export to ANSI N42.42** from the PSRAM ring (one `<RadMeasurement>` per row, `CountedZeroes`, calibration in `<EnergyCalibration>`). The "⬇ Export .n42" button in the Web UI. Does not require flash persistence |
+| `/api/waterfall/offload` | GET | Push-offload config + stats (#REC-11-A2): `{"enabled","url","user","has_pass","sent_ok","failed","last_status","last_ok_at","busy"}`. The password is never returned |
+| `/api/waterfall/offload` | POST | Set push-offload config: `{"enabled":bool,"url":"http://…","user":"…","pass":"…"}` (omit `pass` to keep the current one). A `url` with host `narodmon` is rejected (`err:"narodmon-blocked"`) |
 | `/ws/waterfall` | WS | Text header on connect, then one binary frame (16384 B) per new row |
 
 > All POST endpoints require the **`X-CSRF-Token`** header (from `GET /api/csrf-token`),
@@ -264,6 +278,21 @@ packets), not by the ESP32 clock — so the file stays honest even under USB los
 
 Rendering: a row's height (time) = its `dur`; for v1 — `interval_sec` from the header.
 
+**`started_at` (segment anchor) — a DIFFERENT time source than `dur`.** Each
+row's `dur` comes from the INSTRUMENT's own live clock (`total_time_sec`) and
+never depends on internet access — the relative spacing between rows is always
+honest. `started_at` in the segment header, on the other hand, is the board's
+`time(NULL)` (ESP32 wall clock), synced via SNTP (`pool.ntp.org`, `init_sntp()`,
+one outgoing request at boot, no retry/success check). **If the board never had
+internet access, `time(NULL)` is unsynced and `started_at` sits near the Unix
+epoch** (a real case with `started_at=1` has been observed). Autonomous
+recording still works fine — only the ABSOLUTE time anchor is lost (the date in
+the header / N42 export), the row durations (`dur`) stay real. The anchor is
+re-captured on EVERY new segment — if internet appears mid-recording, segments
+before and after get different (inconsistent) `started_at` values, and the jump
+between them is NOT detected as a "board pause" (see `wf_pull_client.py`, gap
+detection is explicitly disabled when `started_at ≤ 1e9`).
+
 ### WebSocket header (`/ws/waterfall`)
 
 The first frame after connect is a **text** JSON:
@@ -278,7 +307,7 @@ Then one **binary** frame per new row (16384 bytes = 8192 × uint16 LE). Up to
 
 ## Streaming to a PC and N42 export
 
-`scripts/` ships three tools (require `pip install requests websocket-client`):
+`scripts/` ships a set of tools (require `pip install requests websocket-client`):
 
 ### `waterfall_n42.py` — export to ANSI N42.42-2012
 
@@ -320,11 +349,34 @@ Writes an unbounded `.aswf` from the WS stream (not limited by the board's 256-r
 ring). Stop with Ctrl+C — the header with the final row count is written on exit.
 The `.aswf` can then be converted to N42 via `waterfall_n42.py convert`.
 
-## What opens N42
+### `wf_pull_client.py` / `wf_recorder_app.py` — pull recording with on-the-fly stitching (#REC-12)
+
+An alternative to `waterfall_client.py` aimed at **multi-hour/multi-day** recording without
+holding a live WS connection: the script periodically polls `/api/waterfall/segments`,
+pulls each **finalized** segment exactly once, appends its rows to a single growing
+`.aswf`, and deletes the segment on the board only **after** the local file is fsynced —
+so a dropped connection or crash mid-transfer never loses or duplicates rows. Progress
+(which segments are already ingested, running row/duration totals) is tracked in a
+sidecar `<file>.state.json` next to the `.aswf`, so stopping and re-running against the
+same file **resumes** the recording instead of restarting it.
+
+`wf_recorder_app.py` (launch by double-clicking `wf_recorder.bat`) is a desktop GUI
+(tkinter) on top of the same logic: **▶ Start/⏸ Stop** buttons, **New file…** (stops the
+current recording, lets you pick a new path, and wipes that path's `.aswf` +
+`.state.json` + `.temps.csv` if they already exist — so you start from a genuinely clean
+slate instead of resuming an old recording) and **Open folder**; it shows live counters
+for rows in the file, duration, instrument temperature, and board segment counts.
+
+```bash
+python wf_pull_client.py <board-ip> --stitch capture.aswf --interval 60
+```
+
+## What opens N42 / `.aswf`
 
 | Tool | By | Note |
 |---|---|---|
 | [InterSpec](https://sandialabs.github.io/InterSpec/) | Sandia | Best choice; shows the measurement time-history |
-| `waterfall_viewer.html` | this repo | 2D waterfall (heatmap), offline |
+| `waterfall_viewer.html` | this repo | 2D waterfall (heatmap), offline, `.n42` and `.aswf` |
+| **[waterfall-viewer](https://github.com/VibeEngineering-LLC/waterfall-viewer)** | separate repo | **Advanced native viewer**: 3D waterfall render, 2D map, a slice/section/sample panel |
 | PeakEasy | LANL | Spectrum viewer |
 | Cambio | Sandia | Converter/viewer |

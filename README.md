@@ -142,8 +142,8 @@ Web UI открывается в браузере по адресу `http://<IP-
 
 ```bash
 # 1. Клонировать
-git clone https://github.com/VibeEngineering-LLC/atomspectra-esp32.git
-cd atomspectra-esp32
+git clone https://github.com/VibeEngineering-LLC/atomspectra-waterfall-esp32.git
+cd atomspectra-waterfall-esp32
 
 # 2. Собрать (вариант A: локальный ESP-IDF)
 idf.py set-target esp32s3
@@ -237,12 +237,16 @@ idf.py -p COM14 flash
 
 Помимо живого спектра шлюз умеет копить **водопад** — последовательность спектров
 через равные интервалы (каждая строка = дельта накопления за период, 8192 канала,
-`uint16`). Водопад можно смотреть в браузере (`http://<IP-платы>/waterfall`),
-**стримить на ПК** по WebSocket в реальном времени и **выгрузить кнопкой
-«⬇ Экспорт .n42»** прямо из Web UI в индустриальный **ANSI N42.42**
-(InterSpec / PeakEasy / Cambio). Интервал между строками — 5…60 с. Цвет
-спектрограммы — любая из **14 палитр** (Inferno по умолчанию; выбор сохраняется
-в браузере).
+`uint16`). Запись идёт **на стороне платы**: включил «Старт» — и плата пишет
+сегменты `.aswf` во flash сама, переживая закрытие вкладки, перезагрузку и сбой
+питания (#REC-11-A1). Готовые сегменты можно смотреть прямо в браузере
+(`http://<IP-платы>/waterfall`), **стримить на ПК в реальном времени** по
+WebSocket, **забирать по HTTP** и сшивать в единый файл (`wf_pull_client.py` /
+`wf_recorder_app.py`, #REC-12 — для многочасовых/многодневных записей без
+постоянного соединения) или **выгрузить кнопкой «⬇ Экспорт .n42»** прямо из
+Web UI в индустриальный **ANSI N42.42** (InterSpec / PeakEasy / Cambio).
+Интервал между строками — **5 с…60 мин**. Цвет спектрограммы — любая из
+**14 палитр** (Inferno по умолчанию; выбор сохраняется в браузере).
 
 > 🔴 **Живое демо на реальных данных:**
 > **<https://vibeengineering-llc.github.io/atomspectra-waterfall-esp32/demo/>**
@@ -252,9 +256,22 @@ idf.py -p COM14 flash
 
 В `scripts/` — инструменты для ПК: экспорт в N42 (`waterfall_n42.py`), офлайн
 2D-просмотрщик водопада (`waterfall_viewer.html`), захват в `.aswf`
-(`waterfall_client.py`).
+(`waterfall_client.py`) и desktop-рекордер с автосшивкой сегментов на лету
+(`wf_recorder_app.py` / `wf_pull_client.py`, #REC-12) для многочасовой/многодневной
+записи без постоянного WS-соединения.
+
+> **Готовый Windows exe рекордера (без установки Python):**
+> [`wf-recorder-v0.1.0`](https://github.com/VibeEngineering-LLC/atomspectra-waterfall-esp32/releases/tag/wf-recorder-v0.1.0)
+> — самодостаточный `wf_recorder.exe` (~12 МБ), двойной клик, GUI откроется.
+> Проверен 11-часовым соак-тестом (60 сегментов, 660 строк, 0 потерь; отчёт
+> [`docs/rec12_report.md`](docs/rec12_report.md)).
 
 ![Офлайн-просмотрщик waterfall_viewer.html — heatmap водопада из .n42](images/waterfall-viewer.png)
+
+> **Продвинутый вьюер.** Для полноценного нативного приложения (3D-водопад, 2D-карта,
+> панель «Срезы/Сечения/Выборки») см. отдельный репозиторий
+> **[waterfall-viewer](https://github.com/VibeEngineering-LLC/waterfall-viewer)** —
+> он мощнее однофайлового HTML-вьюера из `scripts/`.
 
 📖 Форматы (ASWW / ASWF / N42), полный Web API водопада, калибровка и работа со
 скриптами — [`WATERFALL.md`](WATERFALL.md).
@@ -279,28 +296,33 @@ Atom Spectra общается по бинарному протоколу **shpro
 ## Структура проекта
 
 ```
-atomspectra-esp32/
+atomspectra-waterfall-esp32/
 ├── components/shproto/       протокол shproto (CRC-16 Modbus, escaping)
 │   ├── shproto.c
 │   └── include/shproto.h
 ├── main/
 │   ├── atomspectra.h          заголовок проекта, типы данных
 │   ├── main.c                 точка входа, SNTP
+│   ├── boot_config.c          поведение при старте платы (NVS-флаги, #FW-2/#FW-3)
 │   ├── usb_host_cdc.c         USB Host CDC-ACM + FTDI vendor init
 │   ├── wifi_manager.c         STA + AP captive portal
 │   ├── web_server.c           HTTP API + BecqMoni XML + InterSpec CSV
+│   ├── web_util.c             общие HTTP-хелперы Web-сервера
 │   ├── tcp_bridge.c           прозрачный serial-over-WiFi мост
 │   ├── spectrum.c             обработка спектра + LittleFS хранилище
 │   ├── spectrogram.c          водопад: кольцо PSRAM + запись во flash
-│   └── web_waterfall.c        водопад: HTTP/WS API (ASWW/ASWF)
+│   ├── web_waterfall.c        водопад: HTTP/WS API (ASWW/ASWF)
+│   └── wf_offload.c           водопад: автовыгрузка сегментов по HTTP POST (#REC-11-A2)
 ├── web/
 │   ├── index.html             основной Web UI (спектр, кнопки, экспорт)
 │   ├── setup.html             captive portal (настройка WiFi)
 │   └── waterfall.html         Web UI водопада (heatmap)
-├── scripts/                   ПК-инструменты: N42-экспорт, просмотрщик, захват
+├── scripts/                   ПК-инструменты: N42-экспорт, просмотрщик, захват, рекордер
 │   ├── waterfall_n42.py       водопад → ANSI N42.42
-│   ├── waterfall_viewer.html  офлайн 2D-просмотрщик .n42
-│   └── waterfall_client.py    захват WS-стрима в .aswf
+│   ├── waterfall_viewer.html  офлайн 2D-просмотрщик .n42/.aswf
+│   ├── waterfall_client.py    захват WS-стрима в .aswf
+│   ├── wf_pull_client.py      pull-запись сегментов + автосшивка в .aswf (#REC-12)
+│   └── wf_recorder_app.py     desktop-GUI поверх wf_pull_client.py (+ wf_recorder.bat)
 ├── partitions.csv             таблица разделов (3 MB app + 12.9 MB LittleFS)
 ├── sdkconfig.defaults         конфиг ESP32-S3 USB OTG
 ├── CMakeLists.txt
