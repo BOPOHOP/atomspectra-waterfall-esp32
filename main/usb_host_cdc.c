@@ -274,7 +274,8 @@ static void try_open_device(void)
         .connection_timeout_ms = 5000,
         .out_buffer_size = 1024,
         // .in_buffer_size = 1024,  /* #TCP-5 ОТКАТ: 1024*36 → ESP_ERR_NO_MEM на нашей S3 (DMA-RAM < 36КБ, мост мёртв). Вернул проверенный 1024; #TCP-5 переоткрыт — нужен подбор размера/освобождение DMA-RAM */
-        .in_buffer_size = 128*1,  /* #TCP-5 ОТКАТ: 1024*36 → ESP_ERR_NO_MEM на нашей S3 (DMA-RAM < 36КБ, мост мёртв). Вернул проверенный 1024; #TCP-5 переоткрыт — нужен подбор размера/освобождение DMA-RAM */
+        // .in_buffer_size = 128*1,  /* #TCP-5 ОТКАТ: 1024*36 → ESP_ERR_NO_MEM на нашей S3 (DMA-RAM < 36КБ, мост мёртв). Вернул проверенный 1024; #TCP-5 переоткрыт — нужен подбор размера/освобождение DMA-RAM */
+        .in_buffer_size = 256*1,  /* #TCP-5 ОТКАТ: 1024*36 → ESP_ERR_NO_MEM на нашей S3 (DMA-RAM < 36КБ, мост мёртв). Вернул проверенный 1024; #TCP-5 переоткрыт — нужен подбор размера/освобождение DMA-RAM */
         .event_cb = handle_event,
         .data_cb = handle_rx,
         .user_arg = NULL,
