@@ -1,0 +1,3 @@
+#! /bin/sh
+
+exec minicom -D /dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4D029186-if00 -b 115200

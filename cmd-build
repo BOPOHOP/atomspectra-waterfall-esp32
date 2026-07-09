@@ -1,0 +1,7 @@
+#! /usr/bin/bash
+
+. "/home/bag/.espressif/tools/activate_idf_v5.4.4.sh"
+
+idf.py build
+
+
