@@ -1,3 +1,15 @@
 #! /bin/sh
 
-exec minicom -D /dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4D029186-if00 -b 115200
+if [ -e /dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4D036896-if00 ] ; then
+	PORT=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4D036896-if00
+fi
+
+if [ -e /dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4D029186-if00 ] ; then
+	PORT=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4D029186-if00
+fi
+
+if [ -e /dev/ttyACM0 ] ; then
+	PORT=/dev/ttyACM0
+fi
+
+exec minicom -D ${PORT} -b 115200
