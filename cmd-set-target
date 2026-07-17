@@ -1,0 +1,8 @@
+#! /usr/bin/bash
+
+. "/home/bag/.espressif/tools/activate_idf_v5.4.4.sh"
+
+idf.py set-target esp32s3
+
+
+
