@@ -1,0 +1,9 @@
+#! /usr/bin/bash
+
+. "/home/bag/.espressif/tools/activate_idf_v5.4.4.sh"
+
+PORT=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4D029186-if00
+
+idf.py -p ${PORT} flash
+
+
