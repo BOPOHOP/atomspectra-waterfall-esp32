@@ -1,14 +1,29 @@
 #! /bin/sh
 
-if [ -e /dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4D036896-if00 ] ; then	# spectra-gs
-	PORT=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4D036896-if00
-fi
+PORT=''
 
-if [ -e /dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4D029186-if00 ] ; then	# spectra-n15
+
+if [ ."$1" = ."n15" ] ; then
 	PORT=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4D029186-if00
 fi
 
-if [ -e /dev/ttyACM0 ] ; then
+if [ ."$1" = ."gs" ] ; then
+	PORT=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4D036896-if00
+fi
+
+if [ -n "$1" -a -e "$1" ] ; then
+	PORT="$1"
+fi
+
+if [ -z "$PORT" -a  -e /dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4D036896-if00 ] ; then	# spectra-gs
+	PORT=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4D036896-if00
+fi
+
+if [ -z "$PORT" -a  -e /dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4D029186-if00 ] ; then	# spectra-n15
+	PORT=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4D029186-if00
+fi
+
+if [ -z "$PORT" -a  -e /dev/ttyACM0 ] ; then
 	PORT=/dev/ttyACM0
 fi
 
