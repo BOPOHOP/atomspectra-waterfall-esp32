@@ -123,9 +123,10 @@ void app_main(void)
         // #FW-13: период -inf 30 с → 30 мин (оператор 2026-07-03). Единственное
         // динамичное поле ответа — температура; каждый -inf вклинивает 404-байтный
         // текстовый ответ в поток свипов, чаще незачем.
-        if (usb_host_cdc_is_connected() && ++info_tick >= 180) {
+        if (usb_host_cdc_is_connected() && ++info_tick >= 18) {
             info_tick = 0;
             usb_host_send_text_command("-inf");
+            ESP_LOGI(TAG, "sent cmd -inf");
         }
         if (usb_host_cdc_is_connected() && autostart_tick >= 0 && ++autostart_tick >= 18 && autostart_tick < 30) {
             ESP_LOGI(TAG, "cmd -cal");
