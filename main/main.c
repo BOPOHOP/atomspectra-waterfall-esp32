@@ -4,10 +4,13 @@
 #include "wf_offload.h"   // #REC-11-A2: автономная выгрузка сегментов водопада
 #include "monitor.h"      // #MON-1: серия CPS-мониторинга на плате
 #include "net_time.h"     // #FIELD-5: источник времени (SNTP/браузер/ручной)
+#include "http_io_gate.h" // #PERF-2: skip autosave while HEAVY I/O busy
+#include "debug_log_ring.h"
 #include "esp_log.h"
 #include "esp_sntp.h"
 #include <inttypes.h>
 #include <sys/time.h>
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"   // #FW-13 фикс №2: ожидание коммита свипа перед autosave
@@ -57,6 +60,8 @@ void app_main(void)
         spectrum_reset();
         ESP_LOGW(TAG, "FW-3: accumulated spectrum cleared on boot");
     }
+    // #FW-50: PSRAM log ring — after spectrum_init, before spectrogram (reserve before WF).
+    debug_log_ring_boot();
     spectrogram_init();
     // #FW-3: очистка водопада при старте — ДО spectrogram_restore(), иначе restore
     // возобновит прежнюю запись из сохранённого состояния.
@@ -140,11 +145,23 @@ void app_main(void)
         }
         if (++autosave_tick >= 900) {
             autosave_tick = 0;
-            if (autosave_sig) {
-                xSemaphoreTake(autosave_sig, 0);                    // сброс протухшего сигнала
-                xSemaphoreTake(autosave_sig, pdMS_TO_TICKS(1500));  // ждём свежий коммит
+            // #PERF-2: не писать LittleFS, пока HEAVY download/export держит слот
+            if (!http_io_gate_busy()) {
+                if (autosave_sig) {
+                    xSemaphoreTake(autosave_sig, 0);                    // сброс протухшего сигнала
+                    xSemaphoreTake(autosave_sig, pdMS_TO_TICKS(1500));  // ждём свежий коммит
+                }
+                // За время ожидания сигнала HEAVY-запрос мог стартовать, поэтому
+                // саму запись делаем, заняв слот, а не по результату busy() выше:
+                // проверка там осталась только как дешёвый ранний выход.
+                if (http_io_gate_try_enter()) {
+                    int64_t t0 = esp_timer_get_time();
+                    spectrum_autosave();
+                    int64_t dt_us = esp_timer_get_time() - t0;
+                    http_io_gate_leave();
+                    ESP_LOGI(TAG, "LittleFS autosave took %lld us", (long long)dt_us);
+                }
             }
-            spectrum_autosave();
         }
         // #WF-1: отложенная запись калибровки (s_calib_dirty). Внутри сама берёт
         // SPEC_LOCK только на снапшот; flash-запись — вне лока и вне CDC/httpd.
