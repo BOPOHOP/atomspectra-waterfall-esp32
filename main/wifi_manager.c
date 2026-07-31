@@ -12,7 +12,7 @@
 #include "lwip/sockets.h"
 #include <string.h>
 
-static const char *TAG = "wifi";
+static const char *TAG = "wifi_mgr";
 
 static EventGroupHandle_t s_wifi_events;
 #define WIFI_CONNECTED_BIT BIT0
@@ -349,14 +349,17 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_event_sta_disconnected_t *disc = (wifi_event_sta_disconnected_t *)data;
+        uint8_t reason = disc ? disc->reason : 0;
+        ESP_LOGW(TAG, "STA disconnected reason=%u", (unsigned)reason);
         xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED_BIT);
         if (s_retry_count < MAX_RETRY) {
             esp_wifi_connect();
             s_retry_count++;
-            ESP_LOGW(TAG, "Reconnecting (%d/%d)...", s_retry_count, MAX_RETRY);
+            ESP_LOGW(TAG, "Reconnecting (%d/%d) reason=%u...", s_retry_count, MAX_RETRY, (unsigned)reason);
         } else {
             // #FIELD-2a: не тупик, как раньше, а полевой AP (либо раньше 90с-таймера)
-            ESP_LOGE(TAG, "WiFi failed after %d retries -> field AP", MAX_RETRY);
+            ESP_LOGE(TAG, "WiFi failed after %d retries reason=%u -> field AP", MAX_RETRY, (unsigned)reason);
             set_fb_flag_and_reboot();
         }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
@@ -445,6 +448,19 @@ void wifi_manager_init(void)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
+    /* #PERF-5: дефолтный для STA MIN_MODEM power save даёт джиттер ICMP/HTTP RTT
+     * на idle-плате почти без потерь. Trade-off: выше потребление в STA.
+     * Не критично для загрузки — при ошибке продолжаем на дефолтном PS. */
+    esp_err_t ps_err = esp_wifi_set_ps(WIFI_PS_NONE);
+    if (ps_err != ESP_OK) {
+        ESP_LOGW(TAG, "esp_wifi_set_ps(NONE) failed: %s, keeping default PS",
+                 esp_err_to_name(ps_err));
+    } else {
+        wifi_ps_type_t ps = WIFI_PS_NONE;
+        if (esp_wifi_get_ps(&ps) == ESP_OK) {
+            ESP_LOGI(TAG, "WiFi PS mode=%d (0=NONE)", (int)ps);
+        }
+    }
 
     start_mdns();
     s_mode = NET_MODE_STA;

@@ -6,6 +6,74 @@ A list of known bugs, limitations, and fixed issues for the AtomSpectra ESP32 Ga
 
 ## Open
 
+### #FW-50: overnight web UI hang (waterfall + monitoring)
+
+**Status:** open · diagnostics in `v1.2.3` (PSRAM debug-log ring + Mac pull).
+
+**Observation (2026-07-27):** a board on the LAN stopped answering overnight with
+waterfall + monitoring enabled; later the dhcp lease from ap expired. AtomSpectra
+USB was not power-cycled — instrument spectrum preserved. Other clients on the same
+network stayed up → not an AP failure. Do **not** confuse with closed **#FW-13**
+(LittleFS autosave freeze / UART CDC blocking — already fixed).
+
+**Tooling:** Service → Debug log (NVS `dbglog`); 384 KiB PSRAM ring; the dump is pulled by an
+external collector (ours is a launchd job on a Mac every 5 min). Default **off**.
+
+**Flash cost** (ESP-IDF 5.4.2, `esp32s3`, clean `sdkconfig` regenerated from
+`sdkconfig.defaults`, `atomspectra_gw.bin` measured):
+
+| Build | Size | Δ vs base |
+|---|---|---|
+| base (`v1.2.2`) | 1,486,112 B | — |
+| ring without `CONFIG_LOG_MAXIMUM_LEVEL_DEBUG` | 1,494,128 B | **+8,016 B** (≈7.8 KiB) |
+| ring as shipped (`v1.2.3`) | 1,530,848 B | **+44,736 B** (≈43.7 KiB) |
+
+So the ring code itself costs ≈8 KiB; the other ≈36 KiB are the `ESP_LOGD` strings
+across ESP-IDF that the compiler stops stripping once
+`CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y`. Without that flag the ring still builds, but it
+would never capture a DEBUG line — and those are exactly what the #FW-50 hypotheses
+need. The app partition is 3 MiB; 51% stays free after the change. The 384 KiB ring
+itself lives in PSRAM and does not touch flash.
+
+**Ring endpoint contract:**
+
+| Endpoint | CSRF | Why |
+|---|---|---|
+| `GET /api/debug/log/meta` | no | ring counters/settings only (`enabled`, `level`, `next_seq`, `dropped`, `lost_busy`, `gen`, `fill_pct`) — no `fw_version`/uptime/heap; hygiene, not auth (`/api/system` nearby is still open) |
+| `GET /api/debug/log?since=N` | **yes** | the dump exposes SSID, IP and offload URL |
+| `POST /api/debug/log/flush` | **yes** | mutating request |
+| `GET/POST /api/debug/log/config` | POST — yes | same as other settings |
+
+Requiring the header on a `GET` is deliberate: a third-party page open in the same browser
+cannot read the token (same-origin policy), so it cannot pull the log from the user's
+address either. Any external collector should do:
+
+```sh
+TOKEN=$(curl -s http://<board>/api/csrf-token | sed 's/.*"token":"\([^"]*\)".*/\1/')
+curl -s -H "X-CSRF-Token: $TOKEN" "http://<board>/api/debug/log?since=0"
+```
+
+**Levels (`level` setting) — a ladder over tag scope, not just depth:**
+
+| Level | What reaches the ring |
+|---|---|
+| `standard` | `*` = WARN + own tags (`main`, `wf`, `web`, `http_io`, …) at INFO |
+| `detailed` | same + system networking tags at INFO (`httpd*`, `wifi*`, `dhcpc`/`dhcps`, `lwip`) |
+| `debug` | same + DEBUG for the hottest own tags (`usb_cdc`, `spectrum`, `wf_ofl`) |
+
+**What the ring will NOT catch.** The buffer lives in PSRAM and does not survive
+a reboot: after a panic, a WDT reset or power loss the dump is empty and `gen`
+restarts. The tool targets the soft-lock hypothesis specifically — the board is
+alive and answers over HTTP while the UI is dead; for a "panicked and rebooted"
+scenario you need a coredump, not this ring. Lines dropped because the ring
+mutex was busy are counted separately from lines evicted by wraparound and show
+up as `busy=` next to `drop=` (Service → Debug log) and as `lost_busy` in
+`/api/debug/log/meta`: "there were no logs" and "logs were lost at the
+interesting moment" are different outcomes and must not be conflated when
+analysing a hang.
+
+---
+
 ### BUG-AS-08: ⚠ The gateway does not back up the instrument's factory DSP tuning
 
 **Status:** limitation by design + warning (not a gateway-firmware bug).
@@ -421,6 +489,39 @@ The TCP bridge (port 8234) supports **one** simultaneous connection. A second co
 ### ESP32 supports WiFi 2.4 GHz only
 
 5 GHz networks are not supported in hardware. Make sure the router broadcasts on 2.4 GHz.
+
+### #PERF-5: WiFi STA — modem sleep disabled (`WIFI_PS_NONE`)
+
+ESP-IDF 5.4 STA defaults to **MIN_MODEM** power save, which produces ICMP/HTTP RTT
+spread of **tens to hundreds of ms** with near-zero packet loss on an idle board
+(observed on board #1, 2026-07-26). After `esp_wifi_start()` in STA mode,
+`wifi_manager.c` sets `WIFI_PS_NONE` and RTT flattens out.
+
+**Trade-off:** higher STA power draw; acceptable on USB power, but for a
+battery-powered scenario the mode should be reverted to `MIN_MODEM`.
+
+The call is not boot-critical: if `esp_wifi_set_ps()` fails, a warning is logged
+and the board keeps running with the default power-save mode.
+
+### Web UI perf (`v1.2.2`, #PERF-1…4)
+
+Under load (browser + AtomSpectra on a PC) an ICMP soak against the board showed
+p50 ≈ 7.7 ms / **p95 ≈ 86.8 ms** / p99 ≈ 179 ms at 0% loss — 9000 packets,
+30 minutes, firmware `v1.1.2f`. With `v1.2.2`: p50 ≈ 5.1 ms / **p95 ≈ 60.3 ms** /
+p99 ≈ 92.1 ms, RFC 3550 jitter 39.6 → 8.8 ms, loss still 0%.
+The single worst sample did grow (1.03 → 2.15 s, one sample out of 9000) — full
+data and analysis in [`docs/perf1_report.md`](docs/perf1_report.md).
+
+Both runs were taken on builds that already have modem sleep disabled
+(`WIFI_PS_NONE`, #PERF-5); `v1.1.2f` is a private "base + #PERF-5" build and has
+no tag in the repository. #PERF-5 ships as a separate change, so on this branch
+**in isolation** modem sleep stays enabled by default and the absolute numbers
+above are not reproducible on it. Treat the delta as reproducible, not the numbers.
+
+- **#PERF-1** — 2 s spectrum snapshot cache; index hot path = `/api/spectrum` + `/api/spectrum/meta.json`.
+- **#PERF-2** — HEAVY lane (`http_io_gate`, concurrency=1): 503 + `Retry-After`; `heavyFetch()`; autosave skips while busy.
+- **#PERF-3** — waterfall `scheduleDraw()` / rAF coalesce (HiDPI unchanged).
+- **#PERF-4** — async upload job API spec only: `docs/spectrum-upload-job-api.md`.
 
 ### Maximum channels — 8192
 
