@@ -27,7 +27,7 @@ CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
 # Network — больше сокетов для частого polling Web UI (иначе httpd accept errno 23)
 CONFIG_LWIP_MAX_SOCKETS=16
 # #FW-46: имя платы в DHCP (косметика) — atomspectra-gw вместо дефолтного "espressif".
-CONFIG_LWIP_LOCAL_HOSTNAME="atomspectra-gw"
+CONFIG_LWIP_LOCAL_HOSTNAME="atomspectra-gw-n15"
 
 # #FW-52: default IDF sys_evt stack (2304) overflows on GOT_IP when #FW-50 dbglog
 # vprintf hook is ON (512 B format buf + ring on the event task) and httpd/mDNS/SNTP
