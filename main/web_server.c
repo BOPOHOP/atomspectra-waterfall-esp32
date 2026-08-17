@@ -298,10 +298,18 @@ static esp_err_t handle_debug_log_flush(httpd_req_t *req)
     if (!csrf_check(req)) return ESP_FAIL;
     uint32_t upto = 0, gen = 0;
     int total = req->content_len;
-    if (total > 0 && total < 256) {
+    bool parse_failed = false;
+
+    // Если тело запроса больше 255 байт — не читаем, это ошибка.
+    // Если тело отсутствует (total <= 0) — это допустимо, сбрасываем всё.
+    if (total >= 256) {
+        parse_failed = true;
+    } else if (total > 0 && total < 256) {
         char body[256];
         int r = httpd_req_recv(req, body, total);
-        if (r > 0) {
+        if (r <= 0) {
+            parse_failed = true;
+        } else {
             body[r < 255 ? r : 255] = '\0';
             cJSON *root = cJSON_Parse(body);
             if (root) {
@@ -310,9 +318,18 @@ static esp_err_t handle_debug_log_flush(httpd_req_t *req)
                 if (cJSON_IsNumber(u)) upto = (uint32_t)u->valuedouble;
                 if (cJSON_IsNumber(g)) gen = (uint32_t)g->valuedouble;
                 cJSON_Delete(root);
+            } else {
+                parse_failed = true;
             }
         }
     }
+    // total <= 0 — тело отсутствует, это нормально, сбрасываем всё
+
+    if (parse_failed) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad flush body");
+        return ESP_FAIL;
+    }
+
     esp_err_t e = debug_log_ring_flush(upto, gen);
     if (e == ESP_ERR_INVALID_STATE) {
         httpd_resp_set_status(req, "409 Conflict");
@@ -1105,8 +1122,11 @@ static esp_err_t handle_device(httpd_req_t *req)
 {
     const device_info_t *di = spectrum_get_device_info();
     // Снимок под локом: serial/calibration пишутся CDC-задачей конкурентно.
+    // #PERF-4: только метаданные — bins[] здесь не нужны (используются
+    // serial_number/calibration/calib_order/calib_valid). Полный снимок держал
+    // SPEC_LOCK на 32 КБ и отнимал 8,5 % свипов у приёма USB.
     spectrum_data_t *sp = malloc(sizeof(*sp));
-    bool have_sp = sp && spectrum_get_snapshot(sp);
+    bool have_sp = sp && spectrum_get_meta(sp);
     cJSON *root = cJSON_CreateObject();
     if (!root) {  // P2-7: при OOM cJSON_Add* разыменует NULL
         free(sp);
@@ -1183,10 +1203,25 @@ static esp_err_t handle_system(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "usb_connected", usb_host_cdc_is_connected());
     cJSON_AddBoolToObject(root, "wifi_connected", wifi_is_connected());
     cJSON_AddBoolToObject(root, "tcp_client", tcp_bridge_client_connected());
-    size_t total = 0, used = 0;
-    esp_littlefs_info("storage", &total, &used);
-    cJSON_AddNumberToObject(root, "flash_total", (double)total);
-    cJSON_AddNumberToObject(root, "flash_used", (double)used);
+    // #PERF-3 (P-014): esp_littlefs_info() не читает готовый счётчик, а ОБХОДИТ
+    // раздел — ~290 мс на 112 МБ. Страницы дёргают /api/system каждые 2-5 с, всё
+    // это время флеш занята, кэш обоих ядер заморожен, USB не вычитывается ->
+    // FIFO переходника переполняется -> битый CRC -> свип бракуется. Замер:
+    // 19,1 % потерянных свипов против 0 % в покое. Значение чисто справочное для
+    // UI и меняется медленно (ролловер сегмента раз в сотни секунд), поэтому
+    // кэшируем. В make_room()/spectrum_save кэш НЕ применять: там решается,
+    // хватает ли места, устаревшее значение переполнит флеш.
+    static size_t s_fs_total = 0, s_fs_used = 0;
+    static int64_t s_fs_at = 0;                 // 0 = ещё не читали
+    int64_t now_us = esp_timer_get_time();
+    if (s_fs_at == 0 || now_us - s_fs_at > 30LL * 1000000LL) {
+        size_t t = 0, u = 0;
+        if (esp_littlefs_info("storage", &t, &u) == ESP_OK) {
+            s_fs_total = t; s_fs_used = u; s_fs_at = now_us;
+        }
+    }
+    cJSON_AddNumberToObject(root, "flash_total", (double)s_fs_total);
+    cJSON_AddNumberToObject(root, "flash_used", (double)s_fs_used);
     wifi_ap_record_t ap;
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
         cJSON_AddNumberToObject(root, "rssi", ap.rssi);
@@ -1278,6 +1313,15 @@ static esp_err_t handle_usb_diag(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "pkt_stat",              d.pkt_stat);
     cJSON_AddNumberToObject(root, "pkt_osc",               d.pkt_osc);
     cJSON_AddNumberToObject(root, "pkt_unknown",           d.pkt_unknown);
+    cJSON_AddNumberToObject(root, "pkt_bad",               d.pkt_bad);  // #FW-53
+    // #FW-53: свипы, а НЕ чанки. pkt_hist выше считает фрагменты гистограммы
+    // (~128/с), из которых собирается один спектр — величины несопоставимы.
+    {
+        uint32_t sw_ok = 0, sw_drop = 0;
+        spectrum_get_sweep_stats(&sw_ok, &sw_drop);
+        cJSON_AddNumberToObject(root, "sweep_commits", sw_ok);
+        cJSON_AddNumberToObject(root, "sweep_drops",   sw_drop);
+    }
     cJSON_AddNumberToObject(root, "last_shproto_ts_ms",    d.last_shproto_ts_ms);
     cJSON_AddNumberToObject(root, "drv_task_alive_ts_ms",  d.drv_task_alive_ts_ms);
     cJSON_AddNumberToObject(root, "conn_task_alive_ts_ms", d.conn_task_alive_ts_ms);

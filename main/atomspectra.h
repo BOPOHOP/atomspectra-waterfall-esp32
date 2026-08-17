@@ -164,6 +164,7 @@ typedef struct {
     uint32_t pkt_stat;
     uint32_t pkt_osc;
     uint32_t pkt_unknown;
+    uint32_t pkt_bad;               // #FW-53: CRC/framing отброшены (shproto_struct.dropped)
     uint32_t last_shproto_ts_ms;    // #FW-43: ts последнего CRC-валид SHPROTO-пакета (любой тип). Детект «определился, но не запитан».
     // Tasks
     uint32_t drv_task_alive_ts_ms;  // hint через RX cb
@@ -176,6 +177,10 @@ typedef struct {
 } usb_diag_snapshot_t;
 
 void usb_host_cdc_diag_snapshot(usb_diag_snapshot_t *out);
+
+// #FW-53: периодическая строка "shproto pkts: N good, M bad" в serial-лог (тег usb_cdc) —
+// диагностика целостности USB CDC-канала прибор<->ESP32 без похода в /api/usb-diag.
+void usb_host_cdc_log_pkt_stats(void);
 
 // #FW-43: детект «прибор определился (FTDI '01 60' идёт), но не запитан». Первопричина
 // (INC): hotplug в живой USB-хост не даёт физического фронта VBUS 0→5В на плате с жёстко
@@ -206,6 +211,16 @@ int spectrum_get_info_raw(char *out, size_t outsz, uint32_t *out_seq);
 int spectrum_get_tcpot_raw(char *out, size_t outsz, uint32_t *out_seq);
 void spectrum_reset(void);
 const spectrum_data_t *spectrum_get_current(void);
+
+// #PERF-4: снимок метаданных БЕЗ bins[8192]. Для потребителей, которым нужны
+// серийник/калибровка/cps/температура: ~200 Б под SPEC_LOCK вместо 32 КБ.
+// Поле bins[] в out НЕ заполняется — не читать его после этого вызова.
+bool spectrum_get_meta(spectrum_data_t *out);
+
+// #FW-53: счётчики СВИПОВ (не чанков). commits — собрано полных спектров,
+// drops — отброшено рваных (разрыв в чанках). pkt_hist в usb-diag считает
+// ЧАНКИ гистограммы и в разы больше — это разные величины.
+void spectrum_get_sweep_stats(uint32_t *commits, uint32_t *drops);
 bool spectrum_get_snapshot(spectrum_data_t *out);
 // #MON-1: атомарная пара (total_counts, total_time_sec) под коммит-локом —
 // для монитора CPS; НЕ копирует 32 КБ bins (в отличие от spectrum_get_snapshot).
