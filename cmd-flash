@@ -30,6 +30,6 @@ if [ -z "$PORT" -a  -e /dev/ttyACM0 ] ; then
 fi
 
 
-idf.py -p ${PORT} flash
+time idf.py -p ${PORT} flash
 
 

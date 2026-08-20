@@ -2,6 +2,6 @@
 
 . "/home/bag/.espressif/tools/activate_idf_v5.4.4.sh"
 
-idf.py build
+time idf.py build
 
 
