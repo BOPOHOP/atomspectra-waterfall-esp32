@@ -2,6 +2,7 @@
 #include "spectrogram.h"
 #include "hist_drop_diag.h"
 #include "flash_quiet.h"
+#include "wf_seg_delete.h"      // #FW-65: collect-then-unlink (host-pure)
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_littlefs.h"
@@ -17,6 +18,8 @@
 #include <inttypes.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <errno.h>       // #FW-65: ENOENT on unlink / opendir
+#include <stdatomic.h>
 #include <math.h>        // #FW-62: isnan для temp_at_open (t1 = NaN, пока -inf не прочитан)
 
 static const char *TAG = "wf";
@@ -80,7 +83,11 @@ static FILE     *s_seg_fp;
 static uint32_t  s_seg_cur = 0xFFFFFFFFu;  // индекс открытого сегмента (0xFFFFFFFF = нет)
 static uint32_t  s_seg_next;               // следующий индекс для нового сегмента
 static uint32_t  s_seg_rows;               // строк записано в текущий открытый сегмент
-static long      s_seg_opened_at;          // время открытия текущего сегмента (epoch с)
+static long      s_seg_opened_at;          // epoch открытия — шапка/лог, НЕ возрастной триггер
+// #P-024 (issue #49): возраст сегмента от esp_timer, не от wall-clock — скачок
+// SNTP / POST /api/time не должен мгновенно финализировать файл («age = 56 лет»).
+static int64_t   s_seg_opened_uptime_us;
+static bool      s_seg_rel_axis;           // latched at seg_open_new: header axis is relative
 static time_t    s_seg_last_fsync;         // #FW-63: когда последний раз сбрасывали метаданные открытого сегмента
 // #FW-8-FIX (2026-08-15): защёлка «make_room для текущего сегмента уже вызван».
 // Раньше триггер жил только в строковом пути и стрелял по строгому s_seg_rows==PREP_ROW —
@@ -96,6 +103,22 @@ static bool      s_seg_prep_done;          // сброшена = ещё не в�
 static uint32_t  s_seg_pinned = 0xFFFFFFFFu; // #REC-11-A2: сегмент в процессе выгрузки (claim) — кольцо его не трогает
 static uint32_t  s_seg_zombie = 0xFFFFFFFFu; // AUD-ASW126 #2: delivered, unlink deferred
 static uint32_t  s_wf_epoch;                 // AUD-ASW126 #3: start/clear vs make_room window
+static atomic_bool s_clear_pending = ATOMIC_VAR_INIT(false);
+
+void spectrogram_clear_begin_pending(void)
+{
+    atomic_store(&s_clear_pending, true);
+}
+
+void spectrogram_clear_end_pending(void)
+{
+    atomic_store(&s_clear_pending, false);
+}
+
+bool spectrogram_clear_is_pending(void)
+{
+    return atomic_load(&s_clear_pending);
+}
 static uint32_t  s_seg_seq;                // #DATA-1b: глоб. монотонный номер сегмента (NVS-персист, переживает clear/ребут)
 static uint32_t  s_seg_total_at_open;      // #DATA-1c: device cumulative total на момент открытия текущего сегмента
 static char      s_hdr[WF_HDR_RESERVE];    // буфер сборки шапки (только под s_fs_lock)
@@ -475,17 +498,9 @@ static uint32_t crc32_upd(uint32_t crc, const uint8_t *p, size_t n)
     return crc;
 }
 
-// Разбор имени seg_NNNNN.aswf → индекс. false, если имя не подходит.
 static bool seg_name_index(const char *name, uint32_t *idx)
 {
-    if (strncmp(name, "seg_", 4) != 0) return false;
-    const char *p = name + 4;
-    char *end = NULL;
-    unsigned long v = strtoul(p, &end, 10);
-    if (end == p) return false;                  // ни одной цифры
-    if (strcmp(end, ".aswf") != 0) return false; // неверный суффикс
-    *idx = (uint32_t)v;
-    return true;
+    return wf_seg_name_index(name, idx);
 }
 
 // Собрать JSON-шапку сегмента v5 в s_hdr (добита пробелами до WF_HDR_RESERVE).
@@ -649,6 +664,10 @@ static bool seg_open_new(void)
         }
     }
     long now = (long)time(NULL);
+    // #P-024: ASWF_FORMAT.md — started_at=0, пока часы < WF_SANE_EPOCH (ось относительная).
+    // Ненулевой near-epoch хуже нуля: потребитель читает любое >0 как абсолютный UTC.
+    long hdr_started_at = (now < (long)WF_SANE_EPOCH) ? 0L : now;
+    s_seg_rel_axis = (hdr_started_at == 0);
     // #DATA-1b/1c: снимок метаданных сегмента ДО сборки шапки (оба идут в JSON).
     // seg_seq — глоб. монотонный, переживает clear/ребут (NVS); total_at_open —
     // накопительный total прибора сейчас (reconciliation на PC). Персист seq в NVS
@@ -692,7 +711,7 @@ static bool seg_open_new(void)
         s_calib_prev_valid = true;
     }
     wait_flash_quiet();
-    seg_header_build(0, 0, now);
+    seg_header_build(0, 0, hdr_started_at);
     if (!flash_quiet_writer_lock(pdMS_TO_TICKS(500))) {
         ESP_LOGE(TAG, "header lock failed %s", p);
         fclose(f); unlink(p);
@@ -748,12 +767,13 @@ static bool seg_open_new(void)
     s_seg_cur       = s_seg_next;
     s_seg_rows      = 0;
     s_seg_opened_at = now;
+    s_seg_opened_uptime_us = esp_timer_get_time();
     s_seg_last_fsync = (time_t)now;   // #FW-63: отсчёт от открытия, не от прошлого сегмента
     s_seg_prep_done = false;
     s_seg_next++;
     // #FW-60: запись заводится СРАЗУ при открытии — те же seg_seq/started_at, что ушли
     // в шапку файла (см. сборку шапки выше), поэтому листингу нечего дочитывать с flash.
-    LOCK(); reg_add(s_seg_cur, s_seg_seq, (int64_t)now); UNLOCK();
+    LOCK(); reg_add(s_seg_cur, s_seg_seq, (int64_t)hdr_started_at); UNLOCK();
     ESP_LOGI(TAG, "seg_%05" PRIu32 ".aswf opened in %lld us", s_seg_cur,
              (long long)(esp_timer_get_time() - t0));
     hist_drop_diag_wf_flash_end();
@@ -843,20 +863,63 @@ static void make_room(uint32_t need)
     }
 }
 
-// Удалить все сегменты каталога. (под s_fs_lock)
-static void seg_delete_all(void)
+/* #FW-65: BSS, not httpd stack — 256×24 = 6 KiB (same size that overflowed
+ * h_segments when it was a local). Only touched under FSLOCK. */
+static char s_clear_names[WF_SEG_REG_MAX][24];
+
+static void *fw_opendir(void *ctx, const char *path)
 {
-    DIR *d = opendir(WF_SEG_DIR);
-    if (!d) return;
-    struct dirent *e;
-    char p[80];
-    while ((e = readdir(d)) != NULL) {
-        uint32_t idx;
-        if (!seg_name_index(e->d_name, &idx)) continue;
-        snprintf(p, sizeof(p), WF_SEG_DIR "/%.32s", e->d_name);  // имя ≤24 (seg_name_index), %.32s = доказуемая граница для -Wformat-truncation
-        unlink(p);
-    }
-    closedir(d);
+    (void)ctx;
+    return opendir(path);
+}
+
+static const char *fw_readdir(void *ctx, void *dir)
+{
+    (void)ctx;
+    struct dirent *e = readdir((DIR *)dir);
+    return e ? e->d_name : NULL;
+}
+
+static int fw_closedir(void *ctx, void *dir)
+{
+    (void)ctx;
+    return closedir((DIR *)dir);
+}
+
+static int fw_unlink(void *ctx, const char *path)
+{
+    (void)ctx;
+    if (quiet_unlink_path(path)) return 0;
+    return (errno == ENOENT) ? 1 : -1;
+}
+
+static wf_dir_ops_t fw_dir_ops(void)
+{
+    wf_dir_ops_t o = {
+        .ctx = NULL,
+        .opendir = fw_opendir,
+        .readdir = fw_readdir,
+        .closedir = fw_closedir,
+        .unlink = fw_unlink,
+    };
+    return o;
+}
+
+static int seg_count_on_disk(void)
+{
+    wf_dir_ops_t ops = fw_dir_ops();
+    DIR *probe = opendir(WF_SEG_DIR);
+    if (!probe) return (errno == ENOENT) ? 0 : -1;
+    closedir(probe);
+    return wf_seg_count_on_disk(&ops, WF_SEG_DIR);
+}
+
+static int seg_delete_all(void)
+{
+    wf_dir_ops_t ops = fw_dir_ops();
+    return wf_seg_delete_all(&ops, WF_SEG_DIR,
+                             (char *)s_clear_names, sizeof(s_clear_names[0]),
+                             WF_SEG_REG_MAX, WF_SEG_CLEAR_PASSES);
 }
 
 // Определить stride и payload-offset существующего сегмента по JSON-шапке.
@@ -1139,7 +1202,9 @@ static void seg_write_row(const uint8_t *row, uint16_t dur, float temp)
         // #FW-41 v5 суффикс: timestamp + lat(NaN) + lon(NaN) + dose_rate + temperature.
         uint8_t v3tail[WF_TS_BYTES + WF_GPS_BYTES + WF_DOSE_BYTES + WF_TEMP_BYTES];
         {
-            uint32_t ts = (uint32_t)time(NULL);
+            time_t now_ts = time(NULL);
+            uint32_t ts = (s_seg_rel_axis || now_ts < (time_t)WF_SANE_EPOCH)
+                ? 0u : (uint32_t)now_ts;
             uint32_t nan_bits = 0x7FC00000u;
             float lat_v, lon_v, dose_v;
             memcpy(&lat_v,  &nan_bits, 4);
@@ -1316,7 +1381,7 @@ static void wf_task(void *arg)
         float temp_v;
         {
             const device_info_t *di = spectrum_get_device_info();
-            if (di && di->valid) {
+            if (di && di->valid && !isnan(di->t1)) {
                 temp_v = di->t1;
             } else {
                 uint32_t nan_bits = 0x7FC00000u;
@@ -1380,7 +1445,8 @@ static void wf_fs_task(void *arg)
         // по фазе с HTTP (issue wf-recorder#1, серии 503). Этот путь не зависит от числа
         // строк вовсе — считает только время, поэтому закрывает случай целиком.
         if (s_seg_fp && !s_seg_prep_done &&
-            (long)(time(NULL) - s_seg_opened_at) >= WF_SEG_MAX_AGE_SEC / 2) {
+            (esp_timer_get_time() - s_seg_opened_uptime_us)
+                >= (int64_t)WF_SEG_MAX_AGE_SEC * 1000000 / 2) {
             /* Запрашиваем РОВНО столько же, сколько запросила бы синхронная
              * «страховка» в пути записи строки (см. выше, тот же
              * WF_ROW_STRIDE + WF_FLASH_RESERVE). Смысл #FW-8 — сдвинуть стирание
@@ -1394,7 +1460,9 @@ static void wf_fs_task(void *arg)
             make_room((uint32_t)WF_ROW_STRIDE + WF_FLASH_RESERVE);
             s_seg_prep_done = true;
         }
-        if (s_seg_fp && (long)(time(NULL) - s_seg_opened_at) >= WF_SEG_MAX_AGE_SEC) {
+        if (s_seg_fp &&
+            (esp_timer_get_time() - s_seg_opened_uptime_us)
+                >= (int64_t)WF_SEG_MAX_AGE_SEC * 1000000) {
             seg_finalize();
             wait_after_seg_close();
         }
@@ -1468,6 +1536,8 @@ void spectrogram_restore(void)
              (uint32_t)st.interval_sec);
 }
 
+// #P-024: чинится только RAM-якорь s_status.started_at (сессия / N42 кольца).
+// s_seg_opened_uptime_us монотонный — скачок time(NULL) его не трогает.
 void spectrogram_time_synced(void)
 {
     bool corrected = false;
@@ -1596,12 +1666,126 @@ void spectrogram_prepare_reboot(void)
     FSUNLOCK();
 }
 
+/* #FW-65: leftover after a failed clear — rebuild registry/counters/next
+ * WITHOUT unlinking (no walk mutation). (под s_fs_lock) */
+static void seg_rebuild_counters_from_disk(void)
+{
+    DIR *d = opendir(WF_SEG_DIR);
+    uint32_t maxidx = 0, completed = 0, flash_rows = 0;
+    bool any = false;
+    LOCK();
+    reg_clear_all();
+    UNLOCK();
+    if (!d) {
+        if (errno == ENOENT) {
+            LOCK();
+            s_status.seg_count = 0;
+            UNLOCK();
+            s_seg_next = 0;
+        }
+        return;
+    }
+    struct dirent *e;
+    char p[80];
+    while ((e = readdir(d)) != NULL) {
+        uint32_t idx;
+        if (!seg_name_index(e->d_name, &idx)) continue;
+        snprintf(p, sizeof(p), WF_SEG_DIR "/%.32s", e->d_name);
+        struct stat sb;
+        if (stat(p, &sb) != 0) continue;
+        FILE *f = fopen(p, "rb");
+        if (!f) continue;
+        uint32_t stride = seg_detect_stride(f);
+        long poff = seg_payload_offset(f);
+        long payload = (long)sb.st_size - poff;
+        uint32_t rows = payload > 0 ? (uint32_t)(payload / stride) : 0;
+        uint32_t rseq = 0;
+        int64_t rstart = 0;
+        if (rows == 0) {
+            /* same as seg_reconcile: zero-row stubs are not live segments.
+             * rebuild does not unlink. */
+            fclose(f);
+            continue;
+        }
+        seg_read_ids_open(f, &rseq, &rstart);
+        fclose(f);
+        LOCK();
+        reg_add(idx, rseq, rstart);
+        reg_mark_finalized(idx, rows, (uint32_t)sb.st_size);
+        UNLOCK();
+        completed++;
+        flash_rows += rows;
+        if (!any || idx > maxidx) { maxidx = idx; any = true; }
+    }
+    closedir(d);
+    if (any)
+        s_seg_next = maxidx + 1;
+    LOCK();
+    s_status.seg_count = completed;
+    /* leftover inventory, not a session-monotonic increment */
+    s_status.flash_rows = flash_rows;
+    UNLOCK();
+}
+
 int spectrogram_clear(void)
 {
     FSLOCK();
     LOCK();
     if (s_status.recording) { UNLOCK(); FSUNLOCK(); return -1; }
+    UNLOCK();
+
+    /* Writers/uploader see the epoch change before any unlink. */
+    LOCK();
     s_wf_epoch++;
+    UNLOCK();
+    spectrogram_clear_begin_pending();
+
+    if (s_seg_fp) { fclose(s_seg_fp); s_seg_fp = NULL; }
+    s_seg_cur    = 0xFFFFFFFFu;
+    s_seg_zombie = 0xFFFFFFFFu;
+    s_seg_rows = 0;
+    s_seg_prep_done = false;
+
+    uint32_t pinned_before = s_seg_pinned;
+    /* Offload may hold fopen on the pinned file. Wait without FSLOCK so
+     * offload_done / cancel can unpin. LittleFS has no EBUSY on unlink. */
+    if (pinned_before != 0xFFFFFFFFu) {
+        FSUNLOCK();
+        for (int i = 0; i < 50; i++) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            FSLOCK();
+            bool still = (s_seg_pinned != 0xFFFFFFFFu);
+            FSUNLOCK();
+            if (!still) break;
+        }
+        FSLOCK();
+        LOCK();
+        bool rec_again = s_status.recording;
+        UNLOCK();
+        if (rec_again || s_seg_fp != NULL) {
+            spectrogram_clear_end_pending();
+            FSUNLOCK();
+            return -1;
+        }
+    }
+
+    int del_rc = seg_delete_all();
+    int legacy_fail = 0;
+    if (unlink(WF_DATA) != 0 && errno != ENOENT) legacy_fail = 1;
+    if (unlink(WF_META) != 0 && errno != ENOENT) legacy_fail = 1;
+    if (unlink(WF_STATE) != 0 && errno != ENOENT) legacy_fail = 1;
+
+    int left = seg_count_on_disk();
+    if (del_rc != 0 || left < 0 || left > 0 || legacy_fail) {
+        ESP_LOGW(TAG, "FW-65: clear incomplete del=%d left=%d legacy=%d",
+                 del_rc, left, legacy_fail);
+        seg_rebuild_counters_from_disk();
+        spectrogram_clear_end_pending();
+        FSUNLOCK();
+        return -2;
+    }
+
+    LOCK();
     s_head              = 0;
     s_count             = 0;
     s_status.ring_count = 0;
@@ -1611,32 +1795,22 @@ int spectrogram_clear(void)
     s_status.flash_full = false;
     s_status.seg_count  = 0;
     reg_clear_all();             // #FW-60: файлов нет — реестр пуст
-    s_status.seg_lost   = 0;     // #FW-57: явная очистка — история потерь тоже стирается
-    s_status.seg_evicted = 0;    // #FW-56: явная очистка пользователем — история вытеснений
-                                 // теряет смысл вместе с самими данными (в отличие от ребута)
-    s_started_uptime_us = 0;     // #FW-21: очистка — сессии нет
+    s_status.seg_lost   = 0;     // #FW-57
+    s_status.seg_evicted = 0;    // #FW-56
+    s_started_uptime_us = 0;     // #FW-21
     UNLOCK();
 
-    if (s_seg_fp) { fclose(s_seg_fp); s_seg_fp = NULL; }
-    s_seg_cur    = 0xFFFFFFFFu;
-    s_seg_pinned = 0xFFFFFFFFu;   // #REC-11-A2: индексы сбрасываются (next=0) — снять устаревший пин
-    s_seg_zombie = 0xFFFFFFFFu;
-    s_seg_rows = 0;
-    s_seg_prep_done = false;
-    seg_delete_all();
+    if (s_seg_pinned == pinned_before)
+        s_seg_pinned = 0xFFFFFFFFu;
     s_seg_next = 0;
-    unlink(WF_DATA);     // legacy (#REC-6)
-    unlink(WF_META);     // legacy (#REC-6)
-    unlink(WF_STATE);    // #REC-6: сбросить persist-состояние записи
+    spectrogram_clear_end_pending();
     FSUNLOCK();
 
-    // #FW-56: сброс накопительного счётчика довести до NVS — иначе ребут сразу
-    // после очистки вернул бы старое значение из флеша.
     {
         nvs_handle_t nh;
         if (nvs_open(WF_SETTINGS_NS, NVS_READWRITE, &nh) == ESP_OK) {
             nvs_set_u32(nh, "seg_evict", 0);
-            nvs_set_u32(nh, "seg_lost", 0);   // #FW-57
+            nvs_set_u32(nh, "seg_lost", 0);
             nvs_commit(nh);
             nvs_close(nh);
         }
