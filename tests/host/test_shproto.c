@@ -24,6 +24,8 @@ void flash_quiet_suite(void);
 void run_kv_array_tests(void);
 void t1_settle_suite(void);
 void wf_seg_clear_suite(void);
+// issue #52: разбор имени снимка и план ротации (main/backup_plan.c).
+void test_backup_plan(void);
 
 // Тестовая команда. CMD_HISTOGRAM (0x01) объявлена в main/atomspectra.h, но она
 // вне include-path host-сборки; shproto трактует cmd как обычный uint8_t.
@@ -181,6 +183,7 @@ int main(void)
     run_kv_array_tests();
     t1_settle_suite();
     wf_seg_clear_suite();
+    test_backup_plan();
 
     if (g_failures) {
         printf("\n%d CHECK(S) FAILED\n", g_failures);

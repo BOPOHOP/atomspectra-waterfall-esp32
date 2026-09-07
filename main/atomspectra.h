@@ -25,6 +25,9 @@
 // (Первопричина пустого списка была НЕ в readdir корня — он исправен — а в
 // несовпадении формата пути: save %04d vs list %d. Исправлено в handle_list.)
 #define SPEC_DIR              STORAGE_PATH "/spec"
+// issue #52: автоматические резервные снимки — свой каталог. Ротация трогает
+// только его, ручные spec_NNNN.bin не удаляются никогда.
+#define BACKUP_DIR            STORAGE_PATH "/bk"
 
 #define CMD_HISTOGRAM         0x01
 #define CMD_OSCILLOSCOPE      0x02
@@ -233,6 +236,29 @@ const device_info_t   *spectrum_get_device_info(void);
 int  spectrum_save_to_flash(void);  // >=0 idx; -1 нет валидного спектра; -2 мало места; -3 ошибка FS (#FW-24)
 int  spectrum_load_from_flash(int index, spectrum_data_t *out);
 int  spectrum_delete_from_flash(int index);
+
+// issue #52: автоматические резервные снимки в BACKUP_DIR.
+// Записывает текущий спектр как bk_<sess>_<seq>.bin и удаляет старые, чтобы
+// вместе с новым осталось не больше keep. Вызывать ТОЛЬКО под http_io_gate.
+//   sess  — номер сессии платы (boot_config_bump_session()),
+//   seq   — порядковый номер снимка в сессии (с 1),
+//   keep  — X из настроек (>0; 0 означает «выключено» и сюда не доходит).
+// 0 при успехе; -1 нет валидного спектра; -2 мало места; -3 ошибка ФС.
+// Ротация выполняется ДО записи и её отказ фатален (иначе каталог растёт молча).
+int  spectrum_backup_save(uint32_t sess, uint32_t seq, int keep);
+
+// Читает снимок по имени файла ("bk_3_12.bin"). 0 при успехе, -1 иначе.
+int  spectrum_backup_load(const char *name, spectrum_data_t *out);
+
+// Удаляет снимок по имени файла. 0 при успехе, -1 иначе.
+int  spectrum_backup_delete(const char *name);
+
+// Наибольший номер сессии среди снимков в BACKUP_DIR (0, если снимков нет).
+// Нужен на старте: NVS может быть стёрт штатным восстановлением IDF
+// (nvs_flash_erase при NO_FREE_PAGES), и счётчик сессий начнётся с 1, тогда как
+// на flash лежат снимки сессий 7-9. Порядок старшинства ротации — по номеру
+// сессии, поэтому новые снимки оказались бы «самыми старыми» и удалялись первыми.
+uint32_t spectrum_backup_max_session(void);
 void spectrum_set_calibration(const double *coeffs, int order);
 void spectrum_save_calibration(void);
 void spectrum_load_calibration(void);

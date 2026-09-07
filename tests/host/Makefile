@@ -15,7 +15,8 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_flash_quiet.c \
        test_kv_array.c \
        test_t1_settle.c ../../main/spectrum_t1.c \
-       test_wf_seg_clear.c ../../main/wf_seg_delete.c
+       test_wf_seg_clear.c ../../main/wf_seg_delete.c \
+       test_backup_plan.c ../../main/backup_plan.c
 
 test: $(SRCS) test_util.h
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm

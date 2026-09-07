@@ -7,6 +7,7 @@
 #include "debug_log_ring.h"
 #include "hist_drop_diag.h"
 #include "flash_quiet.h"
+#include "http_io_gate.h"  // issue #52: снимок пишется под тем же гейтом, что и «Сохранить»
 #include "esp_log.h"
 #include "esp_sntp.h"
 #include <inttypes.h>
@@ -51,9 +52,20 @@ void app_main(void)
     boot_config_load(&bc);
     ESP_LOGI(TAG, "boot-config: as_spec=%d as_wf=%d clr_spec=%d clr_wf=%d",
              bc.autostart_spectrum, bc.autostart_waterfall, bc.clear_spectrum, bc.clear_waterfall);
+    // issue #52: номер сессии платы — ровно один инкремент за загрузку. Снимки
+    // этой сессии получат новое имя, поэтому после пропадания питания они не
+    // смешиваются со снятыми до него. Инкремент отложен до spectrum_init()
+    // (нужен смонтированный LittleFS, чтобы узнать максимум по уже лежащим
+    // снимкам) — см. ниже, после spectrum_init().
+    uint32_t boot_session = 0;
 
     flash_quiet_init();
     spectrum_init();
+    // issue #52: теперь LittleFS смонтирован — можно взять максимум по снимкам и
+    // не дать счётчику сессий откатиться назад после стирания NVS.
+    boot_session = boot_config_bump_session(spectrum_backup_max_session());
+    if (boot_session == 0)
+        ESP_LOGE(TAG, "backups disabled this boot: no usable session number");
     spectrum_restore_autosave();
     spectrum_load_calibration();
     // #FW-3: очистка накопленного спектра при старте — после restore, до того как
@@ -121,6 +133,16 @@ void app_main(void)
     if (autosave_sig) spectrum_add_commit_listener(autosave_sig);
 
     int info_tick = 0, autosave_tick = 0;
+    // issue #52: планировщик резервных снимков. Срок следующего снимка — в
+    // микросекундах монотонного таймера, а не в числе итераций (тело цикла
+    // блокирующее, длительность итерации плавает). Счётчик снимков живёт в RAM:
+    // после перезагрузки нумерация начинается заново, но имя файла несёт ещё и
+    // номер сессии — коллизии нет.
+    uint32_t backup_seq = 0;
+    int      backup_cfg_tick = 6;        // 6 = перечитать настройки на первом же тике
+    int      backup_fail_streak = 0;
+    int64_t  backup_due_us = 0;          // 0 = срок ещё не назначен
+    boot_config_t backup_cfg = bc;       // стартуем от прочитанного на boot
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(10000));
         const spectrum_data_t *sp = spectrum_get_current();
@@ -250,5 +272,66 @@ void app_main(void)
         // #WF-1: отложенная запись калибровки (s_calib_dirty). Внутри сама берёт
         // SPEC_LOCK только на снапшот; flash-запись — вне лока и вне CDC/httpd.
         spectrum_save_calibration();
+
+        // issue #52: резервный снимок раз в bk_h часов.
+        //
+        // Период отсчитывается по ЧАСАМ (esp_timer_get_time), а не по числу
+        // итераций: тело цикла блокирующее (autosave ждёт коммитов свипа до
+        // нескольких секунд), поэтому vTaskDelay(10 с) — нижняя граница шага, и
+        // счёт итерациями растягивал бы «24 часа» на неизвестную величину вверх.
+        //
+        // Настройки перечитываются НЕ каждый тик: boot_config_load() — это девять
+        // обращений к NVS (открытие раздела флеша + мьютекс, общий с Wi-Fi), а
+        // менять их могут только через Web UI. Раз в минуту достаточно, чтобы
+        // правка в UI применялась без перезагрузки.
+        if (boot_session != 0 && ++backup_cfg_tick >= 6) {
+            backup_cfg_tick = 0;
+            boot_config_load(&backup_cfg);
+        }
+        if (boot_session != 0 && backup_cfg.backup_keep > 0) {
+            const int64_t now_us = esp_timer_get_time();
+            const int64_t period_us = backup_cfg.backup_test_minutes
+                    ? (int64_t)backup_cfg.backup_hours * 60 * 1000000LL      // минуты (стенд)
+                    : (int64_t)backup_cfg.backup_hours * 3600 * 1000000LL;   // часы
+            if (backup_due_us == 0)
+                backup_due_us = now_us + period_us;   // первый снимок — через период
+            if (now_us >= backup_due_us) {
+                const spectrum_data_t *bsp = spectrum_get_current();
+                if (!usb_host_cdc_is_connected()) {
+                    // Прибор отключён: спектр восстановлен из current.bin и БОЛЬШЕ НЕ
+                    // МЕНЯЕТСЯ. Снимки были бы побайтовыми копиями и вытеснили бы
+                    // ротацией те, ради которых фича и делается. Ждём следующий период.
+                    backup_due_us = now_us + period_us;
+                    ESP_LOGI(TAG, "backup: skipped, analyzer not connected");
+                } else if (!bsp->valid || bsp->total_time_sec == 0) {
+                    backup_due_us = now_us + period_us;
+                    ESP_LOGI(TAG, "backup: skipped, no valid spectrum yet");
+                } else if (http_io_gate_try_enter()) {
+                    int rc = spectrum_backup_save(boot_session, backup_seq + 1,
+                                                  backup_cfg.backup_keep);
+                    http_io_gate_leave();
+                    if (rc == 0) {
+                        backup_seq++;
+                        backup_fail_streak = 0;
+                        backup_due_us = now_us + period_us;
+                    } else if (++backup_fail_streak >= 5) {
+                        // Пять отказов подряд — причина устойчивая (раздел полон,
+                        // сломана ФС). Ждём целый период вместо попытки раз в 10 с:
+                        // каждая стоит обхода каталога и строки в журнале.
+                        backup_fail_streak = 0;
+                        backup_due_us = now_us + period_us;
+                        ESP_LOGE(TAG, "backup: save failed rc=%d 5x in a row — waiting full period",
+                                 rc);
+                    } else {
+                        ESP_LOGW(TAG, "backup: save failed rc=%d (%d in a row), retry next tick",
+                                 rc, backup_fail_streak);
+                    }
+                }
+                // Гейт занят — ничего не меняем: срок остаётся просроченным,
+                // на следующем тике попробуем снова.
+            }
+        } else if (backup_cfg.backup_keep == 0) {
+            backup_due_us = 0;      // выключено — период начнём заново при включении
+        }
     }
 }

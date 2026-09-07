@@ -111,6 +111,50 @@ delete:
 
 ![Board Web UI — "Saved" tab: saved-spectrum view and the list of records](images/web-ui-saved.png)
 
+The same list has an **"Automatic backups"** group — snapshots the board takes on its
+own (see below). They are viewed and exported like manual ones; "Overlay on Spectrum"
+is hidden for them, because the overlay addresses a spectrum by index and a snapshot
+has none.
+
+### Spectrum backups
+
+The board can save the spectrum to flash on a period of its own and keep only a few
+latest snapshots. This is meant for long unattended runs: you leave for a month, the
+power drops, acquisition restarts from zero — but what was collected before that stays
+on flash.
+
+Configured on the **"System" → "Spectrum backups"** panel:
+
+| Setting | Value |
+|---|---|
+| Snapshots to keep | 0…20; **0 = off** (default) |
+| Take one every | 1…168 hours |
+
+How it behaves:
+
+- The first snapshot is taken **after one full period**, not at power-on.
+- A snapshot is only taken when the analyzer is connected and the spectrum is not
+  empty; otherwise the period is skipped — no empty files pile up on flash.
+- Once there are more snapshots than the configured number, the oldest one is removed.
+  **Rotation touches automatic snapshots only** — spectra saved with the "Save" button
+  are never deleted by it.
+- Every boot of the board gets its own **session number**, and it is part of the
+  snapshot name (`S3/2` = second snapshot of the third session). After a power loss new
+  snapshots therefore do not mix with the old ones, with nothing to switch by hand. The
+  current number is shown on the "System" tab.
+- **What a snapshot holds after a power loss.** The board autosaves the current spectrum
+  once a minute and restores it on the next boot, so acquisition continues instead of
+  restarting from zero (up to a minute is lost). A snapshot of the new session therefore
+  also contains what was accumulated before the outage. If that splicing is unwanted,
+  enable "Clear spectrum on start" on the same tab — then every session begins with a
+  clean spectrum. Verified on hardware: after a reboot the live spectrum's acquisition
+  time (711 s) exceeded the board uptime (458 s).
+- Export filename is `S<session>_<seq>.csv`, prefixed with the common file prefix
+  (`boot.exportPrefix`) when one is set.
+
+Space: one snapshot is 33 KB, twenty are 660 KB on a 12.9 MB partition. A snapshot is
+skipped when less than 1 MB of free space is left.
+
 **"System" tab** — heap/flash, WiFi (SSID, IP, RSSI), uptime, last reset reason,
 TCP bridge state:
 
@@ -293,6 +337,10 @@ initialized in any mode and consumes no RAM or power.
 | `/api/saved/<N>/export.csv` | GET | Export a saved spectrum (CSV) |
 | `/api/saved/<N>/spectrum.json` | GET | Saved spectrum (JSON) |
 | `/api/saved/<N>/delete` | POST | Delete a saved spectrum |
+| `/api/backup/<name>/export.xml` | GET | Export an auto snapshot (XML); name like `bk_3_2` |
+| `/api/backup/<name>/export.csv` | GET | Export an auto snapshot (CSV) |
+| `/api/backup/<name>/spectrum.json` | GET | Auto snapshot (JSON) |
+| `/api/backup/<name>` | POST | Delete an auto snapshot |
 | `/api/device` | GET | Instrument info (settings, calibration, serial) |
 | `/api/system` | GET | ESP32 health: `free_heap`/`min_free_heap`, `psram_total`/`psram_free`/`psram_largest` (`#MON-3`, `firmware-v1.2.16+` — the combined heap mixes internal and SPIRAM, so it can't tell whether the next large buffer will fit), uptime, RSSI, `flash_total`/`flash_used` |
 | `/api/calibration` | POST | Set calibration coefficients manually |

@@ -9,6 +9,7 @@
 #include "monitor.h"        // #MON-1: серия CPS-мониторинга (/api/monitor/series)
 #include "spectrum_http_cache.h"  // #PERF-1: 2s snapshot cache + meta/binary
 #include "http_io_gate.h"         // #PERF-2: HEAVY lane gate
+#include "backup_plan.h"          // issue #52: разбор имени снимка в /api/backup/*
 #include "debug_log_ring.h"
 #include "esp_heap_caps.h"  // #MON-1: PSRAM-буфер чанка серии
 #include "esp_log.h"
@@ -17,6 +18,7 @@
 #include <string.h>
 #include <strings.h>
 #include <stdio.h>
+#include <stdarg.h>   // issue #52: list_append() с зажимом длины
 #include <inttypes.h>
 #include <stdlib.h>
 #include <time.h>
@@ -479,16 +481,22 @@ static esp_err_t handle_boot_config_get(httpd_req_t *req)
 {
     boot_config_t bc;
     boot_config_load(&bc);
-    char resp[256];
+    char resp[320];
     // #FW-42: name_prefix санитизирован в NVS ([A-Za-z0-9_-]) → JSON-escape не нужен.
+    // issue #52: + настройки резервных снимков и текущий номер сессии (read-only).
     snprintf(resp, sizeof(resp),
         "{\"autostart_spectrum\":%s,\"autostart_waterfall\":%s,"
-        "\"clear_spectrum\":%s,\"clear_waterfall\":%s,\"name_prefix\":\"%s\"}",
+        "\"clear_spectrum\":%s,\"clear_waterfall\":%s,\"name_prefix\":\"%s\","
+        "\"backup_keep\":%u,\"backup_hours\":%u,\"backup_test_minutes\":%s,"
+        "\"session\":%" PRIu32 "}",
         bc.autostart_spectrum  ? "true" : "false",
         bc.autostart_waterfall ? "true" : "false",
         bc.clear_spectrum      ? "true" : "false",
         bc.clear_waterfall     ? "true" : "false",
-        bc.name_prefix);
+        bc.name_prefix,
+        (unsigned)bc.backup_keep, (unsigned)bc.backup_hours,
+        bc.backup_test_minutes ? "true" : "false",
+        boot_config_get_session());
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, resp);
     return ESP_OK;
@@ -522,6 +530,29 @@ static esp_err_t handle_boot_config_set(httpd_req_t *req)
         strncpy(bc.name_prefix, it->valuestring, sizeof(bc.name_prefix) - 1);
         bc.name_prefix[sizeof(bc.name_prefix) - 1] = '\0';
     }
+    // issue #52: X и Y. Вне диапазона — 400, а не тихий зажим: человек, набравший
+    // «48» при пределе 20, должен увидеть отказ, а не молча получить другое число.
+    if ((it = cJSON_GetObjectItem(root, "backup_keep")) && cJSON_IsNumber(it)) {
+        int v = it->valueint;
+        if (v < 0 || v > BOOT_BACKUP_KEEP_MAX) {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "backup_keep out of range");
+            return ESP_FAIL;
+        }
+        bc.backup_keep = (uint8_t)v;
+    }
+    if ((it = cJSON_GetObjectItem(root, "backup_hours")) && cJSON_IsNumber(it)) {
+        int v = it->valueint;
+        if (v < BOOT_BACKUP_HOURS_MIN || v > BOOT_BACKUP_HOURS_MAX) {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "backup_hours out of range");
+            return ESP_FAIL;
+        }
+        bc.backup_hours = (uint16_t)v;
+    }
+    // Стендовый режим: Y читается как минуты. В UI поля нет намеренно — только API.
+    if ((it = cJSON_GetObjectItem(root, "backup_test_minutes")))
+        bc.backup_test_minutes = cJSON_IsTrue(it);
     cJSON_Delete(root);
     int rc = boot_config_save(&bc);
     httpd_resp_set_type(req, "application/json");
@@ -557,6 +588,35 @@ static esp_err_t handle_save(httpd_req_t *req)
 // #3/Codeaudit P1: буфер листинга — см. комментарий у handle_list.
 #define SAVED_LIST_BUF_CAP (64 * 1024)
 
+// issue #52. Хвост ответа /api/list после обоих циклов:
+//   "],\"backups\":["                      13 Б
+//   "],\"backup_count\":%d,\"session\":%u" 18 + 11 + 10 = 39 Б при предельных значениях
+//   ",\"count\":%d}"                       10 + 11      = 21 Б
+// Итого 73 Б; берём 96 с запасом. Раньше в цикле стояла константа 32, подобранная под
+// прежний короткий хвост "],\"count\":N}" — при удлинении хвоста она перестала быть
+// консервативной, и это не «меньше данных в ответе», а выход за буфер (см. ниже).
+#define LIST_TAIL_RESERVE 96
+
+// Дописывает в конец буфера с ЗАЖИМОМ длины. snprintf возвращает длину, которая
+// ПОНАДОБИЛАСЬ БЫ, а не записанную: при усечении `len += snprintf(...)` уводит len за
+// cap, дальше `cap - len` (size_t) становится огромным числом, а httpd_resp_send()
+// отдаёт клиенту чужую память за концом буфера. Возвращаем всегда len <= cap-1.
+static size_t list_append(char *buf, size_t cap, size_t len, const char *fmt, ...)
+    __attribute__((format(printf, 4, 5)));
+
+static size_t list_append(char *buf, size_t cap, size_t len, const char *fmt, ...)
+{
+    if (len >= cap) return cap - 1;          // уже впритык — не пишем ничего
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf + len, cap - len, fmt, ap);
+    va_end(ap);
+    if (n < 0) return len;                   // ошибка кодирования — длину не двигаем
+    size_t add = (size_t)n;
+    if (add > cap - len - 1) add = cap - len - 1;   // усечено: считаем фактически записанное
+    return len + add;
+}
+
 static esp_err_t handle_list(httpd_req_t *req)
 {
     // Раньше без гейта, chunk'и слались клиенту живьём во время readdir/fopen —
@@ -571,8 +631,10 @@ static esp_err_t handle_list(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
         return ESP_FAIL;
     }
-    size_t len = (size_t)snprintf(buf, cap, "{\"spectra\":[");
-    char path[80], item[160];
+    size_t len = list_append(buf, cap, 0, "{\"spectra\":[");
+    // issue #52: элемент списка снимков длиннее записи spec_ (имя + session + seq),
+    // при предельных u32 и отрицательном saved_at — до ~150 Б; 224 с запасом.
+    char path[80], item[224];
     int count = 0;
     // Перечисляем реальные файлы каталога, а не пробуем индексы подряд:
     // save() занимает первую дырку, поэтому после удалений индексы не
@@ -605,14 +667,50 @@ static esp_err_t handle_list(httpd_req_t *req)
         int n = snprintf(item, sizeof(item), "%s{\"index\":%d,\"counts\":%" PRIu32 ",\"time\":%" PRIu32 ",\"saved_at\":%ld}",
             count > 0 ? "," : "", i, counts, time_sec, (long)saved_at);
         // #3: буфер вместо chunk-отправки — см. комментарий над handle_list.
-        // Запас 32 Б — под хвост "],\"count\":N}", который допишется после цикла.
-        if (len + (size_t)n + 32 > cap) break;   // переполнение: отдаём собранное, не портим JSON
+        // issue #52: резерв считается от ФАКТИЧЕСКОГО хвоста (LIST_TAIL_RESERVE),
+        // а не от прежней константы 32, рассчитанной на короткий хвост.
+        if (n < 0 || len + (size_t)n + LIST_TAIL_RESERVE > cap) break;
         memcpy(buf + len, item, (size_t)n);
         len += (size_t)n;
         count++;
     }
     if (dir) closedir(dir);
-    len += (size_t)snprintf(buf + len, cap - len, "],\"count\":%d}", count);
+
+    // issue #52: автоматические снимки — вторым массивом, чтобы старый клиент,
+    // читающий только "spectra", продолжал работать без изменений.
+    len = list_append(buf, cap, len, "],\"backups\":[");
+    int bcount = 0;
+    DIR *bdir = opendir(BACKUP_DIR);
+    while (bdir && (de = readdir(bdir)) != NULL) {
+        backup_id_t id;
+        if (!backup_parse_name(de->d_name, &id)) continue;
+        // Путь собираем из разобранных чисел, а не из d_name (до 255 Б) — иначе
+        // -Werror=format-truncation, и это тот же корень, что у #FW-24 выше.
+        snprintf(path, sizeof(path), "%s/" BACKUP_NAME_FMT, BACKUP_DIR, id.sess, id.seq);
+        FILE *f = fopen(path, "rb");
+        if (!f) continue;
+        uint32_t counts = 0, time_sec = 0;
+        time_t saved_at = 0;
+        fseek(f, offsetof(spectrum_data_t, total_counts), SEEK_SET);
+        fread(&counts, 4, 1, f);
+        fread(&time_sec, 4, 1, f);
+        fseek(f, offsetof(spectrum_data_t, saved_at), SEEK_SET);
+        fread(&saved_at, sizeof(time_t), 1, f);
+        fclose(f);
+        int n = snprintf(item, sizeof(item),
+            "%s{\"name\":\"bk_%" PRIu32 "_%" PRIu32 "\",\"session\":%" PRIu32 ",\"seq\":%" PRIu32
+            ",\"counts\":%" PRIu32 ",\"time\":%" PRIu32 ",\"saved_at\":%ld}",
+            bcount > 0 ? "," : "", id.sess, id.seq, id.sess, id.seq,
+            counts, time_sec, (long)saved_at);
+        if (n < 0 || len + (size_t)n + LIST_TAIL_RESERVE > cap) break;
+        memcpy(buf + len, item, (size_t)n);
+        len += (size_t)n;
+        bcount++;
+    }
+    if (bdir) closedir(bdir);
+    len = list_append(buf, cap, len, "],\"backup_count\":%d,\"session\":%" PRIu32,
+                      bcount, boot_config_get_session());
+    len = list_append(buf, cap, len, ",\"count\":%d}", count);
     http_io_gate_leave();   // #3: гейт отпущен ДО сетевой отдачи клиенту
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, buf, len);
@@ -651,9 +749,9 @@ static esp_err_t render_spectrum_xml(httpd_req_t *req, const spectrum_data_t *sp
         return ESP_FAIL;
     }
     httpd_resp_set_type(req, "application/xml");
-    char named[48];
+    char named[80];   // issue #52: префикс (до 23) + "S<u32>_<u32>.csv" (26) не влезали в 48
     web_build_export_name(named, sizeof(named), filename);   // #FW-42: префикс
-    char disp[80];
+    char disp[128];  // issue #52: "attachment; filename=\"\"" (22) + named[80]
     snprintf(disp, sizeof(disp), "attachment; filename=\"%s\"", named);
     httpd_resp_set_hdr(req, "Content-Disposition", disp);
 
@@ -772,9 +870,9 @@ static esp_err_t render_spectrum_csv(httpd_req_t *req, const spectrum_data_t *sp
         return ESP_FAIL;
     }
     httpd_resp_set_type(req, "text/csv");
-    char named[48];
+    char named[80];   // issue #52: префикс (до 23) + "S<u32>_<u32>.csv" (26) не влезали в 48
     web_build_export_name(named, sizeof(named), filename);   // #FW-42: префикс
-    char disp[80];
+    char disp[128];  // issue #52: "attachment; filename=\"\"" (22) + named[80]
     snprintf(disp, sizeof(disp), "attachment; filename=\"%s\"", named);
     httpd_resp_set_hdr(req, "Content-Disposition", disp);
 
@@ -815,9 +913,9 @@ static esp_err_t render_spectrum_n42(httpd_req_t *req, const spectrum_data_t *sp
         return ESP_FAIL;
     }
     httpd_resp_set_type(req, "application/octet-stream");
-    char named[48];
+    char named[80];   // issue #52: префикс (до 23) + "S<u32>_<u32>.csv" (26) не влезали в 48
     web_build_export_name(named, sizeof(named), filename);   // #FW-42: префикс
-    char disp[80];
+    char disp[128];  // issue #52: "attachment; filename=\"\"" (22) + named[80]
     snprintf(disp, sizeof(disp), "attachment; filename=\"%s\"", named);
     httpd_resp_set_hdr(req, "Content-Disposition", disp);
     uint32_t r0 = esp_random(), r1 = esp_random(), r2 = esp_random(), r3 = esp_random();
@@ -928,9 +1026,9 @@ static esp_err_t render_spectrum_spe(httpd_req_t *req, const spectrum_data_t *sp
         return ESP_FAIL;
     }
     httpd_resp_set_type(req, "application/octet-stream");
-    char named[48];
+    char named[80];   // issue #52: префикс (до 23) + "S<u32>_<u32>.csv" (26) не влезали в 48
     web_build_export_name(named, sizeof(named), filename);   // #FW-42: префикс
-    char disp[80];
+    char disp[128];  // issue #52: "attachment; filename=\"\"" (22) + named[80]
     snprintf(disp, sizeof(disp), "attachment; filename=\"%s\"", named);
     httpd_resp_set_hdr(req, "Content-Disposition", disp);
     time_t end_time = (sp->saved_at > 0) ? sp->saved_at : time(NULL);
@@ -1158,6 +1256,106 @@ static esp_err_t handle_saved_json(httpd_req_t *req)
     free(sp);
     return ret;
 }
+
+// ─── issue #52: снимки /api/backup/<name>/… ──────────────────────────────────
+// Имя приходит из URI, поэтому единственная его проверка — backup_parse_name()
+// внутри spectrum_backup_*: всё, что не "bk_<u32>_<u32>.bin", отвергается, и ни
+// "..", ни "/" в путь попасть не могут.
+#define BACKUP_URI_PREFIX     "/api/backup/"
+#define BACKUP_URI_PREFIX_LEN (sizeof(BACKUP_URI_PREFIX) - 1)
+
+// "/api/backup/bk_3_2/export.csv" → name="bk_3_2.bin", tail="/export.csv".
+// false, если имя не влезло в буфер или префикса нет.
+static bool parse_backup_uri(const char *uri, char *name, size_t cap, const char **tail)
+{
+    if (strncmp(uri, BACKUP_URI_PREFIX, BACKUP_URI_PREFIX_LEN) != 0) return false;
+    const char *p = uri + BACKUP_URI_PREFIX_LEN;
+    const char *slash = strchr(p, '/');
+    size_t len = slash ? (size_t)(slash - p) : strlen(p);
+    if (len == 0 || len + 5 > cap) return false;   // +5: ".bin" и '\0'
+    memcpy(name, p, len);
+    // В URI имя без расширения (короче и читаемо в адресной строке); на ФС —
+    // с ".bin", как его пишет spectrum_backup_save().
+    memcpy(name + len, ".bin", 5);
+    if (tail) *tail = slash ? slash : "";
+    return true;
+}
+
+// Загружает снимок под гейтом. Сам отвечает клиенту при отказе.
+// Возвращает NULL, если ответ уже отправлен.
+static spectrum_data_t *backup_load_or_fail(httpd_req_t *req, backup_id_t *id_out)
+{
+    char name[40];
+    if (!parse_backup_uri(req->uri, name, sizeof(name), NULL)) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad backup name");
+        return NULL;
+    }
+    if (id_out) backup_parse_name(name, id_out);
+    if (!http_io_gate_enter_wait_or_503(req, SAVED_FLASH_GATE_WAIT_MS)) return NULL;
+    spectrum_data_t *sp = malloc(sizeof(spectrum_data_t));
+    if (!sp) {
+        http_io_gate_leave();
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return NULL;
+    }
+    if (spectrum_backup_load(name, sp) != 0) {
+        free(sp);
+        http_io_gate_leave();
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Backup not found");
+        return NULL;
+    }
+    http_io_gate_leave();   // файл прочитан — рендер без гейта, как у saved
+    return sp;
+}
+
+static esp_err_t handle_backup_get(httpd_req_t *req)
+{
+    char name[40];
+    const char *tail = "";
+    if (!parse_backup_uri(req->uri, name, sizeof(name), &tail)) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad backup name");
+        return ESP_FAIL;
+    }
+    bool xml = (strcmp(tail, "/export.xml") == 0);
+    bool csv = (strcmp(tail, "/export.csv") == 0);
+    bool jsn = (strcmp(tail, "/spectrum.json") == 0);
+    if (!xml && !csv && !jsn) {
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Unknown backup action");
+        return ESP_FAIL;
+    }
+    backup_id_t id = {0, 0};
+    spectrum_data_t *sp = backup_load_or_fail(req, &id);
+    if (!sp) return ESP_OK;      // ответ уже отправлен
+    esp_err_t ret;
+    if (jsn) {
+        ret = render_spectrum_json(req, sp);
+    } else {
+        // Имя выгрузки говорит человеку, из какой сессии снимок: "S3_2.csv".
+        char fn[32];
+        snprintf(fn, sizeof(fn), "S%" PRIu32 "_%" PRIu32 ".%s", id.sess, id.seq,
+                 xml ? "xml" : "csv");
+        ret = xml ? render_spectrum_xml(req, sp, fn) : render_spectrum_csv(req, sp, fn);
+    }
+    free(sp);
+    return ret;
+}
+
+static esp_err_t handle_backup_delete(httpd_req_t *req)
+{
+    if (!csrf_check(req)) return ESP_FAIL;
+    char name[40];
+    if (!parse_backup_uri(req->uri, name, sizeof(name), NULL)) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad backup name");
+        return ESP_FAIL;
+    }
+    if (!http_io_gate_enter_wait_or_503(req, SAVED_FLASH_GATE_WAIT_MS)) return ESP_OK;
+    int rc = spectrum_backup_delete(name);
+    http_io_gate_leave();
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, rc == 0 ? "{\"ok\":true}" : "{\"ok\":false}");
+    return ESP_OK;
+}
+// ─── конец issue #52 ─────────────────────────────────────────────────────────
 
 static esp_err_t handle_saved_delete(httpd_req_t *req)
 {
@@ -1952,7 +2150,16 @@ void web_server_init(void)
     // tskNO_AFFINITY позволял httpd (prio 5) исполняться на core 0 рядом с
     // USB-приёмом — уводим целиком.
     config.core_id = 1;
-    config.max_uri_handlers = 72;        // #WF-2/#MON-1/#FIELD-4/#FW-50: 50 базовых (uris[]) + 20 waterfall (web_waterfall_register: 19 reg + /ws/waterfall) = 70. Лимит 45 когда-то переполнялся → тихие 404 у последних хэндлеров → цикл reconnect. Сейчас запас всего +2: следующая фича на 3 эндпоинта повторит ту же аварию, число придётся поднять вместе с ней.
+    // #WF-2/#MON-1/#FIELD-4/#FW-50/issue #52: пересчитано 2026-09-07 по факту, а не
+    // по этому комментарию — он отставал (числился 50, в uris[] был 51).
+    // Сейчас: 53 в uris[] (в т.ч. 2 новых /api/backup/*) + 20 waterfall
+    // (web_waterfall_register: 19 reg + /ws/waterfall) = 73. С прежним лимитом 72
+    // ПОСЛЕДНИЙ обработчик молча не регистрировался бы → тихий 404 (та самая
+    // авария, которой лимит 45 стоил цикла reconnect). 80 даёт запас +7.
+    // Добавляешь эндпоинт — пересчитай:
+    //   awk '/httpd_uri_t uris\[\]/,/^    };/' main/web_server.c | grep -cE '^\s*\{"/'
+    //   grep -cE '^\s*reg\(server' main/web_waterfall.c   (+1 на /ws/waterfall)
+    config.max_uri_handlers = 80;
     config.stack_size = 8192;
     config.max_open_sockets = 11;        // из 16 LWIP-сокетов; запас для tcp_bridge + sntp
     config.lru_purge_enable = true;      // при исчерпании пула закрыть LRU-соединение, не отказывать (errno 23)
@@ -1996,6 +2203,8 @@ void web_server_init(void)
         {"/api/export.spe",              HTTP_GET,  handle_export_spe,       NULL},
         {"/api/saved/*",                 HTTP_GET,  handle_saved_get,        NULL},
         {"/api/saved/*",                 HTTP_POST, handle_saved_delete,     NULL},
+        {"/api/backup/*",                HTTP_GET,  handle_backup_get,       NULL},  // issue #52
+        {"/api/backup/*",                HTTP_POST, handle_backup_delete,    NULL},  // issue #52
         {"/api/device",                  HTTP_GET,  handle_device,           NULL},
         {"/api/system",                  HTTP_GET,  handle_system,           NULL},
         {"/api/usb-diag",                HTTP_GET,  handle_usb_diag,         NULL},  // #FW-22

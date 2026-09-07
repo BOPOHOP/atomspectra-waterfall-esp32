@@ -140,6 +140,36 @@ The instrument serial number (`serial_number`) stays empty after connection.
 
 **Workaround:** the serial number can be set manually via the Web UI (calibration panel).
 
+### issue #52: a backup snapshot is written at an arbitrary phase of USB reception
+
+**Status:** limitation by design (v1.2.23)
+
+An automatic spectrum snapshot (33 KB on LittleFS) is written when its period elapses, without
+waiting for the end of a sweep — unlike the `current.bin` autosave, which waits for a sweep commit
+(#FW-13) so the write lands in the quiet USB window. A flash write freezes the cache of both
+cores, so a snapshot may cost one dropped sweep (`histogram sweep dropped`).
+
+**Why:** the autosave runs once a minute, a snapshot once in hours (1 hour minimum). The price is
+up to one sweep out of ~3600 per hour; phase-locking is not worth the complexity. The snapshot is
+taken under `http_io_gate` (like the "Save" button) and under `flash_quiet_writer_lock` (like the
+autosave and waterfall segment writes), so it does not compete with other LittleFS writers — only
+the PHASE relative to a sweep is not locked.
+
+**Impact:** negligible loss of acquisition completeness. With the period set in minutes (bench-only
+key `backup_test_minutes` in `/api/boot-config`, not exposed in the Web UI) the loss becomes
+noticeable — that mode is for testing, not for measurements.
+
+### issue #52: URI handler table overflow stays silent
+
+**Status:** open (diagnostics)
+
+When `config.max_uri_handlers` is exhausted, `httpd_register_uri_handler` returns an error the
+code never checks: the route is silently not registered and clients get a 404 with nothing in the
+log. The route that breaks is the LAST one in the table, not the one just added — so the search
+starts in the wrong place. The limit is currently 80 against 73 actual routes (see the comment at
+`config.max_uri_handlers` in `web_server.c`, which carries the commands to recount). Fix: log the
+registration failure.
+
 ---
 
 ## Fixed
