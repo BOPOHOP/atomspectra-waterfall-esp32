@@ -11,6 +11,7 @@
 #include "freertos/stream_buffer.h"   /* #BRIDGE-1: RX-кольцо декаплинга data_cb */
 #include "esp_heap_caps.h"   /* #TCP-5: диагностика свободного DMA-блока перед open */
 #include "esp_timer.h"       /* #FW-22: timestamp для last_* полей */
+#include "acq_watch.h"       /* сторож набора после перезагрузки прибора */
 #include <string.h>
 
 static const char *TAG = "usb_cdc";
@@ -149,7 +150,7 @@ static void handle_rx_packet(void)
     // #FW-43: любой дошедший сюда пакет уже прошёл CRC → прибор жив и отвечает.
     s_diag.last_shproto_ts_ms = diag_now_ms();
     switch (s_rx_packet.cmd) {
-    case CMD_HISTOGRAM:    s_diag.pkt_hist++; break;
+    case CMD_HISTOGRAM:    s_diag.pkt_hist++; s_diag.last_hist_ts_ms = s_diag.last_shproto_ts_ms; break;
     case CMD_TEXT:         s_diag.pkt_text++; break;
     case CMD_STAT:         s_diag.pkt_stat++; break;
     case CMD_OSCILLOSCOPE: s_diag.pkt_osc++; break;
@@ -618,6 +619,23 @@ static void usb_connect_task(void *arg)
             }
         }
 
+        // Сторож набора (acq_watch.h): намерение RUN, а гистограмм нет ACQ_WATCH_MS — прибор
+        // перезагрузился и встал. RX-сторож выше этого не видит: статус FTDI идёт непрерывно.
+        if (s_cdc_dev) {
+            DIAG_LOCK();
+            uint32_t now = diag_now_ms();
+            uint32_t hist_ts = s_diag.last_hist_ts_ms;
+            bool due = acq_watch_resend_due(s_diag.acq_intent, now, s_diag.last_open_ts_ms,
+                                            hist_ts, s_diag.last_acq_resend_ts_ms);
+            if (due) { s_diag.last_acq_resend_ts_ms = now; s_diag.acq_resend_count++; }
+            DIAG_UNLOCK();
+            if (due) {
+                ESP_LOGW(TAG, "acq watch: no histogram for %u ms with intent=run — resend -sta",
+                         (unsigned)(now - hist_ts));
+                usb_host_send_text_command("-sta");
+            }
+        }
+
         if (s_cdc_dev && spectrum_t1_refresh_due(diag_now_ms())) {
             if (usb_host_send_text_command("-inf") == 0)
                 spectrum_t1_mark_refresh_sent();
@@ -731,6 +749,13 @@ int usb_host_cdc_send(const uint8_t *data, size_t len)
     DIAG_UNLOCK();
     xSemaphoreGive(s_tx_mutex);
     return (err == ESP_OK) ? 0 : -1;
+}
+
+void usb_host_cdc_acq_intent_external(void)
+{
+    DIAG_LOCK();
+    s_diag.acq_intent = ACQ_INTENT_UNKNOWN;
+    DIAG_UNLOCK();
 }
 
 void usb_host_cdc_set_raw_rx_cb(usb_raw_rx_cb_t cb)
@@ -867,6 +892,8 @@ int usb_host_send_text_command(const char *cmd)
         DIAG_LOCK();
         strncpy(s_diag.last_tx_cmd, cmd0, sizeof(s_diag.last_tx_cmd) - 1);
         s_diag.last_tx_cmd[sizeof(s_diag.last_tx_cmd) - 1] = '\0';
+        if (strcmp(cmd0, "-sta") == 0)      s_diag.acq_intent = ACQ_INTENT_RUN;
+        else if (strcmp(cmd0, "-sto") == 0) s_diag.acq_intent = ACQ_INTENT_STOP;
         DIAG_UNLOCK();
     }
     return rc;

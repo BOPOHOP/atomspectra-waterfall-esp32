@@ -1585,6 +1585,10 @@ static esp_err_t handle_usb_diag(httpd_req_t *req)
         cJSON_AddNumberToObject(root, "sweep_drops",   sw_drop);
     }
     cJSON_AddNumberToObject(root, "last_shproto_ts_ms",    d.last_shproto_ts_ms);
+    cJSON_AddNumberToObject(root, "last_hist_ts_ms",       d.last_hist_ts_ms);
+    cJSON_AddNumberToObject(root, "acq_intent",            d.acq_intent);
+    cJSON_AddNumberToObject(root, "acq_resend_count",      d.acq_resend_count);
+    cJSON_AddNumberToObject(root, "last_acq_resend_ts_ms", d.last_acq_resend_ts_ms);
     cJSON_AddNumberToObject(root, "drv_task_alive_ts_ms",  d.drv_task_alive_ts_ms);
     cJSON_AddNumberToObject(root, "conn_task_alive_ts_ms", d.conn_task_alive_ts_ms);
     cJSON_AddNumberToObject(root, "dma_free_largest",      d.dma_free_largest);

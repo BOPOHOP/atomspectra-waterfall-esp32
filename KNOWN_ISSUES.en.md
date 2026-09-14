@@ -170,6 +170,29 @@ starts in the wrong place. The limit is currently 80 against 73 actual routes (s
 `config.max_uri_handlers` in `web_server.c`, which carries the commands to recount). Fix: log the
 registration failure.
 
+### "Reboot instrument" wipes the accumulated spectrum
+
+**Status:** open (v1.2.23)
+
+On reboot the instrument clears its histogram, and the gateway accepts that reset: the current
+spectrum on the board (`current.bin`) starts over. On the bench on 2026-09-14 this lost 94 h of
+acquisition; the latest backup snapshot (issue #52) survived, so only the time since that snapshot
+was lost. The button gives no warning and takes no snapshot before sending the command. **Save the
+spectrum manually before rebooting the instrument** ("Save" on the "Spectrum" page).
+
+### The acquisition watchdog is inactive while a TCP client controls the instrument
+
+**Status:** limitation by design (v1.2.23)
+
+Since v1.2.23 the gateway notices when acquisition stops on its own (e.g. after an instrument
+reboot): if its own last command was "Start" and no histogram arrives for 20 s, it resends `-sta`
+(at most once per 20 s; counter `acq_resend_count` in `/api/usb-diag`). Before v1.2.23 such a stall
+went unnoticed: the RX watchdog saw the FTDI's continuous 2-byte status and considered the link
+alive. When the AtomSpectra app sends commands through the TCP bridge, the gateway cannot tell
+whether acquisition was stopped on purpose, so the watchdog stays silent — otherwise it would
+override the user's "Stop". Acquisition started by anything other than the gateway is not guarded
+either.
+
 ---
 
 ## Fixed

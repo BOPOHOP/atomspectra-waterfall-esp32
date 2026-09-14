@@ -82,6 +82,8 @@ void usb_host_cdc_init(void);
 // Grace window after open before RX is required. Drives UI/HB/status false-green fix.
 bool usb_host_cdc_is_connected(void);
 int  usb_host_cdc_send(const uint8_t *data, size_t len);
+// Сторож набора: прибором управляет внешний TCP-клиент — намерение шлюза неизвестно.
+void usb_host_cdc_acq_intent_external(void);
 void usb_host_cdc_set_raw_rx_cb(usb_raw_rx_cb_t cb);
 int  usb_host_send_text_command(const char *cmd);
 // #FW-43: force CDC teardown → connect-task reopen (Retry link / silent MCU after hotplug)
@@ -169,6 +171,11 @@ typedef struct {
     uint32_t pkt_unknown;
     uint32_t pkt_bad;               // #FW-53: CRC/framing отброшены (shproto_struct.dropped)
     uint32_t last_shproto_ts_ms;    // #FW-43: ts последнего CRC-валид SHPROTO-пакета (любой тип). Детект «определился, но не запитан».
+    // Сторож набора (acq_watch.h): намерение и штамп гистограммы — RX-штамп обновляют и байты статуса FTDI.
+    uint32_t last_hist_ts_ms;       // ts последнего пакета CMD_HISTOGRAM
+    uint8_t  acq_intent;            // ACQ_INTENT_*: -sta/-sto шлюза; TCP-клиент → UNKNOWN
+    uint32_t acq_resend_count;      // сколько раз сторож повторил -sta
+    uint32_t last_acq_resend_ts_ms;
     // Tasks
     uint32_t drv_task_alive_ts_ms;  // hint через RX cb
     uint32_t conn_task_alive_ts_ms; // отметка из usb_connect_task
