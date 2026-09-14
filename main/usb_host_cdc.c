@@ -12,6 +12,7 @@
 #include "esp_heap_caps.h"   /* #TCP-5: диагностика свободного DMA-блока перед open */
 #include "esp_timer.h"       /* #FW-22: timestamp для last_* полей */
 #include "acq_watch.h"       /* сторож набора после перезагрузки прибора */
+#include "acq_intent.h"      /* намерение набора по текстовой команде */
 #include <string.h>
 
 static const char *TAG = "usb_cdc";
@@ -758,6 +759,17 @@ void usb_host_cdc_acq_intent_external(void)
     DIAG_UNLOCK();
 }
 
+// Перед CMD_REBOOT от шлюза: если гистограммы шли последние ACQ_WATCH_MS, набор был запущен —
+// после перезагрузки прибора сторож должен его вернуть, даже если -sta в эту загрузку платы
+// шлюз ещё не отправлял (ревью 14.09, F2).
+void usb_host_cdc_acq_intent_device_reboot(void)
+{
+    DIAG_LOCK();
+    uint32_t hist_ts = s_diag.last_hist_ts_ms;
+    if (hist_ts != 0 && diag_now_ms() - hist_ts < ACQ_WATCH_MS) s_diag.acq_intent = ACQ_INTENT_RUN;
+    DIAG_UNLOCK();
+}
+
 void usb_host_cdc_set_raw_rx_cb(usb_raw_rx_cb_t cb)
 {
     s_raw_rx_cb = cb;
@@ -892,8 +904,7 @@ int usb_host_send_text_command(const char *cmd)
         DIAG_LOCK();
         strncpy(s_diag.last_tx_cmd, cmd0, sizeof(s_diag.last_tx_cmd) - 1);
         s_diag.last_tx_cmd[sizeof(s_diag.last_tx_cmd) - 1] = '\0';
-        if (strcmp(cmd0, "-sta") == 0)      s_diag.acq_intent = ACQ_INTENT_RUN;
-        else if (strcmp(cmd0, "-sto") == 0) s_diag.acq_intent = ACQ_INTENT_STOP;
+        s_diag.acq_intent = acq_intent_for_cmd(cmd0, s_diag.acq_intent);
         DIAG_UNLOCK();
     }
     return rc;

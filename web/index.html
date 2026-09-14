@@ -386,6 +386,7 @@ async function update(){
   var rb=await fetch("/api/spectrum");
   var rm=await fetch("/api/spectrum/meta.json");
   if(!rb.ok||!rm.ok){
+   acqStale();  /* #UI-44 */
    var deadHdr=(rm.headers&&rm.headers.get("X-Spectrometer-Dead"))||(rb.headers&&rb.headers.get("X-Spectrometer-Dead"));
    setDeadBanner(deadHdr==="1");
    if(++failStreak>=3||!lastD){clearCanvas();document.getElementById("status").textContent=tr("status.nodata");}
@@ -421,7 +422,7 @@ async function update(){
   document.getElementById("big-total").textContent=d.total.toLocaleString(lcl());
   if(doseK>0){var bigDr=(d.cps*doseK).toFixed(3);document.getElementById("big-dose").textContent=bigDr;document.getElementById("big-dose-sep").style.display="";document.getElementById("big-dose-wrap").style.display="";}else{document.getElementById("big-dose-sep").style.display="none";document.getElementById("big-dose-wrap").style.display="none";}
   draw(d);
- }catch(e){if(++failStreak>=3||!lastD){clearCanvas();setDeadBanner(false);document.getElementById("status").textContent=tfmt("err.prefix",e);}}  /* #UI-2: таймаут/сбой сети не гасит последний спектр; гасим лишь после >=3 подряд */
+ }catch(e){acqStale();if(++failStreak>=3||!lastD){clearCanvas();setDeadBanner(false);document.getElementById("status").textContent=tfmt("err.prefix",e);}}  /* #UI-2: таймаут/сбой сети не гасит последний спектр; гасим лишь после >=3 подряд */
  finally{pollDevLog();}   /* #UI-2: devlog (#UI-1) теперь ПОСЛЕ спектра, не конкурентно — устраняет лишний сокет → меньше 503 */
 }
 
@@ -624,7 +625,10 @@ async function delSaved(idx){if(!confirm(tfmt("confirm.del",idx)))return;await p
    не доказывает: при опросе 2 с и кэше 2 с повтор кадра бывает и посреди догоняющего роста.
    Если так и не встал за 6 с после окончания удержания — команда не сработала, показываем
    фактический набор. Уменьшение `time` (Сброс) отметку снимает. */
-var acqT=null, acqGrowTs=0, acqSince=0, acqHold=0, acqStopWait=false, acqFlat=0;
+var acqT=null, acqGrowTs=0, acqSince=0, acqHold=0, acqStopWait=false, acqFlat=0, acqFrameTs=0;
+/* Кадров нет дольше 6 с (связь пропала, 404 после «Сброс») — состояние неизвестно, обе кнопки
+   активны: иначе индикатор навсегда застывает в последнем состоянии (ревью 14.09). */
+function acqStale(){ if(acqT!==null&&Date.now()-acqFrameTs>6000)setAcqBtns(null); }
 function setAcqBtns(run){
  var s=document.getElementById("bStart"), p=document.getElementById("bStop");
  if(!s||!p)return;
@@ -635,7 +639,7 @@ function setAcqBtns(run){
 }
 function acqObserve(t){
  if(typeof t!=="number")return;
- var now=Date.now();
+ var now=Date.now(); acqFrameTs=now;
  if(acqT===null){acqT=t;acqSince=now;setAcqBtns(null);return;}
  if(t<acqT)acqStopWait=false;
  else if(acqStopWait){ acqFlat=(t===acqT)?acqFlat+1:0; if(acqFlat>=2||now-acqHold>6000){acqStopWait=false;acqFlat=0;} }

@@ -1434,6 +1434,7 @@ static esp_err_t handle_reboot_device(httpd_req_t *req)
     shproto_init(&pkt, pkt_buf, sizeof(pkt_buf));
     shproto_packet_start(&pkt, CMD_REBOOT);
     shproto_packet_complete(&pkt);
+    usb_host_cdc_acq_intent_device_reboot();  // сторож набора вернёт набор после перезагрузки
     int ret = usb_host_cdc_send(pkt.data, pkt.len);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, ret == 0 ? "{\"ok\":true}" : "{\"ok\":false}");

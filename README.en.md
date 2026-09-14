@@ -120,8 +120,8 @@ has none.
 
 The board can save the spectrum to flash on a period of its own and keep only a few
 latest snapshots. This is meant for long unattended runs: you leave for a month, the
-power drops, acquisition restarts from zero — but what was collected before that stays
-on flash.
+power drops, acquisition continues from the last autosave after power returns — and the
+snapshots stay on flash.
 
 Configured on the **"System" → "Spectrum backups"** panel:
 

@@ -1,0 +1,23 @@
+// Намерение набора по команде (main/acq_intent.h). Команды — как их шлют UI и страница «Сервис».
+#include "acq_intent.h"
+#include "test_util.h"
+
+void acq_intent_suite(void)
+{
+    const struct { const char *cmd; uint8_t cur, exp; } c[] = {
+        {"-sta",     ACQ_INTENT_UNKNOWN, ACQ_INTENT_RUN},     // кнопка «Старт»
+        {"-sto",     ACQ_INTENT_RUN,     ACQ_INTENT_STOP},    // кнопка «Стоп»
+        {"-sta 60",  ACQ_INTENT_RUN,     ACQ_INTENT_UNKNOWN}, // набор на 60 с — сам остановится
+        {"-sta -s",  ACQ_INTENT_RUN,     ACQ_INTENT_UNKNOWN}, // тихий режим — гистограмм нет по замыслу
+        {"-sto ",    ACQ_INTENT_RUN,     ACQ_INTENT_STOP},    // хвостовой пробел из поля ввода
+        {"-sta\r\n", ACQ_INTENT_STOP,    ACQ_INTENT_RUN},     // перевод строки
+        {"-stt",     ACQ_INTENT_RUN,     ACQ_INTENT_RUN},     // статус — не команда набора
+        {"-inf",     ACQ_INTENT_STOP,    ACQ_INTENT_STOP},    // запрос параметров
+        {"-stax",    ACQ_INTENT_RUN,     ACQ_INTENT_RUN},     // не -sta
+    };
+    for (unsigned i = 0; i < sizeof c / sizeof c[0]; i++) {
+        uint8_t got = acq_intent_for_cmd(c[i].cmd, c[i].cur);
+        if (got != c[i].exp) printf("acq_intent case %u: got %u\n", i, got);
+        CHECK(got == c[i].exp);
+    }
+}

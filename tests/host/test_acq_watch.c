@@ -1,5 +1,4 @@
-// Сторож набора (main/acq_watch.h). Штампы — из /api/usb-diag живой платы 14.09:
-// open=3402, последняя гистограмма перед -sto 941539, замер через 35 с — 977018.
+// Сторож набора (main/acq_watch.h). Штампы — /api/usb-diag платы 14.09: open=3402, гистограмма 941539.
 #include "acq_watch.h"
 #include "test_util.h"
 
@@ -14,6 +13,8 @@ void acq_watch_suite(void)
         {ACQ_INTENT_RUN,     977018, 3402, 941539, 967018, false}, // повтор был 10 с назад
         {ACQ_INTENT_RUN,     977018, 3402, 941539, 957018, true},  // повтор был 20 с назад
         {ACQ_INTENT_RUN,     966000, 941000, 900000, 0,    true},  // после переоткрытия кадров нет 25 с
+        {ACQ_INTENT_RUN,     961539, 3402, 941539, 0,      true},  // тишина ровно 20 000 мс
+        {ACQ_INTENT_RUN,     0x6000, 0xFFFFF000u, 0x5F00, 0, false}, // открыто до переполнения 28 с назад, кадр свежий
     };
     for (unsigned i = 0; i < sizeof c / sizeof c[0]; i++) {
         bool got = acq_watch_resend_due(c[i].in, c[i].now, c[i].open, c[i].hist, c[i].resend);

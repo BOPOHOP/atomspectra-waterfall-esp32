@@ -29,6 +29,7 @@ void test_backup_plan(void);
 void fuzz_backup_name(void);
 // Сторож набора после перезагрузки прибора (main/acq_watch.h).
 void acq_watch_suite(void);
+void acq_intent_suite(void);
 
 // Тестовая команда. CMD_HISTOGRAM (0x01) объявлена в main/atomspectra.h, но она
 // вне include-path host-сборки; shproto трактует cmd как обычный uint8_t.
@@ -189,6 +190,7 @@ int main(void)
     test_backup_plan();
     fuzz_backup_name();
     acq_watch_suite();
+    acq_intent_suite();
 
     if (g_failures) {
         printf("\n%d CHECK(S) FAILED\n", g_failures);

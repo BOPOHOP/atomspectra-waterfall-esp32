@@ -84,6 +84,8 @@ bool usb_host_cdc_is_connected(void);
 int  usb_host_cdc_send(const uint8_t *data, size_t len);
 // Сторож набора: прибором управляет внешний TCP-клиент — намерение шлюза неизвестно.
 void usb_host_cdc_acq_intent_external(void);
+// Сторож набора: шлюз перезагружает прибор — если набор шёл, после перезагрузки его вернуть.
+void usb_host_cdc_acq_intent_device_reboot(void);
 void usb_host_cdc_set_raw_rx_cb(usb_raw_rx_cb_t cb);
 int  usb_host_send_text_command(const char *cmd);
 // #FW-43: force CDC teardown → connect-task reopen (Retry link / silent MCU after hotplug)
