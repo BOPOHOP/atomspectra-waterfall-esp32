@@ -167,6 +167,26 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <div class="mut" id="bc-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
 </section>
 
+<!-- issue #52: автоматические резервные снимки спектра -->
+<section class="panel">
+<div class="ttl"><span style="color:var(--accent)">&#9654;</span> <span data-i18n="bk.title">Резервные копии спектра</span></div>
+<div class="kv"><span data-i18n="bk.keep">Хранить снимков (0 — выключено)</span>
+ <input type="number" id="bk-keep" min="0" max="20" step="1" style="width:80px"></div>
+<div class="kv"><span data-i18n="bk.hours">Снимать каждые, часов</span>
+ <input type="number" id="bk-hours" min="1" max="168" step="1" style="width:80px"></div>
+<div class="mut" style="font-size:11px;line-height:1.5;margin-top:10px" data-i18n="bk.hint">Плата сама сохраняет спектр на flash с заданным периодом и держит только указанное число последних снимков. После пропадания питания счётчик сессии растёт, и новые снимки не смешиваются со старыми. Снимки видны на вкладке «Сохранённые»; ручные сохранения ротацией не удаляются.</div>
+<div class="mut" style="font-size:11px;margin-top:6px"><span data-i18n="bk.session">Текущая сессия платы</span>: <b id="bk-session">—</b></div>
+<!-- issue #52: стендовый режим включается только через API и переживает перезагрузку.
+     Без этой строки «каждые 24 часа» молча означали бы «каждые 24 минуты», и в UI
+     это было бы не видно и не выключаемо. -->
+<div id="bk-testmode" style="display:none;margin-top:8px;padding:8px;border:1px solid rgba(240,180,60,.45);border-radius:6px;background:rgba(240,180,60,.07);font-size:11px;color:#f0c45a">
+<span data-i18n="bk.testOn">Включён стендовый режим: период считается в МИНУТАХ, не в часах.</span>
+<button class="btn" style="margin-top:6px" onclick="clearBackupTestMode()" data-i18n="bk.testOff">Выключить стендовый режим</button>
+</div>
+<button class="btn green" onclick="saveBackupConfig()" data-i18n="boot.save">Сохранить</button>
+<div class="mut" id="bk-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
+</section>
+
 <section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#9654;</span> <span data-i18n="dose.title">Мощность дозы</span></div>
 <div class="kv"><span data-i18n="dose.label">Коэффициент k (µSv·h⁻¹/cps)</span>
@@ -253,6 +273,12 @@ var DICT={
   "boot.hint":"Применяется один раз при включении / перезагрузке платы. По умолчанию всё выключено.",
   "boot.save":"Сохранить","boot.saved":"Сохранено","boot.saveErr":"Ошибка сохранения",
   "boot.exportTitle":"Экспорт файлов","boot.exportPrefix":"Префикс имени файлов",
+  "bk.title":"Резервные копии спектра","bk.keep":"Хранить снимков (0 — выключено)",
+  "bk.hours":"Снимать каждые, часов","bk.session":"Текущая сессия платы",
+  "bk.range":"Проверьте значения: снимков 0-20, период 1-168 часов",
+  "bk.testOn":"Включён стендовый режим: период считается в МИНУТАХ, не в часах.",
+  "bk.testOff":"Выключить стендовый режим",
+  "bk.hint":"Плата сама сохраняет спектр на flash с заданным периодом и держит только указанное число последних снимков. После пропадания питания счётчик сессии растёт, и новые снимки не смешиваются со старыми. Снимки видны на вкладке «Сохранённые»; ручные сохранения ротацией не удаляются.",
   "boot.exportHint":"Добавляется в начало имени всех выгрузок (спектр, водопад, backup). Пусто — обычные имена. Разрешены латиница, цифры, «_» и «-».",
   "dose.title":"Мощность дозы","dose.label":"Коэффициент k (µSv·h⁻¹/cps)","dose.hint":"0 — мощность дозы не записывается (NaN в файле). Сохраняется в NVS.","dose.save":"Сохранить","dose.saved":"Сохранено","dose.saveErr":"Ошибка",
   "dose.curveLabel":"Кривая мощности дозы","dose.curveNone":"Кривая не загружена (scalar k)","dose.curveHint":"CSV: channel,k_factor (до 512 точек, без заголовка). Приоритет над scalar k.","dose.curveLoad":"Загрузить CSV","dose.curveClear":"Сбросить кривую","dose.curveLoaded":"Кривая загружена (%1 точек)","dose.curveOk":"Загружено: %1 точек","dose.curveClearOk":"Кривая сброшена","dose.curveErr":"Ошибка загрузки","dose.curveNoFile":"Выберите CSV файл",
@@ -297,6 +323,12 @@ var DICT={
   "boot.hint":"Applied once on power-up / board reboot. Everything is off by default.",
   "boot.save":"Save","boot.saved":"Saved","boot.saveErr":"Save error",
   "boot.exportTitle":"File export","boot.exportPrefix":"Filename prefix",
+  "bk.title":"Spectrum backups","bk.keep":"Snapshots to keep (0 = off)",
+  "bk.hours":"Take one every, hours","bk.session":"Current board session",
+  "bk.range":"Check the values: 0-20 snapshots, period 1-168 hours",
+  "bk.testOn":"Bench mode is on: the period counts in MINUTES, not hours.",
+  "bk.testOff":"Turn bench mode off",
+  "bk.hint":"The board saves the spectrum to flash on the given period and keeps only that many latest snapshots. After a power loss the session counter increases, so new snapshots do not mix with the old ones. Snapshots appear on the Saved tab; manual saves are never removed by rotation.",
   "boot.exportHint":"Prepended to every export filename (spectrum, waterfall, backup). Empty — default names. Allowed: Latin letters, digits, «_» and «-».",
   "dose.title":"Dose rate","dose.label":"Coefficient k (µSv·h⁻¹/cps)","dose.hint":"0 — dose rate not recorded (NaN in file). Stored in NVS.","dose.save":"Save","dose.saved":"Saved","dose.saveErr":"Error",
   "dose.curveLabel":"Dose rate curve","dose.curveNone":"No curve loaded (scalar k)","dose.curveHint":"CSV: channel,k_factor (up to 512 points, no header). Priority over scalar k.","dose.curveLoad":"Load CSV","dose.curveClear":"Clear curve","dose.curveLoaded":"Curve loaded (%1 points)","dose.curveOk":"Loaded: %1 points","dose.curveClearOk":"Curve cleared","dose.curveErr":"Load error","dose.curveNoFile":"Select a CSV file",
@@ -494,7 +526,49 @@ async function loadBootConfig(){
   document.getElementById("bc-as-wf").checked=!!r.autostart_waterfall;
   document.getElementById("bc-clr-spec").checked=!!r.clear_spectrum;
   document.getElementById("bc-clr-wf").checked=!!r.clear_waterfall;
+  /* issue #52: те же данные несут настройки резервных снимков. */
+  var k=document.getElementById("bk-keep"),h=document.getElementById("bk-hours"),
+      se=document.getElementById("bk-session");
+  if(k)k.value=(typeof r.backup_keep==="number")?r.backup_keep:0;
+  if(h)h.value=(typeof r.backup_hours==="number")?r.backup_hours:24;
+  if(se)se.textContent=(typeof r.session==="number")?("#"+r.session):"—";
+  var tm=document.getElementById("bk-testmode");
+  if(tm)tm.style.display=r.backup_test_minutes?"":"none";
  }catch(e){}
+}
+/* issue #52: выключение стендового режима. Он ставится только через API и
+   переживает перезагрузку — без этой кнопки его нельзя было бы снять из UI. */
+async function clearBackupTestMode(){
+ var s=document.getElementById("bk-status");
+ try{
+  var r=await post("/api/boot-config",{headers:{"Content-Type":"application/json"},
+       body:JSON.stringify({backup_test_minutes:false})});
+  var j=r.ok?await r.json():{ok:false};
+  s.textContent=j.ok?t("boot.saved"):t("boot.saveErr");
+  s.style.color=j.ok?"var(--accent)":"#ff8a82";
+  if(j.ok)await loadBootConfig();
+ }catch(e){ s.textContent=t("boot.saveErr"); s.style.color="#ff8a82"; }
+ setTimeout(function(){s.textContent="";},2500);
+}
+/* issue #52. Отдельная кнопка, а не общая с «Стартом платы»: разные разделы, и
+   ошибка диапазона должна показываться рядом со своим полем. Плата отвечает 400
+   на выход за пределы — здесь ловим до отправки, чтобы человек увидел причину. */
+async function saveBackupConfig(){
+ var s=document.getElementById("bk-status");
+ var keep=parseInt(document.getElementById("bk-keep").value,10);
+ var hours=parseInt(document.getElementById("bk-hours").value,10);
+ if(!(keep>=0&&keep<=20)||!(hours>=1&&hours<=168)){
+  s.textContent=t("bk.range"); s.style.color="#ff8a82";
+  setTimeout(function(){s.textContent="";},3500); return;
+ }
+ try{
+  var r=await post("/api/boot-config",{headers:{"Content-Type":"application/json"},
+       body:JSON.stringify({backup_keep:keep,backup_hours:hours})});
+  var j=r.ok?await r.json():{ok:false};
+  s.textContent=j.ok?t("boot.saved"):t("boot.saveErr");
+  s.style.color=j.ok?"var(--accent)":"#ff8a82";
+ }catch(e){ s.textContent=t("boot.saveErr"); s.style.color="#ff8a82"; }
+ setTimeout(function(){s.textContent="";},2500);
 }
 async function saveBootConfig(statusId){
  var s=document.getElementById(statusId||"bc-status-spec");

@@ -4,6 +4,7 @@
 #include "flash_quiet.h"
 #include "spectrum_hist_stage.h"
 #include "http_io_gate.h"
+#include "backup_plan.h"   // issue #52: разбор имени снимка и план ротации
 #include "esp_log.h"
 #include <stddef.h>
 #include <inttypes.h>
@@ -16,6 +17,8 @@
 #include <math.h>
 #include <errno.h>      // #FW-58: check unlink() result (issue #24)
 #include <sys/stat.h>   // #FW-24: mkdir SPEC_DIR
+#include <dirent.h>     // issue #52: обход BACKUP_DIR
+#include <time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "esp_heap_caps.h"
@@ -137,6 +140,7 @@ void spectrum_init(void)
         esp_littlefs_info("storage", &total, &used);
         ESP_LOGI(TAG, "LittleFS: total=%zu used=%zu free=%zu", total, used, total - used);
         mkdir(SPEC_DIR, 0777);   // #FW-24: подкаталог сохранённых спектров (отделение от calib/current/wf_state в корне)
+        mkdir(BACKUP_DIR, 0777); // issue #52: автоснимки — отдельно от ручных, чтобы ротация их не касалась
     }
 }
 
@@ -648,6 +652,199 @@ int spectrum_save_to_flash(void)
     return idx;
 }
 
+// Приводит поля, прочитанные С ФЛЕША, в заведомо безопасный вид. Потребители
+// (экспорт xml/csv/spe/json) ходят по calibration[] до calib_order включительно,
+// не проверяя границу: повреждённая ячейка LittleFS с calib_order=1000 дала бы
+// чтение далеко за массивом из CALIB_COEFFS элементов. Совпадение размера файла
+// со структурой (проверяется у вызывающих) целостности ПОЛЕЙ не гарантирует.
+static void sanitize_loaded(spectrum_data_t *out)
+{
+    if (out->calib_order < 0 || out->calib_order >= CALIB_COEFFS) {
+        if (out->calib_valid)
+            ESP_LOGW(TAG, "loaded spectrum: calib_order=%d out of range, calibration dropped",
+                     out->calib_order);
+        out->calib_order = 0;
+        out->calib_valid = false;
+    }
+    out->serial_number[sizeof(out->serial_number) - 1] = '\0';  // строка из файла
+}
+
+// ─── issue #52: автоматические резервные снимки ───────────────────────────────
+// Решение «какие файлы удалить» вынесено в host-тестируемый backup_plan.c; здесь
+// только ввод-вывод. Вся функция работает под http_io_gate (держит вызывающий).
+
+// Собирает идентификаторы снимков каталога. Возвращает число найденных, либо -1
+// при ошибке открытия каталога. Файлы, не подходящие под шаблон (в т.ч. чужие
+// .bak), пропускаются и в ротацию не попадают.
+static int backup_scan(backup_id_t *out, int cap)
+{
+    DIR *dir = opendir(BACKUP_DIR);
+    if (!dir) return -1;
+    int n = 0;
+    struct dirent *de;
+    while ((de = readdir(dir)) != NULL) {
+        backup_id_t id;
+        if (!backup_parse_name(de->d_name, &id)) continue;
+        if (n < cap) out[n] = id;
+        n++;                       // считаем и сверх cap — вызывающий увидит переполнение
+    }
+    closedir(dir);
+    return n;
+}
+
+int spectrum_backup_save(uint32_t sess, uint32_t seq, int keep)
+{
+    if (keep <= 0) return -1;
+
+    // Место проверяем ПЕРВЫМ делом: при заполненном разделе отказ должен стоить
+    // одного вызова esp_littlefs_info, а не malloc(33 КБ) + SPEC_LOCK + обход
+    // каталога на каждой безнадёжной попытке (планировщик повторяет раз в тик).
+    size_t total = 0, used = 0;
+    esp_littlefs_info("storage", &total, &used);
+    if (total - used < AUTOSAVE_RESERVE + sizeof(spectrum_data_t)) {
+        ESP_LOGW(TAG, "backup rejected: free=%zu < reserve=%d", total - used, AUTOSAVE_RESERVE);
+        return -2;
+    }
+
+    // Снимок берём ДО ротации: если спектра нет, удалять старые незачем.
+    spectrum_data_t *snap = malloc(sizeof(*snap));
+    if (!snap) return -3;
+    SPEC_LOCK();
+    if (!s_spectrum.valid) { SPEC_UNLOCK(); free(snap); return -1; }
+    s_spectrum.saved_at = time(NULL);
+    memcpy(snap, &s_spectrum, sizeof(*snap));
+    SPEC_UNLOCK();
+
+    // Сериализация писателей LittleFS: тот же лок, что берут autosave, калибровка
+    // и запись сегментов водопада. Без него снимок может уйти на flash РЯДОМ с
+    // записью сегмента — а лок ровно для этого и заведён (flash_quiet.h).
+    // Держим только вокруг файлового ввода-вывода, без ожиданий коммита внутри.
+    if (!flash_quiet_writer_lock(pdMS_TO_TICKS(200))) {
+        free(snap);
+        return -4;                      // занято другим писателем — повторим позже
+    }
+
+    // Ротация до записи — освобождаем место под новый файл.
+    //
+    // Массивы static, а не на стеке: 2 × 40 × 8 Б = 640 Б, а main-task, откуда
+    // приходит планировщик, имеет самый маленький стек среди задач с флеш-вводом
+    // (CONFIG_ESP_MAIN_TASK_STACK_SIZE=3584 против 8192 у httpd), причём
+    // CONFIG_COMPILER_STACK_CHECK_MODE_NONE — переполнение не поймалось бы.
+    // Гонки нет: функция вызывается только под flash_quiet_writer_lock (взят выше),
+    // который сериализует всех писателей LittleFS.
+    static backup_id_t have[BACKUP_KEEP_MAX * 2];
+    static backup_id_t del[BACKUP_KEEP_MAX * 2];
+    int n = backup_scan(have, (int)(sizeof(have) / sizeof(have[0])));
+    if (n < 0) {
+        // Каталога нет (первый снимок после обновления прошивки) — создаём.
+        if (mkdir(BACKUP_DIR, 0777) != 0 && errno != EEXIST) {
+            ESP_LOGE(TAG, "backup: cannot create %s (errno=%d)", BACKUP_DIR, errno);
+            flash_quiet_writer_unlock();
+            free(snap);
+            return -3;
+        }
+        n = 0;
+    }
+    if (n > (int)(sizeof(have) / sizeof(have[0]))) {
+        ESP_LOGW(TAG, "backup: %d snapshots, scan capped at %d", n,
+                 (int)(sizeof(have) / sizeof(have[0])));
+        n = (int)(sizeof(have) / sizeof(have[0]));
+    }
+    int ndel = backup_rotate_plan(have, n, keep, del, (int)(sizeof(del) / sizeof(del[0])));
+    if (ndel < 0) {
+        ESP_LOGE(TAG, "backup: rotate plan refused (n=%d keep=%d)", n, keep);
+        flash_quiet_writer_unlock();
+        free(snap);
+        return -3;
+    }
+    int nfail = 0;
+    for (int i = 0; i < ndel; i++) {
+        char p[80];
+        snprintf(p, sizeof(p), "%s/" BACKUP_NAME_FMT, BACKUP_DIR, del[i].sess, del[i].seq);
+        if (remove(p) != 0) {
+            nfail++;
+            ESP_LOGW(TAG, "backup: cannot remove %s (errno=%d)", p, errno);
+        } else {
+            ESP_LOGI(TAG, "backup: rotated out %s", p);
+        }
+    }
+    if (nfail > 0 && ndel - nfail == 0) {
+        // Ни один файл не удалён, хотя план требовал: место под новый снимок не
+        // освободилось. Пишем — каталог вырастет сверх keep; молчать нельзя,
+        // иначе рост выглядел бы как «ротация работает».
+        ESP_LOGE(TAG, "backup: rotation removed nothing of %d planned — dir will exceed keep=%d",
+                 ndel, keep);
+    }
+
+    char path[80];
+    snprintf(path, sizeof(path), "%s/" BACKUP_NAME_FMT, BACKUP_DIR, sess, seq);
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        ESP_LOGE(TAG, "backup: cannot create %s", path);
+        flash_quiet_writer_unlock();
+        free(snap);
+        return -3;
+    }
+    size_t wr = fwrite(snap, sizeof(*snap), 1, f);
+    int fc = fclose(f);
+    if (wr != 1 || fc != 0) {
+        // Обрезанный файл хуже отсутствующего: он займёт слот ротации и вытеснит
+        // годный снимок, а прочитаться не сможет.
+        ESP_LOGE(TAG, "backup: write %s failed (wr=%zu fc=%d), removing", path, wr, fc);
+        remove(path);
+        flash_quiet_writer_unlock();
+        free(snap);
+        return -3;
+    }
+    flash_quiet_writer_unlock();
+    ESP_LOGI(TAG, "backup: saved %s (%" PRIu32 " counts, %" PRIu32 "s, keep=%d, rotated=%d)",
+             path, snap->total_counts, snap->total_time_sec, keep, ndel);
+    free(snap);
+    return 0;
+}
+
+int spectrum_backup_load(const char *name, spectrum_data_t *out)
+{
+    backup_id_t id;
+    if (!out || !backup_parse_name(name, &id)) return -1;   // защита от "../" и мусора
+    char path[80];
+    snprintf(path, sizeof(path), "%s/" BACKUP_NAME_FMT, BACKUP_DIR, id.sess, id.seq);
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    size_t rd = fread(out, 1, sizeof(*out), f);
+    fclose(f);
+    if (rd != sizeof(*out)) return -1;
+    sanitize_loaded(out);      // те же гарантии, что и для ручных spec_NNNN.bin
+    return 0;
+}
+
+uint32_t spectrum_backup_max_session(void)
+{
+    DIR *dir = opendir(BACKUP_DIR);
+    if (!dir) return 0;
+    uint32_t max_sess = 0;
+    struct dirent *de;
+    while ((de = readdir(dir)) != NULL) {
+        backup_id_t id;
+        if (!backup_parse_name(de->d_name, &id)) continue;
+        if (id.sess > max_sess) max_sess = id.sess;
+    }
+    closedir(dir);
+    return max_sess;
+}
+
+int spectrum_backup_delete(const char *name)
+{
+    backup_id_t id;
+    if (!backup_parse_name(name, &id)) return -1;
+    char path[80];
+    snprintf(path, sizeof(path), "%s/" BACKUP_NAME_FMT, BACKUP_DIR, id.sess, id.seq);
+    if (remove(path) != 0) return -1;
+    ESP_LOGI(TAG, "backup: deleted %s", path);
+    return 0;
+}
+// ─── конец issue #52 ──────────────────────────────────────────────────────────
+
 int spectrum_load_from_flash(int index, spectrum_data_t *out)
 {
     char path[64];
@@ -656,7 +853,9 @@ int spectrum_load_from_flash(int index, spectrum_data_t *out)
     if (!f) return -1;
     size_t rd = fread(out, 1, sizeof(*out), f);
     fclose(f);
-    return (rd == sizeof(*out)) ? 0 : -1;
+    if (rd != sizeof(*out)) return -1;
+    sanitize_loaded(out);
+    return 0;
 }
 
 // #WF-1: флеш-запись калибровки вынесена из-под SPEC_LOCK и из CDC/httpd-тасков.
@@ -1064,7 +1263,6 @@ int spectrum_delete_from_flash(int index)
     ESP_LOGI(TAG, "Deleted %s", path);
     return 0;
 }
-
 // #FW-53: см. декларацию в atomspectra.h. Читается из HTTP-контекста, поэтому
 // под тем же SPEC_LOCK, что и остальные публикуемые поля.
 void spectrum_get_sweep_stats(uint32_t *commits, uint32_t *drops)

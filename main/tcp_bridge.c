@@ -121,6 +121,9 @@ static void tcp_rx_task(void *arg)
             FD_UNLOCK();
             continue;
         }
+        // Прибором управляет внешнее приложение: шлюз не знает, запущен ли набор,
+        // и сторож набора не должен перебивать его «Стоп» своим -sta.
+        usb_host_cdc_acq_intent_external();
         usb_host_cdc_send(buf, n);
     }
 }
