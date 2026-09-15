@@ -4,17 +4,23 @@
 
 PORT=''
 
+TARGET=`grep HOSTN sdkconfig.defaults | sed -e 's/^.*="//;s/"//;s/atomspectra-gw-//'`
+if [ ."$1" != ."" ] ; then
+	TARGET="$1"
+fi
+echo target: $TARGET
 
-if [ ."$1" = ."n15" ] ; then
+
+if [ ."$TARGET" = ."n15" ] ; then
 	PORT=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4D029186-if00
 fi
 
-if [ ."$1" = ."gs" ] ; then
+if [ ."$TARGET" = ."gs" ] ; then
 	PORT=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4D036896-if00
 fi
 
-if [ -n "$1" -a -e "$1" ] ; then
-	PORT="$1"
+if [ -n "$TARGET" -a -e "$TARGET" ] ; then
+	PORT="$TARGET"
 fi
 
 if [ -z "$PORT" -a  -e /dev/serial/by-id/usb-1a86_USB_Single_Serial_5C4D036896-if00 ] ; then	# spectra-gs
