@@ -140,6 +140,68 @@ The instrument serial number (`serial_number`) stays empty after connection.
 
 **Workaround:** the serial number can be set manually via the Web UI (calibration panel).
 
+### issue #52: a backup snapshot is written at an arbitrary phase of USB reception
+
+**Status:** limitation by design (v1.2.23)
+
+An automatic spectrum snapshot (33 KB on LittleFS) is written when its period elapses, without
+waiting for the end of a sweep — unlike the `current.bin` autosave, which waits for a sweep commit
+(#FW-13) so the write lands in the quiet USB window. A flash write freezes the cache of both
+cores, so a snapshot may cost one dropped sweep (`histogram sweep dropped`).
+
+**Why:** the autosave runs once a minute, a snapshot once in hours (1 hour minimum). The price is
+up to one sweep out of ~3600 per hour; phase-locking is not worth the complexity. The snapshot is
+taken under `http_io_gate` (like the "Save" button) and under `flash_quiet_writer_lock` (like the
+autosave and waterfall segment writes), so it does not compete with other LittleFS writers — only
+the PHASE relative to a sweep is not locked.
+
+**Impact:** negligible loss of acquisition completeness. With the period set in minutes (bench-only
+key `backup_test_minutes` in `/api/boot-config`, not exposed in the Web UI) the loss becomes
+noticeable — that mode is for testing, not for measurements.
+
+### issue #52: URI handler table overflow stays silent
+
+**Status:** open (diagnostics)
+
+When `config.max_uri_handlers` is exhausted, `httpd_register_uri_handler` returns an error the
+code never checks: the route is silently not registered and clients get a 404 with nothing in the
+log. The route that breaks is the LAST one in the table, not the one just added — so the search
+starts in the wrong place. The limit is currently 80 against 73 actual routes (see the comment at
+`config.max_uri_handlers` in `web_server.c`, which carries the commands to recount). Fix: log the
+registration failure.
+
+### "Reboot instrument" wipes the accumulated spectrum
+
+**Status:** open (v1.2.23)
+
+On reboot the instrument clears its histogram, and the gateway accepts that reset: the current
+spectrum on the board (`current.bin`) starts over. On the bench on 2026-09-14 this lost 94 h of
+acquisition; the backup snapshots (issue #52) survived, so only the time since the latest of them was lost.
+Snapshots are off by default (`backup_keep` = 0) — then nothing survives except manually saved
+spectra. The button asks for confirmation but does not warn about losing the spectrum and takes no
+snapshot before sending the command. **Save the
+spectrum manually before rebooting the instrument** ("Save" on the "Spectrum" page).
+
+### The acquisition watchdog is inactive after TCP-client commands and after `-sta` with parameters
+
+**Status:** limitation by design (v1.2.23)
+
+Since v1.2.23 the gateway notices when acquisition stops on its own (e.g. after an instrument
+reboot): if its own last command was "Start" and no histogram arrives for 20 s, it resends `-sta`
+(at most once per 20 s; counter `acq_resend_count` in `/api/usb-diag`). Before v1.2.23 such a stall
+went unnoticed: the RX watchdog saw the FTDI's continuous 2-byte status and considered the link
+alive. The "Reboot instrument"
+button marks acquisition as running before the command if histograms were arriving.
+
+The watchdog stays silent whenever the gateway cannot tell whether acquisition is meant to run:
+- after ANY bytes from a TCP client (the AtomSpectra app via the TCP bridge) — also after the client
+  disconnects, until the gateway itself sends "Start" again;
+- after `-sta` with parameters (`-sta 60`, `-sta -s`): a timed or "silent" acquisition stops or stays
+  quiet by design, and resending a bare `-sta` would break it;
+- after "Stop" — otherwise it would override the user's stop.
+
+Acquisition started by anything other than the gateway is not guarded either.
+
 ---
 
 ## Fixed

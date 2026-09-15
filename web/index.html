@@ -39,7 +39,10 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 .btn.green{ background:var(--accent-dim); border-color:rgba(52,211,192,.5); color:var(--accent); font-weight:600; }
 .btn.amber{ background:rgba(240,180,60,.08); border-color:rgba(240,180,60,.45); color:#f0c45a; }
 .btn.red{ background:rgba(240,90,80,.07); border-color:rgba(240,90,80,.45); color:#ff8a82; }
-.btn:hover{ filter:brightness(1.2); }
+.btn:hover:not(:disabled){ filter:brightness(1.2); }
+.btn:disabled{ opacity:.4; cursor:default; }  /* #UI-44: как на «Водопаде» — погашенная кнопка = текущее состояние */
+#acq-state{ border:1px solid; border-radius:8px; padding:6px 12px; font-size:12.5px; line-height:1; white-space:nowrap; align-self:center; }
+#acq-state.rec{ color:#ff5247; font-weight:600; } #acq-state.st{ color:#aeb6a8; }  /* цвета = waterfall.html:48 */
 .seg{ display:flex; border:1px solid #2a322a; border-radius:7px; overflow:hidden; }
 .seg button{ padding:7px 14px; font-size:12px; cursor:pointer; border:none; background:transparent; color:#9aa496; }
 .seg button.on{ background:var(--accent); color:#0c1206; font-weight:700; }
@@ -94,9 +97,10 @@ table.saved tr.on td{ background:rgba(110,168,255,.07); }
 <section class="panel">
 <div class="row">
 <div class="grp">
-<button class="btn green" onclick="startAcq()" data-i18n-html="btn.start">&#9654; Старт</button>
-<button class="btn amber" onclick="stopAcq()" data-i18n-html="btn.stop">&#9632; Стоп</button>
+<button class="btn green" id="bStart" onclick="startAcq()" data-i18n-html="btn.start">&#9654; Старт</button>
+<button class="btn amber" id="bStop" onclick="stopAcq()" data-i18n-html="btn.stop">&#9632; Стоп</button>
 <button class="btn red" onclick="resetSpectrum()" data-i18n-html="btn.reset">&#8634; Сброс</button>
+<span class="st" id="acq-state">&hellip;</span>
 </div>
 <div class="ml" style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
 <span class="big" id="big-time">00:00:00</span><span class="mut">|</span>
@@ -193,6 +197,7 @@ var DICT={
   "flash.label":"⚙ Flash LittleFS",
   "flash.fmt":"%1 / %2 КБ (%3%) &middot; свободно %4 КБ",
   "btn.start":"&#9654; Старт","btn.stop":"&#9632; Стоп","btn.reset":"&#8634; Сброс",
+  "acq.run":"● НАБОР","acq.stop":"○ стоп",
   "btn.save":"&#128190; Сохранить",
   "btn.expXml":"Export XML","btn.expCsv":"Export CSV","btn.expN42":"Export N42","btn.expSpe":"Export SPE",
   "btn.clearOvl":"Снять overlay",
@@ -240,6 +245,7 @@ var DICT={
   "flash.label":"⚙ Flash LittleFS",
   "flash.fmt":"%1 / %2 KB (%3%) &middot; free %4 KB",
   "btn.start":"&#9654; Start","btn.stop":"&#9632; Stop","btn.reset":"&#8634; Reset",
+  "acq.run":"● ACQ","acq.stop":"○ stop",
   "btn.save":"&#128190; Save",
   "btn.expXml":"Export XML","btn.expCsv":"Export CSV","btn.expN42":"Export N42","btn.expSpe":"Export SPE",
   "btn.clearOvl":"Clear overlay",
@@ -380,6 +386,7 @@ async function update(){
   var rb=await fetch("/api/spectrum");
   var rm=await fetch("/api/spectrum/meta.json");
   if(!rb.ok||!rm.ok){
+   acqStale();  /* #UI-44 */
    var deadHdr=(rm.headers&&rm.headers.get("X-Spectrometer-Dead"))||(rb.headers&&rb.headers.get("X-Spectrometer-Dead"));
    setDeadBanner(deadHdr==="1");
    if(++failStreak>=3||!lastD){clearCanvas();document.getElementById("status").textContent=tr("status.nodata");}
@@ -393,6 +400,7 @@ async function update(){
   if(d.serial)document.getElementById("device-chip").textContent=d.serial;
   document.getElementById("ip-chip").textContent=location.hostname;
   lastD=d;
+  acqObserve(d.time);  /* #UI-44 */
   setDeadBanner(!!d.dead);  /* #FW-43 */
   var stEl=document.getElementById("status");
   var lv=(typeof d.live==="number")?d.live:d.time;
@@ -414,7 +422,7 @@ async function update(){
   document.getElementById("big-total").textContent=d.total.toLocaleString(lcl());
   if(doseK>0){var bigDr=(d.cps*doseK).toFixed(3);document.getElementById("big-dose").textContent=bigDr;document.getElementById("big-dose-sep").style.display="";document.getElementById("big-dose-wrap").style.display="";}else{document.getElementById("big-dose-sep").style.display="none";document.getElementById("big-dose-wrap").style.display="none";}
   draw(d);
- }catch(e){if(++failStreak>=3||!lastD){clearCanvas();setDeadBanner(false);document.getElementById("status").textContent=tfmt("err.prefix",e);}}  /* #UI-2: таймаут/сбой сети не гасит последний спектр; гасим лишь после >=3 подряд */
+ }catch(e){acqStale();if(++failStreak>=3||!lastD){clearCanvas();setDeadBanner(false);document.getElementById("status").textContent=tfmt("err.prefix",e);}}  /* #UI-2: таймаут/сбой сети не гасит последний спектр; гасим лишь после >=3 подряд */
  finally{pollDevLog();}   /* #UI-2: devlog (#UI-1) теперь ПОСЛЕ спектра, не конкурентно — устраняет лишний сокет → меньше 503 */
 }
 
@@ -602,8 +610,54 @@ async function loadSaved(retry){
  }
 }
 async function delSaved(idx){if(!confirm(tfmt("confirm.del",idx)))return;await post("/api/saved/"+idx+"/delete");lg(tfmt("log.del",idx));if(overlayIdx===idx)clearOverlay();loadSaved();loadFlashInfo()}
-async function startAcq(){await post("/api/command",{body:"-sta"});lg(tr("log.start"))}
-async function stopAcq(){await post("/api/command",{body:"-sto"});lg(tr("log.stop"))}
+/* #UI-44: состояние набора для кнопок Старт/Стоп. Флага «идёт набор» прошивка не отдаёт
+   (`mode` в /api/status при -sto и -sta одинаков, проверено на плате 14.09), зато счётчик
+   реального времени прибора `time` в meta.json растёт только во время набора и замирает
+   после -sto. Окно 6 с больше периода опроса (2 с) и кэша ответа сервера (2 с), иначе
+   кнопки мигали бы на повторном кадре. До первых 6 с наблюдения состояние неизвестно —
+   обе кнопки активны. После нажатия 4 с держим выбранное состояние: запоздалый кадр из
+   кэша ещё несёт старое `time` и перекинул бы кнопку обратно.
+   После «Стоп» кадры ещё несколько секунд догоняют реальную точку остановки: у страницы на
+   руках кадр, отстающий до ~4 с (опрос 2 с + кэш 2 с), и прибор встаёт не мгновенно. Порог
+   по величине скачка не годится (проверено на плате 14.09: и без порога, и с порогом 3 с
+   кнопка снова мигала «набор»). Поэтому после «Стоп» рост игнорируется, пока не придут ДВА
+   кадра подряд без роста (≥4 с) — они доказывают, что прибор встал и кэш догнал. Один кадр
+   не доказывает: при опросе 2 с и кэше 2 с повтор кадра бывает и посреди догоняющего роста.
+   Если так и не встал за 6 с после окончания удержания — команда не сработала, показываем
+   фактический набор. Уменьшение `time` (Сброс) отметку снимает. */
+var acqT=null, acqGrowTs=0, acqSince=0, acqHold=0, acqStopWait=false, acqFlat=0, acqFrameTs=0;
+/* Кадров нет дольше 6 с (связь пропала, 404 после «Сброс») — состояние неизвестно, обе кнопки
+   активны: иначе индикатор навсегда застывает в последнем состоянии (ревью 14.09). */
+function acqStale(){ if(acqT!==null&&Date.now()-acqFrameTs>6000)setAcqBtns(null); }
+function setAcqBtns(run){
+ var s=document.getElementById("bStart"), p=document.getElementById("bStop");
+ if(!s||!p)return;
+ s.disabled=(run===true); p.disabled=(run===false);
+ var st=document.getElementById("acq-state"); if(!st)return;
+ st.textContent=(run===null)?"…":(run?tr("acq.run"):tr("acq.stop"));
+ st.className=run?"rec":"st";
+}
+function acqObserve(t){
+ if(typeof t!=="number")return;
+ var now=Date.now(); acqFrameTs=now;
+ if(acqT===null){acqT=t;acqSince=now;setAcqBtns(null);return;}
+ if(t<acqT)acqStopWait=false;
+ else if(acqStopWait){ acqFlat=(t===acqT)?acqFlat+1:0; if(acqFlat>=2||now-acqHold>6000){acqStopWait=false;acqFlat=0;} }
+ else if(t>acqT)acqGrowTs=now;
+ acqT=t;
+ if(now<acqHold)return;
+ if(acqGrowTs&&now-acqGrowTs<6000)setAcqBtns(true);
+ else if(now-acqSince>=6000)setAcqBtns(false);
+ else setAcqBtns(null);
+}
+function acqUserSet(run){
+ var now=Date.now(); acqHold=now+4000;
+ if(run){acqGrowTs=now;acqStopWait=false;}
+ else{acqGrowTs=0;acqSince=now-6000;acqStopWait=true;}
+ setAcqBtns(run);
+}
+async function startAcq(){acqUserSet(true);await post("/api/command",{body:"-sta"});lg(tr("log.start"))}
+async function stopAcq(){acqUserSet(false);await post("/api/command",{body:"-sto"});lg(tr("log.stop"))}
 async function resetSpectrum(){clearCanvas();lastD=null;document.getElementById("big-time").textContent="00:00:00";document.getElementById("big-cps").textContent="0";document.getElementById("big-total").textContent="0";await post("/api/reset");lg(tr("log.reset"))}
 async function saveSpectrum(){var r=await(await post("/api/save")).json();
  if(r.ok){lg(tfmt("saved.savedAs",r.index));loadSaved();loadFlashInfo();return}
