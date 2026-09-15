@@ -124,6 +124,8 @@ var DICT={
   "meta.saved":"Сохранено","meta.ch":"Каналы","meta.cal":"Калибровка",
   "list.title":"Список","list.loading":"Загрузка...",
   "list.empty":"Нет сохранённых спектров",
+  "list.autoTitle":"Автоматические копии",
+  "confirm.delBk":"Удалить резервную копию %1?",
   "list.err":"Ошибка: ",
   "cnt.saved":"Сохранено: %1",
   "cnt.items":"%1 шт.",
@@ -146,6 +148,8 @@ var DICT={
   "meta.saved":"Saved","meta.ch":"Channels","meta.cal":"Calibration",
   "list.title":"List","list.loading":"Loading...",
   "list.empty":"No saved spectra",
+  "list.autoTitle":"Automatic backups",
+  "confirm.delBk":"Delete backup %1?",
   "list.err":"Error: ",
   "cnt.saved":"Saved: %1",
   "cnt.items":"%1 pcs",
@@ -180,6 +184,10 @@ function setLang(l){
 }
 
 var csrfToken="", spectra=[], currentIdx=-1, currentData=null, calib=null, currentMeta=null;
+/* issue #52: автоснимки адресуются именем ("bk_3_2"), а не индексом, поэтому
+   выбранный элемент описывается парой (вид, ключ), а не одним currentIdx. */
+var backups=[], curKind="spec", curName="";
+function apiBase(){return curKind==="bk"?("/api/backup/"+curName):("/api/saved/"+currentIdx);}
 
 function fmtTime(s){var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),x=s%60;return(h>0?h+t("time.h")+" ":"")+(m>0?m+t("time.m")+" ":"")+x+t("time.s")}
 function fmtDate(ts){return ts>0?new Date(ts*1000).toLocaleString(lcl()):'—'}
@@ -212,18 +220,35 @@ async function loadList(){
   var r=await(await fetch("/api/list")).json();
   spectra=r.spectra||[];
   spectra.sort(function(a,b){return (b.saved_at||0)-(a.saved_at||0);});
-  document.getElementById("cnt-text").textContent=tfmt("cnt.saved",spectra.length);
-  document.getElementById("list-cnt").textContent=tfmt("cnt.items",spectra.length);
+  /* issue #52: автоснимки идут отдельной группой ниже ручных. Сортировка по
+     (сессия, номер), а не по saved_at: без интернета часы платы могут стоять,
+     и одинаковые метки времени перемешали бы порядок съёмки. */
+  backups=r.backups||[];
+  backups.sort(function(a,b){return (b.session-a.session)||(b.seq-a.seq);});
+  var totalN=spectra.length+backups.length;
+  document.getElementById("cnt-text").textContent=tfmt("cnt.saved",totalN);
+  document.getElementById("list-cnt").textContent=tfmt("cnt.items",totalN);
   var el=document.getElementById("list");
-  if(spectra.length===0){el.innerHTML='<div class="empty">'+t("list.empty")+'</div>';return}
+  if(totalN===0){el.innerHTML='<div class="empty">'+t("list.empty")+'</div>';return}
   var html='';
   for(var i=0;i<spectra.length;i++){
    var s=spectra[i];
-   var on=s.index===currentIdx?' on':'';
+   var on=(curKind==="spec"&&s.index===currentIdx)?' on':'';
    html+='<div class="item'+on+'" data-idx="'+s.index+'" onclick="selectIdx('+s.index+')">'+
     '<div class="hd"><b>#'+s.index+'</b><span class="lbl">'+fmtDate(s.saved_at)+'</span></div>'+
     '<div class="sub"><span>'+fmtNum(s.counts)+' counts</span><span>'+fmtTime(s.time)+'</span></div>'+
     '</div>';
+  }
+  if(backups.length){
+   html+='<div class="empty" style="text-align:left;padding:9px 12px 5px;color:#7c887c">'+t("list.autoTitle")+'</div>';
+   for(var j=0;j<backups.length;j++){
+    var b=backups[j];
+    var onb=(curKind==="bk"&&b.name===curName)?' on':'';
+    html+='<div class="item'+onb+'" data-bk="'+b.name+'" onclick="selectBackup(&quot;'+b.name+'&quot;)">'+
+     '<div class="hd"><b>S'+b.session+'/'+b.seq+'</b><span class="lbl">'+fmtDate(b.saved_at)+'</span></div>'+
+     '<div class="sub"><span>'+fmtNum(b.counts)+' counts</span><span>'+fmtTime(b.time)+'</span></div>'+
+     '</div>';
+   }
   }
   el.innerHTML=html;
  }catch(e){document.getElementById("list").innerHTML='<div class="empty">'+t("list.err")+e+'</div>'}
@@ -246,22 +271,43 @@ function refreshMeta(){
 }
 
 async function selectIdx(idx){
- currentIdx=idx;
+ currentIdx=idx; curKind="spec"; curName="";
  var items=document.querySelectorAll(".item");
  for(var i=0;i<items.length;i++){items[i].classList.toggle("on",parseInt(items[i].dataset.idx)===idx);}
  document.getElementById("dt-idx").textContent="#"+idx;
  currentMeta=spectra.find(function(s){return s.index===idx;})||null;
+ await loadSelected(tfmt("err.load",idx,""));
+}
+
+/* issue #52: тот же просмотр для автоснимка — отличается только адрес. */
+async function selectBackup(name){
+ curKind="bk"; curName=name; currentIdx=-1;
+ var items=document.querySelectorAll(".item");
+ for(var i=0;i<items.length;i++){items[i].classList.toggle("on",items[i].dataset.bk===name);}
+ currentMeta=backups.find(function(b){return b.name===name;})||null;
+ document.getElementById("dt-idx").textContent=currentMeta
+   ?("S"+currentMeta.session+"/"+currentMeta.seq):name;
+ await loadSelected(tfmt("err.load",name,""));
+}
+
+/* Общая часть обоих выборов: тянем спектр, рисуем, подставляем ссылки выгрузки. */
+async function loadSelected(errPrefix){
+ var base=apiBase();
  try{
-  var d=await(await fetch("/api/saved/"+idx+"/spectrum.json")).json();
+  var d=await(await fetch(base+"/spectrum.json")).json();
   currentData=d;
   drawChart(d);
   document.getElementById("dt-actions").style.display="";
-  document.getElementById("lnk-xml").href="/api/saved/"+idx+"/export.xml";
-  document.getElementById("lnk-csv").href="/api/saved/"+idx+"/export.csv";
+  /* issue #52: Overlay на «Спектр» адресует спектр индексом (?overlay=N) —
+     для автоснимка такого индекса нет, кнопку прячем, а не ломаем ссылку. */
+  var ov=document.querySelector('[data-i18n="btn.overlay"]');
+  if(ov)ov.style.display=(curKind==="bk")?"none":"";
+  document.getElementById("lnk-xml").href=base+"/export.xml";
+  document.getElementById("lnk-csv").href=base+"/export.csv";
   refreshMeta();
  }catch(e){
   document.getElementById("dt-actions").style.display="none";
-  alert(tfmt("err.load",idx,e));
+  alert(errPrefix+e);
  }
 }
 
@@ -313,10 +359,13 @@ function drawChart(d){
 }
 
 async function deleteCurrent(){
- if(currentIdx<0)return;
- if(!confirm(tfmt("confirm.del",currentIdx)))return;
- await post("/api/saved/"+currentIdx+"/delete");
- currentIdx=-1; currentData=null; currentMeta=null;
+ /* issue #52: удаляем то, что выбрано — ручной спектр или автоснимок. */
+ var isBk=(curKind==="bk"&&curName);
+ if(!isBk&&currentIdx<0)return;
+ var label=isBk?(currentMeta?("S"+currentMeta.session+"/"+currentMeta.seq):curName):currentIdx;
+ if(!confirm(tfmt(isBk?"confirm.delBk":"confirm.del",label)))return;
+ await post(isBk?("/api/backup/"+curName):("/api/saved/"+currentIdx+"/delete"));
+ currentIdx=-1; curKind="spec"; curName=""; currentData=null; currentMeta=null;
  document.getElementById("dt-idx").textContent=t("view.placeholder");
  document.getElementById("dt-when").textContent="";
  document.getElementById("dt-actions").style.display="none";
