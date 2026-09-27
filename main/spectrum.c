@@ -105,6 +105,9 @@ static uint32_t  s_dev_resets;                    // #7: счётчик свор
 static spectrum_hist_stage_t s_hist_stage;        // непрерывность свипа (idle = UINT32_MAX)
 static uint32_t  s_reset_gen;                     // AUD-ASW126 #1/#12: httpd Reset
 static uint32_t  s_stage_reset_gen;               // снимок gen на offset==0 (CDC)
+// AWF-4: момент spectrum_reset() (esp_timer, мкс) — гейт правдоподобности STAT
+// на первом коммите после Reset (spectrum_reset_stat_is_plausible).
+static int64_t   s_reset_at_us;
 static uint32_t  s_hist_commits = 0;              // опубликованных полных свипов
 static uint32_t  s_hist_drops = 0;                // отброшенных рваных свипов
 typedef struct {
@@ -340,6 +343,22 @@ void spectrum_process_histogram_chunk(const uint8_t *data, size_t len)
             // AWF-3: свернуть базу (если прибор перезапустился), слить
             // база+свип, обновить время (#FW-12, обобщено на dev-время).
             bool stat_fresh = s_stat_stage.fresh;
+            // AWF-4: первый коммит после Reset (valid=false) не имеет
+            // prev/expected для сверки — застейдженный STAT старого набора
+            // (обычный порядок ИЛИ гонка: пришёл ПОСЛЕ spectrum_reset(), но
+            // ДО того как прибор обработал -rst) не может быть правдоподобен
+            // относительно реального времени, прошедшего с Reset.
+            if (stat_fresh && !s_spectrum.valid) {
+                uint32_t elapsed_since_reset_s =
+                    (uint32_t)((esp_timer_get_time() - s_reset_at_us) / 1000000);
+                if (!spectrum_reset_stat_is_plausible(s_stat_stage.total_time_sec,
+                                                       elapsed_since_reset_s)) {
+                    stat_fresh = false;
+                    ESP_LOGW(TAG, "Reset: stale staged STAT (t=%" PRIu32 "s, elapsed=%" PRIu32
+                             "s) ignored on first post-reset commit",
+                             s_stat_stage.total_time_sec, elapsed_since_reset_s);
+                }
+            }
             // R1 (ревью-3): двусмысленный коммит (без STAT, count не сказал
             // «сброс») — не публикуем, ждём следующего (spectrum_base_plan.h).
             if (s_base_bins &&
@@ -683,6 +702,7 @@ void spectrum_reset(void)
         ESP_LOGW(TAG, "Reset: base.bin.tmp unlink failed (errno=%d)", errno);
     SPEC_LOCK();
     s_reset_gen++;
+    s_reset_at_us = esp_timer_get_time();   // AWF-4: t0 для гейта правдоподобности STAT
     memset(s_spectrum.bins, 0, sizeof(s_spectrum.bins));
     s_spectrum.total_counts = 0;
     s_spectrum.total_time_sec = 0;

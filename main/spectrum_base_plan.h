@@ -129,3 +129,17 @@ static inline bool spectrum_base_commit(spectrum_base_state_t *st, const uint32_
     st->shown_counts = spectrum_base_merge(st->base_counts, dev_total);
     return reset;
 }
+
+// AWF-4 (живой баг 27.09): Reset -> время продолжает от старого набора.
+// Первый коммит после Reset (valid=false) не имеет prev/expected для сверки
+// (#FW-12 клэмп в commit_apply_time_stat_fresh_locked работает только при
+// valid=true) — застейдженный STAT старого набора, переживший Reset (обычный
+// порядок ИЛИ гонка: STAT ушёл ПОСЛЕ spectrum_reset(), но ДО -rst на приборе),
+// принимался абсолютом. Правило: правдоподобное время STAT на первом
+// коммите после Reset не может превышать реально прошедшее с Reset (elapsed)
+// + допуск на джиттер (тот же SPECTRUM_BASE_RESET_TOLERANCE_S).
+static inline bool spectrum_reset_stat_is_plausible(uint32_t stat_time_sec,
+                                                      uint32_t elapsed_since_reset_sec)
+{
+    return stat_time_sec <= elapsed_since_reset_sec + SPECTRUM_BASE_RESET_TOLERANCE_S;
+}

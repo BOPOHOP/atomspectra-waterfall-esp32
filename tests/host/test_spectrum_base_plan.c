@@ -175,6 +175,39 @@ static void test_r1_defer_and_two_commit_sequence(void)
     CHECK(st.shown_counts == 300000);   // РОВНО 300000, не 400600/300600
 }
 
+// AWF-4: живой баг 27.09 (Reset -> время продолжает от старого набора).
+// Коммит1: STAT застейджен старым (t=2410с), реально с Reset прошло 1с ->
+// spectrum_reset_stat_is_plausible ОБЯЗАН отклонить (гейт caller'а,
+// spectrum.c). Без свежего STAT и без сброса по count — коммит ОТЛОЖЕН
+// (R1). Коммит2: настоящий свежий STAT (t=6с, elapsed=6с) — база НЕ
+// сворачивается в 2410, dev_resets не растёт.
+static void test_awf4_reset_stat_race(void)
+{
+    uint32_t base_bins[3]  = {0, 0, 0};
+    uint32_t shown_bins[3] = {0, 0, 0};
+    spectrum_base_state_t st = { base_bins, 0, 0, shown_bins, 0, 0 };
+
+    bool stat_fresh1 = spectrum_reset_stat_is_plausible(2410, 1);
+    CHECK(!stat_fresh1);   // гейт отклонил старый STAT
+
+    uint32_t dev_bins1[3] = {5, 4, 3};   // первый мелкий свип, сумма 12
+    CHECK(spectrum_base_commit_should_defer(12, st.base_counts, st.shown_counts, stat_fresh1));
+    CHECK(st.shown_counts == 0 && st.base_counts == 0);   // коммит1 пропущен
+
+    (void)dev_bins1;
+    bool stat_fresh2 = spectrum_reset_stat_is_plausible(6, 6);
+    CHECK(stat_fresh2);
+
+    uint32_t dev_bins2[3] = {8, 7, 9};   // растёт с прошлого свипа, сумма 24
+    CHECK(!spectrum_base_commit_should_defer(24, st.base_counts, st.shown_counts, stat_fresh2));
+    bool did_reset = spectrum_base_commit(&st, dev_bins2, 24, 3, stat_fresh2, 6);
+
+    CHECK(!did_reset);          // dev_resets НЕ растёт
+    CHECK(st.base_time == 0);   // база НЕ свернулась в старое время 2410
+    CHECK(st.base_counts == 0);
+    CHECK(st.shown_counts == 24);
+}
+
 void spectrum_base_plan_suite(void)
 {
     test_reset_detection();
@@ -187,4 +220,5 @@ void spectrum_base_plan_suite(void)
     test_n2_count_grew_time_catches();
     test_r1_defer_predicate();
     test_r1_defer_and_two_commit_sequence();
+    test_awf4_reset_stat_race();
 }
