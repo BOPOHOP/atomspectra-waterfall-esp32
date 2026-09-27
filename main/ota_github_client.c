@@ -4,6 +4,7 @@
 #include "ota_github_parse.h"
 #include "ota_github_sha256sums.h"
 #include "ota_github_decision.h"
+#include "ota_github_redirect.h"
 #include "ota_busy.h"
 #include "ota_image_check.h"
 #include "atomspectra.h"      // wifi_is_connected()
@@ -94,6 +95,28 @@ static void set_progress(ota_gh_state_t st, uint32_t bytes, uint32_t total, cons
     if (s_lock) xSemaphoreGive(s_lock);
 }
 
+// AWF-5 fix (найдено живым прогоном на плате): esp_http_client_open()+
+// fetch_headers() БЕЗ perform() редиректы не обрабатывают -- GitHub отдаёт
+// 30x на оба ассета релиза, install падал на первом же скачивании. Решение
+// "продолжать/стоп" -- чистая ota_http_redirect_decide() (host-тестируема).
+#define OTA_GH_MAX_REDIRECTS 10
+static esp_err_t http_open_with_redirects(esp_http_client_handle_t cl, int64_t *out_clen)
+{
+    for (int hop = 0; ; hop++) {
+        esp_err_t err = esp_http_client_open(cl, 0);
+        if (err != ESP_OK) return err;
+        int64_t clen = esp_http_client_fetch_headers(cl);
+        int status = esp_http_client_get_status_code(cl);
+        ota_http_redirect_action_t act = ota_http_redirect_decide(status, hop, OTA_GH_MAX_REDIRECTS);
+        if (act == OTA_HTTP_REDIRECT_STOP_OK) { *out_clen = clen; return ESP_OK; }
+        esp_http_client_close(cl);
+        if (act == OTA_HTTP_REDIRECT_STOP_FAIL) return ESP_FAIL;
+        // CONTINUE: Location уже распарсен esp-idf при fetch_headers() -- set_redirection
+        // переставляет URL клиента на него, дальше открываем заново.
+        if (esp_http_client_set_redirection(cl) != ESP_OK) return ESP_FAIL;
+    }
+}
+
 // Скачивает url целиком в буфер PSRAM (heap_caps_malloc/realloc,
 // MALLOC_CAP_SPIRAM), растущий по мере чтения -- на GitHub API
 // Content-Length не гарантирован (chunked), на объектах релиза обычно есть,
@@ -117,14 +140,9 @@ static esp_err_t http_get_alloc(const char *url, char **out_buf, size_t *out_len
     if (!cl) return ESP_ERR_NO_MEM;
     esp_http_client_set_header(cl, "User-Agent", "atomspectra-waterfall-esp32");
 
-    esp_err_t err = esp_http_client_open(cl, 0);
+    int64_t clen;
+    esp_err_t err = http_open_with_redirects(cl, &clen);
     if (err != ESP_OK) { esp_http_client_cleanup(cl); return err; }
-    int64_t clen = esp_http_client_fetch_headers(cl);
-    int status = esp_http_client_get_status_code(cl);
-    if (status < 200 || status >= 300) {
-        esp_http_client_close(cl); esp_http_client_cleanup(cl);
-        return ESP_FAIL;
-    }
     size_t cap = (clen > 0) ? (size_t)clen + 1 : 4096;
     if (max_len && cap > max_len) cap = max_len + 1;
     char *buf = heap_caps_malloc(cap, MALLOC_CAP_SPIRAM);
@@ -313,14 +331,9 @@ static void install_task(void *arg)
     esp_http_client_handle_t cl = esp_http_client_init(&hc);
     if (!cl) { install_fail(ota, "oom"); goto done; }
     esp_http_client_set_header(cl, "User-Agent", "atomspectra-waterfall-esp32");
-    if (esp_http_client_open(cl, 0) != ESP_OK) {
-        esp_http_client_cleanup(cl); install_fail(ota, "asset_open_failed"); goto done;
-    }
-    int64_t clen = esp_http_client_fetch_headers(cl);
-    int status = esp_http_client_get_status_code(cl);
-    if (status < 200 || status >= 300) {
-        esp_http_client_close(cl); esp_http_client_cleanup(cl);
-        install_fail(ota, "asset_http_status"); goto done;
+    int64_t clen;
+    if (http_open_with_redirects(cl, &clen) != ESP_OK) {   // AWF-5 fix -- см. http_open_with_redirects
+        esp_http_client_cleanup(cl); install_fail(ota, "asset_http_status"); goto done;
     }
     if (clen > 0 && (size_t)clen > update->size) {
         esp_http_client_close(cl); esp_http_client_cleanup(cl);
