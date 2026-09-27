@@ -41,20 +41,16 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 .chip.lang:hover{ filter:brightness(1.15); }
 .boot-row{ display:flex; align-items:center; gap:9px; padding:8px 0; font-size:12.5px; cursor:pointer; border-bottom:1px solid #161c15; color:#dfe5dc; }
 .boot-row input{ width:16px; height:16px; accent-color:var(--accent); cursor:pointer; flex-shrink:0; }
-/* #AWF-6: grid-area на каждой карточке (как в web/system.html). */
-.sys-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px;
- grid-template-areas:
-  "plata wifi  boot"
-  "pribor field dose"
-  ".     tz    ."
-  ".     tcp   ."
-  "fw    fw    fw"
-  "danger danger danger"; }
+/* #AWF-7: три flex-колонки вместо grid-areas (как в web/system.html) — карточки
+   идут плотно сверху вниз без растяжения по высоте. */
+.sys-stack{ display:flex; flex-direction:column; gap:14px; }
+.sys-cols{ display:flex; gap:14px; align-items:flex-start; }
+.sys-col{ flex:1 1 0; min-width:0; display:flex; flex-direction:column; gap:14px; }
+.sys-col > .panel{ margin:0; align-self:stretch; }
 .danger-row{ display:flex; gap:10px; flex-wrap:wrap; }
 .danger-row .btn{ width:auto; flex:1 1 200px; margin-top:0; }
-@media(max-width:760px){
- .sys-grid{ grid-template-columns:1fr;
-  grid-template-areas:"plata" "pribor" "fw" "wifi" "field" "tz" "tcp" "boot" "dose" "danger"; }
+@media(max-width:900px){
+ .sys-cols{ flex-direction:column; }
 }
 </style>
 </head>
@@ -74,11 +70,13 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 
 <div class="wrap">
 
-<!-- #AWF-6: grid-area на каждой карточке -- порядок задаёт CSS (.sys-grid),
-     не расположение тегов ниже (см. web/system.html для образца). -->
-<div class="sys-grid">
+<!-- #AWF-7: три flex-колонки (Состояние/Сеть и время/Настройки) -- порядок
+     задаёт .sys-cols/.sys-col (см. web/system.html для образца). -->
+<div class="sys-stack">
+<div class="sys-cols">
 
-<section class="panel" style="grid-area:plata">
+<div class="sys-col">
+<section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#9636;</span> <span data-i18n="board.title">Плата</span></div>
 <div class="kv"><span data-i18n="esp.chip">Чип</span><span>ESP32-S3 N16R8</span></div>
 <div class="kv"><span data-i18n="esp.flashPsram">Flash / PSRAM</span><span data-i18n="esp.flashPsramVal">16 МБ / 8 МБ</span></div>
@@ -99,7 +97,25 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 </div>
 </section>
 
-<section class="panel" style="grid-area:wifi">
+<section class="panel">
+<div class="ttl"><span style="color:var(--accent)">&#9678;</span> <span data-i18n="dev.title">Прибор · AtomSpectra</span></div>
+<div style="display:flex;justify-content:space-between;margin-bottom:6px">
+<span style="font-size:12px;color:#8a9686" data-i18n="cpu.title">CPU спектрометра</span>
+<span style="font-size:16px;font-weight:600;color:#f0c45a"><span id="cpu-cur">—</span> <span class="mut" style="font-size:11px">%</span></span>
+</div>
+<canvas id="cpuc" width="700" height="64" style="width:100%;height:auto;display:block;margin-bottom:11px"></canvas>
+<div class="kv"><span>USB</span><span id="dev-usb">—</span></div>
+<div class="kv"><span data-i18n="dev.serial">Серийный №</span><span id="dev-serial">—</span></div>
+<div class="kv"><span data-i18n="dev.ver">Версия прошивки</span><span id="dev-ver">—</span></div>
+<div class="kv"><span data-i18n="dev.ch">Каналов</span><span id="dev-ch">—</span></div>
+<div class="kv"><span data-i18n="dev.cal">Калибровка</span><span id="dev-cal">—</span></div>
+<div class="kv"><span data-i18n="dev.temp">Темп. T1/T2/T3</span><span id="dev-t">—</span></div>
+<div class="kv"><span data-i18n="dev.mode">Режим</span><span id="dev-mode">—</span></div>
+</section>
+</div>
+
+<div class="sys-col">
+<section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#8779;</span> WiFi</div>
 <div class="kv"><span data-i18n="wifi.state">Состояние</span><span id="wifi-state">—</span></div>
 <div class="kv"><span>SSID</span><span id="wifi-ssid">—</span></div>
@@ -111,7 +127,7 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 </div>
 </section>
 
-<section class="panel" id="field-panel" style="grid-area:field">
+<section class="panel" id="field-panel">
 <div class="ttl"><span style="color:var(--accent)">&#9788;</span> <span data-i18n="field.title">Полевой режим · Время</span></div>
 <div class="kv"><span data-i18n="field.mode">Режим сети</span><span id="net-mode">—</span></div>
 <div class="kv" id="ap-ssid-row" style="display:none"><span data-i18n="field.apSsid">Точка доступа</span><span id="ap-ssid">—</span></div>
@@ -128,23 +144,18 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <div id="ap-pass-status" class="mut" style="font-size:11px;margin-top:5px"></div>
 </section>
 
-<section class="panel" style="grid-area:pribor">
-<div class="ttl"><span style="color:var(--accent)">&#9678;</span> <span data-i18n="dev.title">Прибор · AtomSpectra</span></div>
-<div style="display:flex;justify-content:space-between;margin-bottom:6px">
-<span style="font-size:12px;color:#8a9686" data-i18n="cpu.title">CPU спектрометра</span>
-<span style="font-size:16px;font-weight:600;color:#f0c45a"><span id="cpu-cur">—</span> <span class="mut" style="font-size:11px">%</span></span>
-</div>
-<canvas id="cpuc" width="700" height="64" style="width:100%;height:auto;display:block;margin-bottom:11px"></canvas>
-<div class="kv"><span>USB</span><span id="dev-usb">—</span></div>
-<div class="kv"><span data-i18n="dev.serial">Серийный №</span><span id="dev-serial">—</span></div>
-<div class="kv"><span data-i18n="dev.ver">Версия прошивки</span><span id="dev-ver">—</span></div>
-<div class="kv"><span data-i18n="dev.ch">Каналов</span><span id="dev-ch">—</span></div>
-<div class="kv"><span data-i18n="dev.cal">Калибровка</span><span id="dev-cal">—</span></div>
-<div class="kv"><span data-i18n="dev.temp">Темп. T1/T2/T3</span><span id="dev-t">—</span></div>
-<div class="kv"><span data-i18n="dev.mode">Режим</span><span id="dev-mode">—</span></div>
+<section class="panel">
+<div class="ttl"><span style="color:var(--accent)">&#8644;</span> <span data-i18n="tcp.title">TCP-мост (serial-over-WiFi)</span></div>
+<div class="kv"><span data-i18n="tcp.port">Порт</span><span>8234</span></div>
+<div class="kv"><span data-i18n="wifi.state">Состояние</span><span id="tcp-state">—</span></div>
+<div class="mut" style="font-size:11px;line-height:1.5;margin-top:11px" data-i18n-html="tcp.hint">BecqMoni / AtomSpectra на ПК подключаются к <span id="tcp-addr" style="color:#aeb6a8">—</span> вместо COM-порта.</div>
+<button class="btn green" style="margin-top:13px" onclick="location.reload()" data-i18n="btn.refresh">Обновить</button>
 </section>
 
-<section class="panel" style="grid-area:boot">
+</div>
+
+<div class="sys-col">
+<section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#9654;</span> <span data-i18n="boot.titleBoot">Старт платы</span></div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
 <div>
@@ -163,7 +174,7 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <div class="mut" id="bc-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
 </section>
 
-<section class="panel" style="grid-area:dose">
+<section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#9654;</span> <span data-i18n="dose.title">Мощность дозы</span></div>
 <div class="kv"><span data-i18n="dose.label">Коэффициент k (µSv·h⁻¹/cps)</span>
 <input type="number" id="dose-k-val" min="0" step="any" style="width:130px;background:var(--panel);color:var(--txt);border:1px solid #444;padding:3px 6px;border-radius:4px">
@@ -184,15 +195,7 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 </div>
 </section>
 
-<section class="panel" style="grid-area:tcp">
-<div class="ttl"><span style="color:var(--accent)">&#8644;</span> <span data-i18n="tcp.title">TCP-мост (serial-over-WiFi)</span></div>
-<div class="kv"><span data-i18n="tcp.port">Порт</span><span>8234</span></div>
-<div class="kv"><span data-i18n="wifi.state">Состояние</span><span id="tcp-state">—</span></div>
-<div class="mut" style="font-size:11px;line-height:1.5;margin-top:11px" data-i18n-html="tcp.hint">BecqMoni / AtomSpectra на ПК подключаются к <span id="tcp-addr" style="color:#aeb6a8">—</span> вместо COM-порта.</div>
-<button class="btn green" style="margin-top:13px" onclick="location.reload()" data-i18n="btn.refresh">Обновить</button>
-</section>
-
-<section class="panel" style="grid-area:tz">
+<section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#9202;</span> <span data-i18n="tz.title">Часовой пояс</span></div>
 <div class="kv"><span data-i18n="tz.label">Пояс отображения</span>
 <select id="tz-sel" onchange="saveTz()" style="background:var(--panel);color:var(--txt);border:1px solid #444;padding:4px 8px;border-radius:4px;font-family:inherit;font-size:12px"></select>
@@ -204,7 +207,10 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <!-- #AWF-6/bug: единая карточка обновления -- "Проверить обновление" зовёт
      /api/ota/github/check (демо: demo-shim.js), "Установить с GitHub" видна
      всегда (disabled, пока не installable). -->
-<section class="panel" style="grid-area:fw">
+</div>
+</div>
+
+<section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#8681;</span> <span data-i18n="ota.title">Обновление прошивки</span></div>
 <div class="kv"><span data-i18n="esp.fw">Прошивка</span><span id="fw-ver-ota">—</span></div>
 <div class="kv"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="gh-prerel" onchange="ghChannelSet()"><span data-i18n="ghota.prerelease">Получать предрелизы</span></label></div>
@@ -227,7 +233,9 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 </div>
 <div class="mut" id="ota-status" style="font-size:11px;margin-top:5px;text-align:center;min-height:14px"></div>
 </div>
-</section><section class="panel" style="grid-area:danger">
+</section>
+
+<section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#9888;</span> <span data-i18n="danger.title">Опасные действия</span></div>
 <div class="danger-row">
 <button class="btn red" onclick="rebootDevice()" data-i18n="dev.reboot">Перезагрузить прибор</button>

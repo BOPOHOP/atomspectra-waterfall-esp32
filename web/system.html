@@ -40,22 +40,19 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 .chip.lang:hover{ filter:brightness(1.15); }
 .boot-row{ display:flex; align-items:center; gap:9px; padding:8px 0; font-size:12.5px; cursor:pointer; border-bottom:1px solid #161c15; color:#dfe5dc; }
 .boot-row input{ width:16px; height:16px; accent-color:var(--accent); cursor:pointer; flex-shrink:0; }
-/* #AWF-6: grid-area на каждой карточке — визуальный порядок задаётся CSS,
-   не порядком тегов в DOM (это и позволяет мобильному порядку отличаться
-   от desktop-раскладки без физического переноса разметки). */
-.sys-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px;
- grid-template-areas:
-  "plata wifi  boot"
-  "pribor field backup"
-  ".     tz    dose"
-  ".     tcp   ."
-  "fw    fw    fw"
-  "danger danger danger"; }
+/* #AWF-7: три независимые flex-колонки одинаковой ширины вместо grid-areas —
+   grid выравнивал строки по самой высокой карточке (пустоты под короткими
+   карточками); flex-колонка тянет карточки плотно сверху вниз без растяжения
+   по высоте. .sys-stack — общий вертикальный ритм (тот же gap, что и внутри
+   колонки) для блоков во всю ширину (обновление прошивки, опасные действия). */
+.sys-stack{ display:flex; flex-direction:column; gap:14px; }
+.sys-cols{ display:flex; gap:14px; align-items:flex-start; }
+.sys-col{ flex:1 1 0; min-width:0; display:flex; flex-direction:column; gap:14px; }
+.sys-col > .panel{ margin:0; align-self:stretch; }
 .danger-row{ display:flex; gap:10px; flex-wrap:wrap; }
 .danger-row .btn{ width:auto; flex:1 1 200px; margin-top:0; }
-@media(max-width:760px){
- .sys-grid{ grid-template-columns:1fr;
-  grid-template-areas:"plata" "pribor" "fw" "wifi" "field" "tz" "tcp" "boot" "backup" "dose" "danger"; }
+@media(max-width:900px){
+ .sys-cols{ flex-direction:column; }
 }
 </style>
 </head>
@@ -75,27 +72,13 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 
 <div class="wrap">
 
-<!-- #AWF-6: grid-area на каждой карточке (см. .sys-grid) — визуальный порядок
-     Состояние/Сеть и время/Настройки не зависит от порядка тегов ниже. -->
-<div class="sys-grid">
+<!-- #AWF-7: три flex-колонки (Состояние/Сеть и время/Настройки) вместо grid-areas;
+     под ними во всю ширину — Обновление прошивки и Опасные действия, тот же .sys-stack gap. -->
+<div class="sys-stack">
+<div class="sys-cols">
 
-<section class="panel" style="grid-area:pribor">
-<div class="ttl"><span style="color:var(--accent)">&#9678;</span> <span data-i18n="dev.title">Прибор · AtomSpectra</span></div>
-<div style="display:flex;justify-content:space-between;margin-bottom:6px">
-<span style="font-size:12px;color:#8a9686" data-i18n="cpu.title">CPU спектрометра</span>
-<span style="font-size:16px;font-weight:600;color:#f0c45a"><span id="cpu-cur">—</span> <span class="mut" style="font-size:11px">%</span></span>
-</div>
-<canvas id="cpuc" width="700" height="64" style="width:100%;height:auto;display:block;margin-bottom:11px"></canvas>
-<div class="kv"><span>USB</span><span id="dev-usb">—</span></div>
-<div class="kv"><span data-i18n="dev.serial">Серийный №</span><span id="dev-serial">—</span></div>
-<div class="kv"><span data-i18n="dev.ver">Версия прошивки</span><span id="dev-ver">—</span></div>
-<div class="kv"><span data-i18n="dev.ch">Каналов</span><span id="dev-ch">—</span></div>
-<div class="kv"><span data-i18n="dev.cal">Калибровка</span><span id="dev-cal">—</span></div>
-<div class="kv"><span data-i18n="dev.temp">Темп. T1/T2/T3</span><span id="dev-t">—</span></div>
-<div class="kv"><span data-i18n="dev.mode">Режим</span><span id="dev-mode">—</span></div>
-</section>
-
-<section class="panel" style="grid-area:plata">
+<div class="sys-col">
+<section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#9636;</span> <span data-i18n="board.title">Плата</span></div>
 <div class="kv"><span data-i18n="esp.chip">Чип</span><span>ESP32-S3 N16R8</span></div>
 <div class="kv"><span data-i18n="esp.flashPsram">Flash / PSRAM</span><span data-i18n="esp.flashPsramVal">16 МБ / 8 МБ</span></div>
@@ -116,7 +99,43 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 </div>
 </section>
 
-<section class="panel" style="grid-area:wifi">
+<section class="panel">
+<div class="ttl"><span style="color:var(--accent)">&#9678;</span> <span data-i18n="dev.title">Прибор · AtomSpectra</span></div>
+<div style="display:flex;justify-content:space-between;margin-bottom:6px">
+<span style="font-size:12px;color:#8a9686" data-i18n="cpu.title">CPU спектрометра</span>
+<span style="font-size:16px;font-weight:600;color:#f0c45a"><span id="cpu-cur">—</span> <span class="mut" style="font-size:11px">%</span></span>
+</div>
+<canvas id="cpuc" width="700" height="64" style="width:100%;height:auto;display:block;margin-bottom:11px"></canvas>
+<div class="kv"><span>USB</span><span id="dev-usb">—</span></div>
+<div class="kv"><span data-i18n="dev.serial">Серийный №</span><span id="dev-serial">—</span></div>
+<div class="kv"><span data-i18n="dev.ver">Версия прошивки</span><span id="dev-ver">—</span></div>
+<div class="kv"><span data-i18n="dev.ch">Каналов</span><span id="dev-ch">—</span></div>
+<div class="kv"><span data-i18n="dev.cal">Калибровка</span><span id="dev-cal">—</span></div>
+<div class="kv"><span data-i18n="dev.temp">Темп. T1/T2/T3</span><span id="dev-t">—</span></div>
+<div class="kv"><span data-i18n="dev.mode">Режим</span><span id="dev-mode">—</span></div>
+</section>
+
+<!-- issue #52: перенесена из "Настройки" в "Состояние" -- балансировка высот
+     колонок (#AWF-7): без переноса "Настройки" были заметно выше остальных. -->
+<section class="panel">
+<div class="ttl"><span style="color:var(--accent)">&#9654;</span> <span data-i18n="bk.title">Резервные копии спектра</span></div>
+<div class="kv"><span data-i18n="bk.keep">Хранить снимков (0 — выключено)</span>
+ <input type="number" id="bk-keep" min="0" max="20" step="1" style="width:80px"></div>
+<div class="kv"><span data-i18n="bk.hours">Снимать каждые, часов</span>
+ <input type="number" id="bk-hours" min="1" max="168" step="1" style="width:80px"></div>
+<div class="mut" style="font-size:11px;line-height:1.5;margin-top:10px" data-i18n="bk.hint">Плата сама сохраняет спектр на flash с заданным периодом и держит только указанное число последних снимков. После пропадания питания счётчик сессии растёт, и новые снимки не смешиваются со старыми. Снимки видны на вкладке «Сохранённые»; ручные сохранения ротацией не удаляются.</div>
+<div class="mut" style="font-size:11px;margin-top:6px"><span data-i18n="bk.session">Текущая сессия платы</span>: <b id="bk-session">—</b></div>
+<div id="bk-testmode" style="display:none;margin-top:8px;padding:8px;border:1px solid rgba(240,180,60,.45);border-radius:6px;background:rgba(240,180,60,.07);font-size:11px;color:#f0c45a">
+<span data-i18n="bk.testOn">Включён стендовый режим: период считается в МИНУТАХ, не в часах.</span>
+<button class="btn" style="margin-top:6px" onclick="clearBackupTestMode()" data-i18n="bk.testOff">Выключить стендовый режим</button>
+</div>
+<button class="btn green" onclick="saveBackupConfig()" data-i18n="boot.save">Сохранить</button>
+<div class="mut" id="bk-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
+</section>
+</div>
+
+<div class="sys-col">
+<section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#8779;</span> WiFi</div>
 <div class="kv"><span data-i18n="wifi.state">Состояние</span><span id="wifi-state">—</span></div>
 <div class="kv"><span>SSID</span><span id="wifi-ssid">—</span></div>
@@ -128,15 +147,43 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 </div>
 </section>
 
-<section class="panel" style="grid-area:tcp">
+<section class="panel" id="field-panel">
+<div class="ttl"><span style="color:var(--accent)">&#9788;</span> <span data-i18n="field.title">Полевой режим · Время</span></div>
+<div class="kv"><span data-i18n="field.mode">Режим сети</span><span id="net-mode">—</span></div>
+<div class="kv" id="ap-ssid-row" style="display:none"><span data-i18n="field.apSsid">Точка доступа</span><span id="ap-ssid">—</span></div>
+<div class="kv" id="ap-clients-row" style="display:none"><span data-i18n="field.apClients">Подключено телефонов</span><span id="ap-clients">—</span></div>
+<div class="kv"><span data-i18n="field.timeSrc">Источник времени</span><span id="time-src">—</span></div>
+<input id="manual-time-inp" type="datetime-local" step="1" style="width:100%;padding:9px;background:#0a0c0a;color:#e8efe2;border:1px solid var(--bd);border-radius:6px;box-sizing:border-box;font-family:inherit;font-size:15px;margin-bottom:6px">
+<button class="btn" onclick="setManualTime()" data-i18n="field.setTime">Установить время платы</button>
+<div class="mut" style="font-size:11px;line-height:1.5;margin-top:6px" data-i18n="field.timeHint">В полевом режиме (без интернета) время берётся с телефона автоматически. Поле выше — ручная коррекция (пусто = текущее время телефона).</div>
+<div style="border-top:1px solid var(--bd);margin:12px 0 8px"></div>
+<div style="font-size:12px;color:#8a9686;margin-bottom:6px" data-i18n="field.apPassTitle">Пароль полевой точки доступа</div>
+<div id="ap-pass-warn" style="display:none;font-size:11px;color:#f0c45a;margin-bottom:6px" data-i18n="field.passDefaultWarn">Пароль AP — публичный по умолчанию; для людных мест смени пароль.</div>
+<input id="ap-pass-inp" type="text" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;" style="width:100%;padding:9px;background:#0a0c0a;color:#e8efe2;border:1px solid var(--bd);border-radius:6px;box-sizing:border-box;font-family:inherit;font-size:15px">
+<button class="btn" onclick="changeApPass()" data-i18n="field.apPassSave">Сменить пароль AP (перезагрузка)</button>
+<div id="ap-pass-status" class="mut" style="font-size:11px;margin-top:5px"></div>
+</section>
+
+<section class="panel">
+<div class="ttl"><span style="color:var(--accent)">&#9202;</span> <span data-i18n="tz.title">Часовой пояс</span></div>
+<div class="kv"><span data-i18n="tz.label">Пояс отображения</span>
+<select id="tz-sel" onchange="saveTz()" style="background:var(--panel);color:var(--txt);border:1px solid #444;padding:4px 8px;border-radius:4px;font-family:inherit;font-size:12px"></select>
+</div>
+<div class="mut" style="font-size:11px;line-height:1.5;margin-top:6px" data-i18n="tz.hint">Влияет на ось времени, таблицу и CSV-экспорт вкладки «Мониторинг». Хранится в браузере.</div>
+<div class="mut" id="tz-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
+</section>
+
+<section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#8644;</span> <span data-i18n="tcp.title">TCP-мост (serial-over-WiFi)</span></div>
 <div class="kv"><span data-i18n="tcp.port">Порт</span><span>8234</span></div>
 <div class="kv"><span data-i18n="wifi.state">Состояние</span><span id="tcp-state">—</span></div>
 <div class="mut" style="font-size:11px;line-height:1.5;margin-top:11px" data-i18n-html="tcp.hint">BecqMoni / AtomSpectra на ПК подключаются к <span id="tcp-addr" style="color:#aeb6a8">—</span> вместо COM-порта.</div>
 <button class="btn green" style="margin-top:13px" onclick="location.reload()" data-i18n="btn.refresh">Обновить</button>
 </section>
+</div>
 
-<section class="panel" style="grid-area:boot">
+<div class="sys-col">
+<section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#9654;</span> <span data-i18n="boot.titleBoot">Старт платы</span></div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
 <div>
@@ -159,27 +206,7 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <div class="mut" id="bc-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
 </section>
 
-<!-- issue #52: автоматические резервные снимки спектра -->
-<section class="panel" style="grid-area:backup">
-<div class="ttl"><span style="color:var(--accent)">&#9654;</span> <span data-i18n="bk.title">Резервные копии спектра</span></div>
-<div class="kv"><span data-i18n="bk.keep">Хранить снимков (0 — выключено)</span>
- <input type="number" id="bk-keep" min="0" max="20" step="1" style="width:80px"></div>
-<div class="kv"><span data-i18n="bk.hours">Снимать каждые, часов</span>
- <input type="number" id="bk-hours" min="1" max="168" step="1" style="width:80px"></div>
-<div class="mut" style="font-size:11px;line-height:1.5;margin-top:10px" data-i18n="bk.hint">Плата сама сохраняет спектр на flash с заданным периодом и держит только указанное число последних снимков. После пропадания питания счётчик сессии растёт, и новые снимки не смешиваются со старыми. Снимки видны на вкладке «Сохранённые»; ручные сохранения ротацией не удаляются.</div>
-<div class="mut" style="font-size:11px;margin-top:6px"><span data-i18n="bk.session">Текущая сессия платы</span>: <b id="bk-session">—</b></div>
-<!-- issue #52: стендовый режим включается только через API и переживает перезагрузку.
-     Без этой строки «каждые 24 часа» молча означали бы «каждые 24 минуты», и в UI
-     это было бы не видно и не выключаемо. -->
-<div id="bk-testmode" style="display:none;margin-top:8px;padding:8px;border:1px solid rgba(240,180,60,.45);border-radius:6px;background:rgba(240,180,60,.07);font-size:11px;color:#f0c45a">
-<span data-i18n="bk.testOn">Включён стендовый режим: период считается в МИНУТАХ, не в часах.</span>
-<button class="btn" style="margin-top:6px" onclick="clearBackupTestMode()" data-i18n="bk.testOff">Выключить стендовый режим</button>
-</div>
-<button class="btn green" onclick="saveBackupConfig()" data-i18n="boot.save">Сохранить</button>
-<div class="mut" id="bk-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
-</section>
-
-<section class="panel" style="grid-area:dose">
+<section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#9654;</span> <span data-i18n="dose.title">Мощность дозы</span></div>
 <div class="kv"><span data-i18n="dose.label">Коэффициент k (µSv·h⁻¹/cps)</span>
 <input type="number" id="dose-k-val" min="0" step="any" style="width:130px;background:var(--panel);color:var(--txt);border:1px solid #444;padding:3px 6px;border-radius:4px">
@@ -200,40 +227,11 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 </div>
 </section>
 
-<section class="panel" id="field-panel" style="grid-area:field">
-<div class="ttl"><span style="color:var(--accent)">&#9788;</span> <span data-i18n="field.title">Полевой режим · Время</span></div>
-<div class="kv"><span data-i18n="field.mode">Режим сети</span><span id="net-mode">—</span></div>
-<div class="kv" id="ap-ssid-row" style="display:none"><span data-i18n="field.apSsid">Точка доступа</span><span id="ap-ssid">—</span></div>
-<div class="kv" id="ap-clients-row" style="display:none"><span data-i18n="field.apClients">Подключено телефонов</span><span id="ap-clients">—</span></div>
-<div class="kv"><span data-i18n="field.timeSrc">Источник времени</span><span id="time-src">—</span></div>
-<input id="manual-time-inp" type="datetime-local" step="1" style="width:100%;padding:9px;background:#0a0c0a;color:#e8efe2;border:1px solid var(--bd);border-radius:6px;box-sizing:border-box;font-family:inherit;font-size:15px;margin-bottom:6px">
-<button class="btn" onclick="setManualTime()" data-i18n="field.setTime">Установить время платы</button>
-<div class="mut" style="font-size:11px;line-height:1.5;margin-top:6px" data-i18n="field.timeHint">В полевом режиме (без интернета) время берётся с телефона автоматически. Поле выше — ручная коррекция (пусто = текущее время телефона).</div>
-<div style="border-top:1px solid var(--bd);margin:12px 0 8px"></div>
-<div style="font-size:12px;color:#8a9686;margin-bottom:6px" data-i18n="field.apPassTitle">Пароль полевой точки доступа</div>
-<div id="ap-pass-warn" style="display:none;font-size:11px;color:#f0c45a;margin-bottom:6px" data-i18n="field.passDefaultWarn">Пароль AP — публичный по умолчанию; для людных мест смени пароль.</div>
-<input id="ap-pass-inp" type="text" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;" style="width:100%;padding:9px;background:#0a0c0a;color:#e8efe2;border:1px solid var(--bd);border-radius:6px;box-sizing:border-box;font-family:inherit;font-size:15px">
-<button class="btn" onclick="changeApPass()" data-i18n="field.apPassSave">Сменить пароль AP (перезагрузка)</button>
-<div id="ap-pass-status" class="mut" style="font-size:11px;margin-top:5px"></div>
-</section>
-
-<section class="panel" style="grid-area:tz">
-<div class="ttl"><span style="color:var(--accent)">&#9202;</span> <span data-i18n="tz.title">Часовой пояс</span></div>
-<div class="kv"><span data-i18n="tz.label">Пояс отображения</span>
-<select id="tz-sel" onchange="saveTz()" style="background:var(--panel);color:var(--txt);border:1px solid #444;padding:4px 8px;border-radius:4px;font-family:inherit;font-size:12px"></select>
 </div>
-<div class="mut" style="font-size:11px;line-height:1.5;margin-top:6px" data-i18n="tz.hint">Влияет на ось времени, таблицу и CSV-экспорт вкладки «Мониторинг». Хранится в браузере.</div>
-<div class="mut" id="tz-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
-</section>
+</div>
 
-<!-- #AWF-6/bug: единая карточка обновления. "Проверить обновление" теперь
-     всегда вызывает /api/ota/github/check -- прежний браузерный checkUpdate()
-     убран как дубль. "Установить с GitHub" видна всегда (disabled, пока
-     check не вернул installable): раньше исчезала целиком (display:none),
-     а сам баг с "невидимым блоком" на живой плате был не в разметке -- страницы
-     отдавались без Cache-Control (main/web_server.c, EMBED_HTML_HANDLER),
-     браузер показывал закешированную вкладку с прошивки ДО OTA. -->
-<section class="panel" style="grid-area:fw">
+<!-- #AWF-6/bug: единая карточка обновления -- см. историю в git blame. -->
+<section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#8681;</span> <span data-i18n="ota.title">Обновление прошивки</span></div>
 <div class="kv"><span data-i18n="esp.fw">Прошивка</span><span id="fw-ver-ota">—</span></div>
 <div class="kv"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="gh-prerel" onchange="ghChannelSet()"><span data-i18n="ghota.prerelease">Получать предрелизы</span></label></div>
@@ -256,7 +254,9 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 </div>
 <div class="mut" id="ota-status" style="font-size:11px;margin-top:5px;text-align:center;min-height:14px"></div>
 </div>
-</section><section class="panel" style="grid-area:danger">
+</section>
+
+<section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#9888;</span> <span data-i18n="danger.title">Опасные действия</span></div>
 <div class="danger-row">
 <button class="btn red" onclick="rebootDevice()" data-i18n="dev.reboot">Перезагрузить прибор</button>
