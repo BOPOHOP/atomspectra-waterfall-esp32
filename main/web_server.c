@@ -506,6 +506,16 @@ static esp_err_t handle_reset(httpd_req_t *req)
 // AWF-4: POST /api/ota — приём .bin потоком (буфер 4 КБ), запись в неактивный
 // OTA-раздел. CSRF как у остальных мутирующих POST. Тело — application/octet-stream
 // (не multipart): UI шлёт raw ArrayBuffer, curl — `--data-binary @file.bin`.
+// D4 (P3): httpd v5.4 — один task на приём (см. verify-awf4-2026-09-27.md
+// D5) — медленный клиент, вечно попадающий в HTTPD_SOCK_ERR_TIMEOUT, держал
+// бы его неограниченно, блокируя ВСЕ остальные HTTP-запросы. Порог — число
+// ПОДРЯД идущих таймаутов (сброс на каждый успешный recv), не время: точное
+// значение recv-таймаута — дефолт esp_http_server (не переопределён этим
+// проектом), поэтому абсолютное время не гарантируем (#AH-1 — не измеряем
+// то, что берём из чужого дефолта); 30 подряд отказов приёма — явно не
+// "штатная сеть подождала", а зависший/враждебный клиент.
+#define OTA_MAX_CONSECUTIVE_TIMEOUTS 30u
+
 static esp_err_t handle_ota(httpd_req_t *req)
 {
     if (!csrf_check(req)) return ESP_FAIL;
@@ -529,7 +539,10 @@ static esp_err_t handle_ota(httpd_req_t *req)
     spectrum_autosave_abort();
 
     esp_ota_handle_t ota = 0;
-    esp_err_t err = esp_ota_begin(update, total, &ota);
+    // D1: OTA_SIZE_UNKNOWN стирает ВЕСЬ слот сразу (не только Content-Length
+    // байт от клиента) — обрезанная запись не оставляет "хвост" старого
+    // образа структурно смешанным со свежими байтами.
+    esp_err_t err = esp_ota_begin(update, OTA_SIZE_UNKNOWN, &ota);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "AWF-4: esp_ota_begin: %s", esp_err_to_name(err));
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ota_begin");
@@ -547,10 +560,22 @@ static esp_err_t handle_ota(httpd_req_t *req)
     }
     int remaining = total, received = 0;
     bool header_checked = false, image_ok = true;
+    ota_image_walker_t walker;             // D1: структурная сверка сегментов
+    ota_image_walker_init(&walker);
+    uint32_t timeout_streak = 0;           // D4: подряд идущие таймауты
     while (remaining > 0) {
         int to_read = remaining < (int)bufsz ? remaining : (int)bufsz;
         int rd = httpd_req_recv(req, (char *)buf, to_read);
-        if (rd == HTTPD_SOCK_ERR_TIMEOUT) continue;   // повтор, не абор (задача 2)
+        if (rd == HTTPD_SOCK_ERR_TIMEOUT) {
+            if (++timeout_streak > OTA_MAX_CONSECUTIVE_TIMEOUTS) {
+                free(buf);
+                esp_ota_abort(ota);
+                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Timeout budget exceeded");
+                return ESP_FAIL;
+            }
+            continue;   // повтор, не абор (задача 2)
+        }
+        timeout_streak = 0;
         if (rd <= 0) {
             free(buf);
             esp_ota_abort(ota);
@@ -565,6 +590,13 @@ static esp_err_t handle_ota(httpd_req_t *req)
                 image_ok = false;
         }
         if (!image_ok) break;
+        // D1: подать те же байты, что уходят в esp_ota_write(), в структурный
+        // walker — magic/segment_count/пройденность сегментов независимо от
+        // Content-Length (см. main/ota_image_check.h).
+        if (!ota_image_walker_feed(&walker, (const uint8_t *)buf, (size_t)rd)) {
+            image_ok = false;
+            break;
+        }
         err = esp_ota_write(ota, buf, rd);
         if (err != ESP_OK) {
             free(buf);
@@ -579,7 +611,18 @@ static esp_err_t handle_ota(httpd_req_t *req)
     free(buf);
     if (!image_ok) {
         esp_ota_abort(ota);
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad image header (magic/chip_id)");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad image header (magic/chip_id/segments)");
+        return ESP_FAIL;
+    }
+    // D1 (verify-awf4-2026-09-27.md, дефект D1/T3): Content-Length клиента
+    // может совпасть с фактически принятым числом байт — это НЕ доказывает,
+    // что образ ЦЕЛ (оба числа под контролем клиента). Структурная сверка:
+    // все сегменты, заявленные САМИМ образом, обязаны быть пройдены целиком.
+    if (!ota_image_walker_is_complete(&walker)) {
+        esp_ota_abort(ota);
+        ESP_LOGW(TAG, "AWF-4: D1 guard: image incomplete (%d/%d bytes, walker state=%d)",
+                 received, total, (int)walker.state);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Incomplete image (truncated)");
         return ESP_FAIL;
     }
 

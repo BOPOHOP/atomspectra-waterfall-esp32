@@ -26,7 +26,9 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_spectrum_base_plan.c \
        test_http_activity_plan.c \
        test_boot_flag_plan.c \
-       test_ota_image_check.c
+       test_ota_image_check.c \
+       test_ota_mark_valid_plan.c \
+       test_json_uint_fmt.c
 
 test: $(SRCS) test_util.h
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm
@@ -39,6 +41,12 @@ asan: $(SRCS) test_util.h
 	./test_runner_asan
 
 clean:
-	rm -f test_runner test_runner_asan
+	rm -f test_runner test_runner_asan bench_json_fmt
 
-.PHONY: test asan clean
+# UI-P1: замер до/после старого(vsnprintf-loop)/нового(json_append_uint32_csv)
+# форматтера бинов — числа для отчёта, не гейт ALL PASSED.
+bench: bench_json_fmt.c ../../main/json_uint_fmt.h
+	$(CC) -std=c11 -Wall -Wextra -O2 -I../../main -o bench_json_fmt bench_json_fmt.c
+	./bench_json_fmt
+
+.PHONY: test asan clean bench

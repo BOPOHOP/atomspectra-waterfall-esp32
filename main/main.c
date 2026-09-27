@@ -14,6 +14,7 @@
 #include <sys/time.h>
 #include "esp_timer.h"
 #include "esp_ota_ops.h"  // AWF-4: mark_app_valid_cancel_rollback после успешного старта
+#include "ota_mark_valid_plan.h"   // D3: годность образа не только по Wi-Fi (host-тест)
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"   // #FW-13 фикс №2: ожидание коммита свипа перед autosave
@@ -152,9 +153,17 @@ void app_main(void)
     // (web_server_init() выше, безусловно); ждём именно Wi-Fi (в Outdoor/Field
     // AP wifi_is_connected() истинно, когда есть клиент, — тоже валидный "жив").
     bool ota_valid_marked = false;
+    uint32_t seconds_since_boot = 0;   // D3: тик main() — доказательство, что цикл жив
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(10000));
-        if (!ota_valid_marked && wifi_is_connected()) {
+        seconds_since_boot += 10;
+        // D3 (P1, verify-awf4-2026-09-27.md): было только wifi_is_connected() —
+        // в Field/Outdoor AP без клиентов никогда true (wifi_manager.c:602-604),
+        // образ никогда не подтверждался. httpd уже поднят безусловно (см.
+        // комментарий выше) -> httpd_up=true; N=30с — main/ota_mark_valid_plan.h.
+        if (!ota_valid_marked &&
+            ota_mark_valid_should_fire(wifi_is_connected(), usb_host_cdc_is_connected(),
+                                        /*httpd_up=*/true, seconds_since_boot, 30)) {
             ota_valid_marked = true;
             esp_err_t e = esp_ota_mark_app_valid_cancel_rollback();
             if (e != ESP_OK)

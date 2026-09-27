@@ -117,6 +117,7 @@ typedef struct {
     uint32_t lost_impulses;
     uint32_t pulse_width;
     bool     fresh;                               // пришёл ли STAT после последнего commit
+    uint32_t gen;   // D2: s_reset_gen на момент постановки fresh=true (spectrum_reset_stat_is_plausible_gen)
 } stat_stage_t;
 static stat_stage_t s_stat_stage;
 
@@ -351,8 +352,9 @@ void spectrum_process_histogram_chunk(const uint8_t *data, size_t len)
             if (stat_fresh && !s_spectrum.valid) {
                 uint32_t elapsed_since_reset_s =
                     (uint32_t)((esp_timer_get_time() - s_reset_at_us) / 1000000);
-                if (!spectrum_reset_stat_is_plausible(s_stat_stage.total_time_sec,
-                                                       elapsed_since_reset_s)) {
+                if (!spectrum_reset_stat_is_plausible_gen(s_stat_stage.total_time_sec,
+                                                           elapsed_since_reset_s,
+                                                           s_stat_stage.gen, s_reset_gen)) {
                     stat_fresh = false;
                     ESP_LOGW(TAG, "Reset: stale staged STAT (t=%" PRIu32 "s, elapsed=%" PRIu32
                              "s) ignored on first post-reset commit",
@@ -418,6 +420,7 @@ void spectrum_process_stat_packet(const uint8_t *data, size_t len)
         if (len >= 18)
             s_stat_stage.pulse_width = data[14] | (data[15]<<8) | (data[16]<<16) | (data[17]<<24);
         s_stat_stage.fresh = true;
+        s_stat_stage.gen = s_reset_gen;   // D2: печать поколения на момент постановки
         return;
     }
     SPEC_LOCK();

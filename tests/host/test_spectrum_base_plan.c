@@ -208,6 +208,28 @@ static void test_awf4_reset_stat_race(void)
     CHECK(st.shown_counts == 24);
 }
 
+// D2: STAT застейджен ДО Reset (gen=1), Reset увеличил gen до 2, прибор
+// больше НИКОГДА не шлёт STAT (сценарий отчёта). Старая (без gen) функция
+// рано или поздно, когда elapsed догонит stat_time, сочла бы STAT
+// правдоподобным -- ИСХОДНЫЙ баг отложенно. Новая (gen-aware) обязана
+// отклонять его ВСЕГДА, пока не появится STAT текущего gen.
+static void test_d2_stale_stat_never_accepted_after_reset(void)
+{
+    uint32_t stat_time = 100;
+    uint32_t stat_gen = 1;
+    uint32_t current_gen = 2;
+    CHECK(!spectrum_reset_stat_is_plausible_gen(stat_time, 1, stat_gen, current_gen));
+    // Демонстрация исходного бага: старая функция БЕЗ gen считает это
+    // правдоподобным, когда elapsed догоняет stat_time.
+    CHECK(spectrum_reset_stat_is_plausible(stat_time, 96));
+    // gen-aware версия — НЕ принимает, ни сразу, ни спустя сколько угодно.
+    CHECK(!spectrum_reset_stat_is_plausible_gen(stat_time, 96, stat_gen, current_gen));
+    CHECK(!spectrum_reset_stat_is_plausible_gen(stat_time, 1000000, stat_gen, current_gen));
+    // Новый свежий STAT (gen совпадает с текущим) -- гейт снова по времени.
+    CHECK(spectrum_reset_stat_is_plausible_gen(5, 6, current_gen, current_gen));
+    CHECK(!spectrum_reset_stat_is_plausible_gen(2000, 6, current_gen, current_gen));
+}
+
 void spectrum_base_plan_suite(void)
 {
     test_reset_detection();
@@ -221,4 +243,5 @@ void spectrum_base_plan_suite(void)
     test_r1_defer_predicate();
     test_r1_defer_and_two_commit_sequence();
     test_awf4_reset_stat_race();
+    test_d2_stale_stat_never_accepted_after_reset();
 }

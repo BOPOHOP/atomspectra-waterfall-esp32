@@ -143,3 +143,22 @@ static inline bool spectrum_reset_stat_is_plausible(uint32_t stat_time_sec,
 {
     return stat_time_sec <= elapsed_since_reset_sec + SPECTRUM_BASE_RESET_TOLERANCE_S;
 }
+
+// D2 (2026-09-27, P2, verify-awf4-2026-09-27.md разд.5): чисто временной
+// гейт выше СЛЕП к тому, что STAT больше НЕ ОБНОВЛЯЕТСЯ после Reset —
+// если старый застейдженный STAT переживает Reset (fresh не сбрасывается
+// Reset'ом, main/spectrum.c), elapsed_since_reset РАСТЁТ и через
+// stat_time_sec-5 секунд неравенство станет истинным — старый STAT будет
+// принят как "правдоподобный", воспроизводя исходный баг отложенно.
+// Правило: STAT несёт номер generation (s_reset_gen на момент постановки
+// fresh=true, main/spectrum.c). Если Reset случился ПОСЛЕ постановки (gen
+// STAT'а старше текущего) — STAT принадлежит уже сброшенному набору и не
+// может стать правдоподобным НИКОГДА, независимо от elapsed.
+static inline bool spectrum_reset_stat_is_plausible_gen(uint32_t stat_time_sec,
+                                                          uint32_t elapsed_since_reset_sec,
+                                                          uint32_t stat_stage_gen,
+                                                          uint32_t current_reset_gen)
+{
+    if (stat_stage_gen != current_reset_gen) return false;
+    return spectrum_reset_stat_is_plausible(stat_time_sec, elapsed_since_reset_sec);
+}

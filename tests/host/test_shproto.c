@@ -46,6 +46,8 @@ void test_http_activity_quiet_model(void);
 void test_boot_flag_plan(void);
 // AWF-4: проверка заголовка OTA-образа (main/ota_image_check.h).
 void ota_image_check_suite(void);
+void ota_mark_valid_plan_suite(void);
+void json_uint_fmt_suite(void);
 
 // Тестовая команда. CMD_HISTOGRAM (0x01) объявлена в main/atomspectra.h, но она
 // вне include-path host-сборки; shproto трактует cmd как обычный uint8_t.
@@ -218,6 +220,8 @@ int main(void)
     test_http_activity_quiet_model();
     test_boot_flag_plan();
     ota_image_check_suite();
+    ota_mark_valid_plan_suite();
+    json_uint_fmt_suite();
 
     if (g_failures) {
         printf("\n%d CHECK(S) FAILED\n", g_failures);
