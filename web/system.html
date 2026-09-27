@@ -211,18 +211,14 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <input id="ap-pass-inp" type="text" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;" style="width:100%;padding:9px;background:#0a0c0a;color:#e8efe2;border:1px solid var(--bd);border-radius:6px;box-sizing:border-box;font-family:inherit;font-size:15px">
 <button class="btn" onclick="changeApPass()" data-i18n="field.apPassSave">Сменить пароль AP (перезагрузка)</button>
 <div id="ap-pass-status" class="mut" style="font-size:11px;margin-top:5px"></div>
-<label class="boot-row" style="border-bottom:none;margin-top:6px"><input type="checkbox" id="bc-ap-fallback"><span data-i18n="boot.apFallback">Переходить в полевую точку доступа при потере Wi-Fi</span></label>
-<div class="mut" style="font-size:10.5px;line-height:1.4" data-i18n="boot.apFallbackApply">Действует сразу, без перезагрузки платы.</div>
-</section>
-
-<div class="stack-col">
-<section class="panel">
-<div class="ttl"><span style="color:var(--accent)">&#9202;</span> <span data-i18n="tz.title">Часовой пояс</span></div>
+<!-- #AWF-9: часовой пояс перенесён сюда из отдельной карточки — балансировка высот ряда. -->
+<div style="margin-top:12px;padding-top:10px;border-top:1px solid #1c241c">
 <div class="kv"><span data-i18n="tz.label">Пояс отображения</span>
 <select id="tz-sel" onchange="saveTz()" style="background:var(--panel);color:var(--txt);border:1px solid #444;padding:4px 8px;border-radius:4px;font-family:inherit;font-size:12px"></select>
 </div>
 <div class="mut" style="font-size:11px;line-height:1.5;margin-top:6px" data-i18n="tz.hint">Влияет на ось времени, таблицу и CSV-экспорт вкладки «Мониторинг». Хранится в браузере.</div>
 <div class="mut" id="tz-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
+</div>
 </section>
 
 <section class="panel">
@@ -231,8 +227,12 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <div class="kv"><span data-i18n="wifi.state">Состояние</span><span id="tcp-state">—</span></div>
 <div class="mut" style="font-size:11px;line-height:1.5;margin-top:11px" data-i18n-html="tcp.hint">BecqMoni / AtomSpectra на ПК подключаются к <span id="tcp-addr" style="color:#aeb6a8">—</span> вместо COM-порта.</div>
 <button class="btn green" style="margin-top:13px" onclick="location.reload()" data-i18n="btn.refresh">Обновить</button>
-</section>
+<!-- #AWF-9: чекбокс fallback перенесён сюда из карточки AP — балансировка высот ряда. -->
+<div style="margin-top:12px;padding-top:10px;border-top:1px solid #1c241c">
+<label class="boot-row" style="border-bottom:none"><input type="checkbox" id="bc-ap-fallback"><span data-i18n="boot.apFallback">Переходить в полевую точку доступа при потере Wi-Fi</span></label>
+<div class="mut" style="font-size:10.5px;line-height:1.4" data-i18n="boot.apFallbackApply">Действует сразу, без перезагрузки платы.</div>
 </div>
+</section>
 </div>
 
 <div class="sect-lbl" data-i18n="sect.meas">ИЗМЕРЕНИЯ</div>
@@ -259,16 +259,12 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <div style="margin-top:12px;padding-top:11px;border-top:1px solid #1c241c">
 <div style="font-size:12px;color:#8a9686;margin-bottom:7px" data-i18n="dose.curveLabel">Кривая мощности дозы</div>
 <div class="mut" id="dose-curve-stat" style="font-size:11px;margin-bottom:7px" data-i18n="dose.curveNone">Кривая не загружена (scalar k)</div>
-<div class="mut" style="font-size:11px;line-height:1.5;margin-bottom:8px" data-i18n="dose.curveHint">CSV: channel,k_factor (до 512 точек, без заголовка). Приоритет над scalar k.</div>
-<input type="file" id="dose-curve-file" accept=".csv,.txt" style="font-size:11px;color:var(--txt);background:var(--panel);border:1px solid #444;border-radius:4px;padding:3px 6px;width:100%;margin-bottom:8px">
-<div style="display:flex;gap:8px">
-<button class="btn green" style="margin-top:0" onclick="loadDoseCurveFile('dose-curve-status')" data-i18n="dose.curveLoad">Загрузить CSV</button>
-<button class="btn" style="margin-top:0" onclick="clearDoseCurve('dose-curve-status')" data-i18n="dose.curveClear">Сбросить</button>
-</div>
-<div class="mut" id="dose-curve-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
+<div class="mut" style="font-size:11px;line-height:1.5" data-i18n="dose.curveHint">CSV: channel,k_factor (до 512 точек, без заголовка). Приоритет над scalar k.</div>
 </div>
 </section>
 
+<!-- #AWF-9: загрузка/сброс CSV-кривой перенесены сюда — карточка «Мощность дозы»
+     была заметно выше соседей, а «Резервные копии» короче с пустым местом снизу. -->
 <section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#9654;</span> <span data-i18n="bk.title">Резервные копии спектра</span></div>
 <div class="kv"><span data-i18n="bk.keep">Хранить снимков (0 — выключено)</span>
@@ -282,6 +278,13 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 </div>
 <button class="btn green" onclick="saveBackupConfig()" data-i18n="boot.save">Сохранить</button>
 <div class="mut" id="bk-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
+<div style="margin:4px 0 7px;padding-top:4px;border-top:1px solid #1c241c;font-size:12px;color:#8a9686" data-i18n="dose.curveLabel">Кривая мощности дозы</div>
+<input type="file" id="dose-curve-file" accept=".csv,.txt" style="font-size:11px;color:var(--txt);background:var(--panel);border:1px solid #444;border-radius:4px;padding:3px 6px;width:100%;margin-bottom:8px">
+<div style="display:flex;gap:8px">
+<button class="btn green" style="margin-top:0" onclick="loadDoseCurveFile('dose-curve-status')" data-i18n="dose.curveLoad">Загрузить CSV</button>
+<button class="btn" style="margin-top:0" onclick="clearDoseCurve('dose-curve-status')" data-i18n="dose.curveClear">Сбросить</button>
+</div>
+<div class="mut" id="dose-curve-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
 </section>
 
 </div>
