@@ -92,6 +92,20 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <div class="kv"><span data-i18n="esp.fw">Прошивка</span><span id="fw-ver">—</span></div>
 <div class="kv"><span data-i18n="esp.update">Обновление</span><span id="fw-upd" class="mut">—</span></div>
 <button class="btn" id="fw-upd-btn" onclick="checkUpdate()" data-i18n="esp.checkUpd" style="width:fit-content;margin-left:auto;padding:9px 16px">Проверить обновление</button>
+
+<!-- AWF-5: обновление с GitHub (плата сама качает/ставит; отдельно от ручной .bin-заливки выше) -->
+<div style="margin-top:14px;padding-top:12px;border-top:1px solid #333">
+<div class="kv"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="gh-prerel" onchange="ghChannelSet()"><span data-i18n="ghota.prerelease">Получать предрелизы</span></label></div>
+<div class="kv"><span data-i18n="ghota.title">Обновление с GitHub</span><span id="gh-status" class="mut">—</span></div>
+<div style="display:flex;gap:8px;margin-top:8px">
+<button class="btn" id="gh-check-btn" onclick="ghCheck()" data-i18n="ghota.checkBtn" style="width:fit-content;padding:9px 16px">Проверить на GitHub</button>
+<button class="btn red" id="gh-install-btn" onclick="ghInstall()" data-i18n="ghota.install" style="width:fit-content;padding:9px 16px;display:none">Установить с GitHub</button>
+</div>
+<div style="margin-top:10px;display:none" id="gh-progwrap">
+<div class="bar"><i id="gh-bar" style="width:0%;background:var(--accent)"></i></div>
+<div class="mut" id="gh-progtext" style="font-size:11px;margin-top:4px;text-align:center"></div>
+</div>
+</div>
 <div class="kv"><span data-i18n="esp.uptime">Uptime</span><span id="up">—</span></div>
 <div class="kv"><span data-i18n="esp.freeHeap">Free heap</span><span id="heap-kv">—</span></div>
 <div class="kv"><span data-i18n="esp.minHeap">Min free heap</span><span id="heap-min-kv">—</span></div>
@@ -252,6 +266,18 @@ var DICT={
   "ota.uploading":"Загрузка… не выключайте плату","ota.rebooting":"Готово, плата перезагружается…",
   "ota.httpErr":"Ошибка загрузки (HTTP %1)","ota.netErr":"Ошибка сети","ota.timeout":"Плата не ответила после перезагрузки — проверьте вручную",
   "ota.done":"Обновлено: %1 (раздел %2)",
+  "ghota.title":"Обновление с GitHub","ghota.prerelease":"Получать предрелизы",
+  "ghota.checkBtn":"Проверить на GitHub","ghota.checking":"проверка…","ghota.uptodate":"актуальная версия",
+  "ghota.available":"доступна %1","ghota.install":"Установить с GitHub",
+  "ghota.confirm":"Набор будет прерван, несохранённый спектр потеряется. Установить %1 с GitHub?",
+  "ghota.reason.no_internet":"нет интернета","ghota.reason.network_error":"ошибка сети",
+  "ghota.reason.no_releases":"релизов не найдено","ghota.reason.up_to_date":"уже последняя версия",
+  "ghota.reason.too_old_for_wifi_ota":"версия без обновления по Wi-Fi",
+  "ghota.reason.release_missing_assets":"релиз без нужных файлов",
+  "ghota.st.idle":"—","ghota.st.checking":"проверка…","ghota.st.downloading":"скачивание %1%",
+  "ghota.st.verifying":"проверка образа…","ghota.st.installing":"запись…",
+  "ghota.st.done":"готово, плата перезагружается…","ghota.st.error":"ошибка: %1",
+  "ghota.rebootWait":"ожидание перезагрузки…","ghota.rebootDone":"установлено, версия %1",
   "esp.uptime":"Uptime","esp.freeHeap":"Free heap","esp.minHeap":"Min free heap",
   "wifi.state":"Состояние","wifi.signal":"Уровень сигнала","wifi.reset":"Сбросить WiFi (режим настройки)",
   "wifi.connected":"подключено","wifi.disconnected":"не подключено",
@@ -301,6 +327,18 @@ var DICT={
   "ota.uploading":"Uploading… do not power off the board","ota.rebooting":"Done, board is rebooting…",
   "ota.httpErr":"Upload failed (HTTP %1)","ota.netErr":"Network error","ota.timeout":"Board did not respond after reboot — check manually",
   "ota.done":"Updated: %1 (partition %2)",
+  "ghota.title":"Update from GitHub","ghota.prerelease":"Receive pre-releases",
+  "ghota.checkBtn":"Check on GitHub","ghota.checking":"checking…","ghota.uptodate":"up to date",
+  "ghota.available":"%1 available","ghota.install":"Install from GitHub",
+  "ghota.confirm":"Acquisition will stop, unsaved spectrum will be lost. Install %1 from GitHub?",
+  "ghota.reason.no_internet":"no internet","ghota.reason.network_error":"network error",
+  "ghota.reason.no_releases":"no releases found","ghota.reason.up_to_date":"already up to date",
+  "ghota.reason.too_old_for_wifi_ota":"release predates Wi-Fi OTA",
+  "ghota.reason.release_missing_assets":"release is missing required files",
+  "ghota.st.idle":"—","ghota.st.checking":"checking…","ghota.st.downloading":"downloading %1%",
+  "ghota.st.verifying":"verifying image…","ghota.st.installing":"writing…",
+  "ghota.st.done":"done, board is rebooting…","ghota.st.error":"error: %1",
+  "ghota.rebootWait":"waiting for reboot…","ghota.rebootDone":"installed, version %1",
   "esp.uptime":"Uptime","esp.freeHeap":"Free heap","esp.minHeap":"Min free heap",
   "wifi.state":"State","wifi.signal":"Signal level","wifi.reset":"Reset WiFi (setup mode)",
   "wifi.connected":"connected","wifi.disconnected":"disconnected",
@@ -377,6 +415,96 @@ async function checkUpdate(){
   else{el.className="";el.style.color="var(--accent)";el.textContent=tag+" — "+t("upd.latest");}
  }catch(e){el.className="err";el.textContent=t("upd.err");}
  finally{if(btn)btn.disabled=false;}
+}
+
+/* AWF-5: обновление с GitHub -- плата сама GET /api/ota/github/check,
+ * POST /api/ota/github/install (фоновая задача), опрос /progress. */
+var ghLatestTag="",ghInstallable=false;
+async function ghLoadChannel(){
+ try{var r=await(await fetch("/api/ota/github/channel")).json();
+  document.getElementById("gh-prerel").checked=!!r.prerelease;}catch(e){}
+}
+async function ghChannelSet(){
+ var on=document.getElementById("gh-prerel").checked;
+ try{await post("/api/ota/github/channel",{headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({prerelease:on})});}catch(e){}
+}
+function ghReason(code){return code?t("ghota.reason."+code):"";}
+async function ghCheck(){
+ var st=document.getElementById("gh-status"),btn=document.getElementById("gh-check-btn"),
+     ibtn=document.getElementById("gh-install-btn");
+ st.className="mut";st.textContent=t("ghota.checking");if(btn)btn.disabled=true;
+ ibtn.style.display="none";ghInstallable=false;
+ try{
+  var r=await(await fetch("/api/ota/github/check")).json();
+  ghLatestTag=r.latest||"";
+  if(r.installable){
+   ghInstallable=true;st.className="err";st.textContent=tfmt("ghota.available",r.latest);
+   ibtn.style.display="";
+  }else if(r.newer){
+   st.className="mut";st.textContent=tfmt("ghota.available",r.latest)+" — "+ghReason(r.reason);
+  }else{
+   st.className="";st.style.color=ac();
+   st.textContent=r.reason?ghReason(r.reason):t("ghota.uptodate");
+  }
+ }catch(e){st.className="err";st.textContent=t("ota.netErr");}
+ finally{if(btn)btn.disabled=false;}
+}
+function ghInstall(){
+ if(!ghInstallable)return;
+ if(!confirm(tfmt("ghota.confirm",ghLatestTag)))return;
+ var ibtn=document.getElementById("gh-install-btn"),cbtn=document.getElementById("gh-check-btn"),
+     wrap=document.getElementById("gh-progwrap");
+ ibtn.disabled=true;if(cbtn)cbtn.disabled=true;wrap.style.display="";
+ post("/api/ota/github/install").then(function(r){
+  if(r.ok){ghPollProgress();}
+  else{document.getElementById("gh-status").className="err";
+       document.getElementById("gh-status").textContent=t("ota.netErr");
+       ibtn.disabled=false;if(cbtn)cbtn.disabled=false;}
+ }).catch(function(){ibtn.disabled=false;if(cbtn)cbtn.disabled=false;});
+}
+function ghPollProgress(){
+ var bar=document.getElementById("gh-bar"),txt=document.getElementById("gh-progtext"),
+     st=document.getElementById("gh-status");
+ var iv=setInterval(async function(){
+  var p;try{p=await(await fetch("/api/ota/github/progress")).json();}catch(e){return;}
+  if(!p)return;
+  if(p.state==="downloading"&&p.total>0){
+   var pct=Math.round(p.bytes/p.total*100);
+   if(bar)bar.style.width=pct+"%";
+   if(txt)txt.textContent=tfmt("ghota.st.downloading",pct);
+  }else if(p.state==="error"){
+   clearInterval(iv);
+   st.className="err";st.textContent=tfmt("ghota.st.error",p.error||"?");
+   document.getElementById("gh-install-btn").disabled=false;
+   document.getElementById("gh-check-btn").disabled=false;
+  }else{ghPollProgressTail(p,iv,txt,st);}
+ },1000);
+}
+function ghPollProgressTail(p,iv,txt,st){
+ if(p.state==="done"){
+  clearInterval(iv);
+  if(txt)txt.textContent=t("ghota.rebootWait");
+  ghPollReboot();
+ }else{
+  if(txt)txt.textContent=t("ghota.st."+p.state);
+ }
+}
+function ghPollReboot(){
+ var st=document.getElementById("gh-status");
+ var tries=0,max=40;
+ var iv=setInterval(async function(){
+  tries++;
+  var s=await otaFetchStatus();
+  if(s){
+   clearInterval(iv);
+   st.className="";st.style.color=ac();
+   st.textContent=tfmt("ghota.rebootDone",s.fw_version||"?");
+  }else if(tries>=max){
+   clearInterval(iv);
+   st.className="err";st.textContent=t("ota.timeout");
+  }
+ },3000);
 }
 function ac(){return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#34d3c0';}
 
@@ -712,6 +840,7 @@ async function clearDoseCurve(statusId){
  document.getElementById("langBtn").onclick=function(){setLang(LANG==="ru"?"en":"ru");};
  document.getElementById("ip-chip").textContent=location.hostname;
  await loadCsrf();
+ await ghLoadChannel();   // AWF-5
  await refreshSystem();
  await refreshDevice();
  await refreshSpectrum();

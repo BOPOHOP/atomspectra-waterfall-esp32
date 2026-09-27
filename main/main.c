@@ -3,6 +3,8 @@
 #include "boot_config.h"
 #include "wf_offload.h"   // #REC-11-A2: автономная выгрузка сегментов водопада
 #include "monitor.h"      // #MON-1: серия CPS-мониторинга на плате
+#include "ota_github_client.h"   // AWF-5
+#include "ota_busy.h"            // AWF-5 P1-фикс
 #include "net_time.h"     // #FIELD-5: источник времени (SNTP/браузер/ручной)
 #include "debug_log_ring.h"
 #include "hist_drop_diag.h"
@@ -114,6 +116,8 @@ void app_main(void)
     }
 
     // #FIELD-1: рабочий сетевой стек — общий для Indoor (STA) и Outdoor (полевой AP).
+    ota_busy_init();         // AWF-5 P1-фикс: до обоих OTA-путей
+    ota_gh_client_init();   // AWF-5: до web_server_init — эндпоинты уже могут читать s_progress
     web_server_init();
     monitor_init();      // #MON-1: кольцо серии CPS (6 ч в PSRAM) + задача-подписчик коммитов
     tcp_bridge_init();

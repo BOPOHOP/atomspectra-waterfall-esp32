@@ -48,6 +48,11 @@ void test_boot_flag_plan(void);
 void ota_image_check_suite(void);
 void ota_mark_valid_plan_suite(void);
 void json_uint_fmt_suite(void);
+void version_suite(void);
+void sha256sums_suite(void);
+void gh_parse_suite(void);
+void ota_busy_suite(void);
+void ota_gh_decision_suite(void);
 
 // Тестовая команда. CMD_HISTOGRAM (0x01) объявлена в main/atomspectra.h, но она
 // вне include-path host-сборки; shproto трактует cmd как обычный uint8_t.
@@ -222,6 +227,11 @@ int main(void)
     ota_image_check_suite();
     ota_mark_valid_plan_suite();
     json_uint_fmt_suite();
+    version_suite();
+    sha256sums_suite();
+    gh_parse_suite();
+    ota_busy_suite();
+    ota_gh_decision_suite();
 
     if (g_failures) {
         printf("\n%d CHECK(S) FAILED\n", g_failures);

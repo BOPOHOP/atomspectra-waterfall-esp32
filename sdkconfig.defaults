@@ -110,3 +110,11 @@ CONFIG_APP_REPRODUCIBLE_BUILD=y
 # нового образа (краш/watchdog до esp_ota_mark_app_valid_cancel_rollback()
 # в main.c) бутлоадер сам откатывает на предыдущий рабочий раздел.
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# AWF-5: GitHub OTA скачивает образ (~1.6 МБ) по HTTPS -- mbedTLS-буферы
+# (I/O + RX/TX record buffers на TLS-сессию, обычно десятки КБ) держим на
+# PSRAM, не на internal-heap: приём спектра/водопада не должен голодать по
+# памяти на время скачивания. #AH-1: точный размер экономии не измерялся
+# (нет живой платы в этой сессии) -- решение по документации Kconfig
+# (esp-tls "Use SPIRAM for mbedTLS buffers" в MENUCONFIG.in).
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y

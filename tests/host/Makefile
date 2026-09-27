@@ -28,7 +28,12 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_boot_flag_plan.c \
        test_ota_image_check.c \
        test_ota_mark_valid_plan.c \
-       test_json_uint_fmt.c
+       test_json_uint_fmt.c \
+       test_ota_github_version.c \
+       test_ota_github_sha256sums.c \
+       test_ota_github_parse.c \
+       test_ota_busy.c \
+       test_ota_github_decision.c
 
 test: $(SRCS) test_util.h
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm

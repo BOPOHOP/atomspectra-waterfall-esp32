@@ -38,6 +38,8 @@
 #include "esp_ota_ops.h"          // AWF-4: POST /api/ota (Wi-Fi OTA)
 #include "esp_app_format.h"       // AWF-4: ESP_CHIP_ID_ESP32S3
 #include "ota_image_check.h"      // AWF-4: проверка заголовка образа (host-тест)
+#include "ota_github_client.h"    // AWF-5: обновление с GitHub
+#include "ota_busy.h"              // AWF-5 P1-фикс: общий замок с GitHub-install
 #include <dirent.h>
 
 static const char *TAG = "web";
@@ -503,6 +505,71 @@ static esp_err_t handle_reset(httpd_req_t *req)
     return ESP_OK;
 }
 
+// AWF-5: GET /api/ota/github/check -- сверка последнего релиза GitHub.
+// Ответ строит ota_gh_check() (main/ota_github_client.c).
+static esp_err_t handle_ota_gh_check(httpd_req_t *req)
+{
+    char resp[256];
+    ota_gh_check(resp, sizeof(resp));
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, resp);
+    return ESP_OK;
+}
+
+// AWF-5: POST /api/ota/github/install -- запускает фоновую задачу
+// (ota_github_client.c: install_task); httpd-worker не блокируется на минуты
+// сетевого приёма/прошивки.
+static esp_err_t handle_ota_gh_install(httpd_req_t *req)
+{
+    if (!csrf_check(req)) return ESP_FAIL;
+    esp_err_t e = ota_gh_install_start();
+    if (e != ESP_OK) {
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_sendstr(req, "Install already running or OOM");
+        return ESP_FAIL;
+    }
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
+// AWF-5: GET /api/ota/github/progress -- опрос UI во время установки.
+static esp_err_t handle_ota_gh_progress(httpd_req_t *req)
+{
+    ota_gh_progress_t p = ota_gh_get_progress();
+    static const char *names[] = {"idle","checking","downloading","verifying",
+                                   "installing","done","error"};
+    char resp[192];
+    snprintf(resp, sizeof(resp),
+             "{\"state\":\"%s\",\"bytes\":%" PRIu32 ",\"total\":%" PRIu32 ",\"error\":\"%s\"}",
+             names[p.state], p.bytes, p.total, p.error);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, resp);
+    return ESP_OK;
+}
+
+// AWF-5: GET/POST /api/ota/github/channel -- тумблер "получать предрелизы".
+static esp_err_t handle_ota_gh_channel_get(httpd_req_t *req)
+{
+    char resp[48];
+    snprintf(resp, sizeof(resp), "{\"prerelease\":%s}",
+             ota_gh_prerelease_channel_get() ? "true" : "false");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, resp);
+    return ESP_OK;
+}
+
+static esp_err_t handle_ota_gh_channel_set(httpd_req_t *req)
+{
+    if (!csrf_check(req)) return ESP_FAIL;
+    char body[64] = {0};
+    int total = req->content_len;
+    if (total > 0 && total < (int)sizeof(body)) httpd_req_recv(req, body, total);
+    bool on = strstr(body, "\"prerelease\":true") != NULL;
+    ota_gh_prerelease_channel_set(on);
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
 // AWF-4: POST /api/ota — приём .bin потоком (буфер 4 КБ), запись в неактивный
 // OTA-раздел. CSRF как у остальных мутирующих POST. Тело — application/octet-stream
 // (не multipart): UI шлёт raw ArrayBuffer, curl — `--data-binary @file.bin`.
@@ -516,7 +583,10 @@ static esp_err_t handle_reset(httpd_req_t *req)
 // "штатная сеть подождала", а зависший/враждебный клиент.
 #define OTA_MAX_CONSECUTIVE_TIMEOUTS 30u
 
-static esp_err_t handle_ota(httpd_req_t *req)
+// P1-фикс (verify-awf5-github-ota-2026-09-27.md разд.2.4): переименована в
+// _locked, тело не тронуто -- ota_busy_acquire/release снаружи, одной точкой
+// на функцию (иначе пришлось бы трогать все ~8 return-путей ниже).
+static esp_err_t handle_ota_locked(httpd_req_t *req)
 {
     if (!csrf_check(req)) return ESP_FAIL;
     int total = req->content_len;
@@ -654,6 +724,20 @@ static esp_err_t handle_ota(httpd_req_t *req)
     vTaskDelay(pdMS_TO_TICKS(800));
     esp_restart();
     return ESP_OK;
+}
+
+// P1-фикс: общий замок с GitHub-install_task (main/ota_busy.h) -- занято ->
+// 409, esp_ota_begin() (внутри _locked) вообще не вызывается.
+static esp_err_t handle_ota(httpd_req_t *req)
+{
+    if (!ota_busy_acquire(OTA_BUSY_MANUAL)) {
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_sendstr(req, "GitHub OTA install in progress");
+        return ESP_FAIL;
+    }
+    esp_err_t r = handle_ota_locked(req);
+    ota_busy_release(OTA_BUSY_MANUAL);   // на успехе _locked уже esp_restart() и сюда не дойдёт
+    return r;
 }
 
 // #FW-2/#FW-3: GET текущих настроек «Поведение при старте платы» (NVS).
@@ -2383,7 +2467,7 @@ static esp_err_t handle_404(httpd_req_t *req, httpd_err_code_t err)
 // F1: общий трамплин над uris[] (регистрация ниже, web_server_init) — индекс
 // в user_ctx выбирает исходный обработчик из простого массива функций (без
 // malloc/struct); 80 = запас max_uri_handlers (комментарий ниже, ~53 факт).
-#define WEB_SERVER_URI_MAX 80
+#define WEB_SERVER_URI_MAX 90
 static esp_err_t (*s_wrap_handlers[WEB_SERVER_URI_MAX])(httpd_req_t *);
 
 static esp_err_t activity_trampoline(httpd_req_t *req)
@@ -2416,16 +2500,16 @@ void web_server_init(void)
     // tskNO_AFFINITY позволял httpd (prio 5) исполняться на core 0 рядом с
     // USB-приёмом — уводим целиком.
     config.core_id = 1;
-    // #WF-2/#MON-1/#FIELD-4/#FW-50/issue #52: пересчитано 2026-09-07 по факту, а не
-    // по этому комментарию — он отставал (числился 50, в uris[] был 51).
-    // Сейчас: 53 в uris[] (в т.ч. 2 новых /api/backup/*) + 20 waterfall
-    // (web_waterfall_register: 19 reg + /ws/waterfall) = 73. С прежним лимитом 72
+    // #WF-2/#MON-1/#FIELD-4/#FW-50/issue #52/AWF-5: пересчитано 2026-09-27 по факту
+    // (было 53+20=73, лимит 80 — AWF-5 добавила 6 /api/ota/github/* эндпоинтов).
+    // Сейчас: 59 в uris[] + 20 waterfall (web_waterfall_register: 19 reg +
+    // /ws/waterfall) = 79. С прежним лимитом 80 запас был бы всего +1 —
     // ПОСЛЕДНИЙ обработчик молча не регистрировался бы → тихий 404 (та самая
-    // авария, которой лимит 45 стоил цикла reconnect). 80 даёт запас +7.
+    // авария, которой лимит 45 стоил цикла reconnect). 90 даёт запас +11.
     // Добавляешь эндпоинт — пересчитай:
     //   awk '/httpd_uri_t uris\[\]/,/^    };/' main/web_server.c | grep -cE '^\s*\{"/'
     //   grep -cE '^\s*reg\(server' main/web_waterfall.c   (+1 на /ws/waterfall)
-    config.max_uri_handlers = 80;
+    config.max_uri_handlers = 90;
     config.stack_size = 8192;
     config.max_open_sockets = 11;        // из 16 LWIP-сокетов; запас для tcp_bridge + sntp
     config.lru_purge_enable = true;      // при исчерпании пула закрыть LRU-соединение, не отказывать (errno 23)
@@ -2470,6 +2554,11 @@ void web_server_init(void)
         {"/api/monitor/series",          HTTP_GET,  handle_monitor_series,   NULL},  // #MON-1
         {"/api/reset",                   HTTP_POST, handle_reset,            NULL},
         {"/api/ota",                     HTTP_POST, handle_ota,              NULL},  // AWF-4
+        {"/api/ota/github/check",        HTTP_GET,  handle_ota_gh_check,     NULL},  // AWF-5
+        {"/api/ota/github/install",      HTTP_POST, handle_ota_gh_install,   NULL},  // AWF-5
+        {"/api/ota/github/progress",     HTTP_GET,  handle_ota_gh_progress,  NULL},  // AWF-5
+        {"/api/ota/github/channel",      HTTP_GET,  handle_ota_gh_channel_get, NULL},// AWF-5
+        {"/api/ota/github/channel",      HTTP_POST, handle_ota_gh_channel_set, NULL},// AWF-5
         {"/api/boot-config",             HTTP_GET,  handle_boot_config_get,  NULL},
         {"/api/boot-config",             HTTP_POST, handle_boot_config_set,  NULL},
         {"/api/save",                    HTTP_POST, handle_save,             NULL},
