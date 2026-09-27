@@ -101,6 +101,18 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 </div>
 </section>
 
+<!-- AWF-4: Wi-Fi OTA (демо: реальной заливки нет, demo-shim.js отвечает {ok:true}) -->
+<section class="panel">
+<div class="ttl"><span style="color:var(--accent)">&#8681;</span> <span data-i18n="ota.title">Обновление прошивки</span></div>
+<input type="file" id="ota-file" accept=".bin" style="font-size:11px;color:var(--txt);background:var(--panel);border:1px solid #444;border-radius:4px;padding:3px 6px;width:100%;margin-bottom:8px">
+<button class="btn red" id="ota-btn" onclick="confirmOta()" data-i18n="ota.button" style="margin-top:0">Обновить прошивку</button>
+<div style="margin-top:10px" id="ota-progwrap">
+<div class="bar"><i id="ota-bar" style="width:0%;background:var(--accent)"></i></div>
+<div class="mut" style="font-size:11px;margin-top:4px;text-align:right"><span id="ota-pct">0%</span></div>
+</div>
+<div class="mut" id="ota-status" style="font-size:11px;margin-top:5px;text-align:center;min-height:14px"></div>
+</section>
+
 <section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#8779;</span> WiFi</div>
 <div class="kv"><span data-i18n="wifi.state">Состояние</span><span id="wifi-state">—</span></div>
@@ -235,6 +247,11 @@ var DICT={
   "esp.chip":"Чип","esp.flashPsram":"Flash / PSRAM","esp.flashPsramVal":"16 МБ / 8 МБ",
   "esp.fw":"Прошивка","esp.update":"Обновление","esp.checkUpd":"Проверить обновление",
   "upd.checking":"проверка…","upd.latest":"актуальная версия","upd.available":"доступна %1","upd.dev":"версия новее релиза (dev)","upd.err":"нет связи с GitHub","upd.download":"скачать",
+  "ota.title":"Обновление прошивки","ota.button":"Обновить прошивку",
+  "ota.noFile":"Выберите файл .bin","ota.confirm":"Набор будет прерван, несохранённый спектр потеряется. Обновить прошивку?",
+  "ota.uploading":"Загрузка… не выключайте плату","ota.rebooting":"Готово, плата перезагружается…",
+  "ota.httpErr":"Ошибка загрузки (HTTP %1)","ota.netErr":"Ошибка сети","ota.timeout":"Плата не ответила после перезагрузки — проверьте вручную",
+  "ota.done":"Обновлено: %1 (раздел %2)",
   "esp.uptime":"Uptime","esp.freeHeap":"Free heap","esp.minHeap":"Min free heap",
   "wifi.state":"Состояние","wifi.signal":"Уровень сигнала","wifi.reset":"Сбросить WiFi (режим настройки)",
   "wifi.connected":"подключено","wifi.disconnected":"не подключено",
@@ -279,6 +296,11 @@ var DICT={
   "esp.chip":"Chip","esp.flashPsram":"Flash / PSRAM","esp.flashPsramVal":"16 MB / 8 MB",
   "esp.fw":"Firmware","esp.update":"Update","esp.checkUpd":"Check for update",
   "upd.checking":"checking…","upd.latest":"up to date","upd.available":"%1 available","upd.dev":"newer than release (dev)","upd.err":"no GitHub connection","upd.download":"download",
+  "ota.title":"Firmware update","ota.button":"Update firmware",
+  "ota.noFile":"Select a .bin file","ota.confirm":"Acquisition will stop, unsaved spectrum will be lost. Update firmware?",
+  "ota.uploading":"Uploading… do not power off the board","ota.rebooting":"Done, board is rebooting…",
+  "ota.httpErr":"Upload failed (HTTP %1)","ota.netErr":"Network error","ota.timeout":"Board did not respond after reboot — check manually",
+  "ota.done":"Updated: %1 (partition %2)",
   "esp.uptime":"Uptime","esp.freeHeap":"Free heap","esp.minHeap":"Min free heap",
   "wifi.state":"State","wifi.signal":"Signal level","wifi.reset":"Reset WiFi (setup mode)",
   "wifi.connected":"connected","wifi.disconnected":"disconnected",
@@ -361,6 +383,61 @@ function ac(){return getComputedStyle(document.documentElement).getPropertyValue
 async function loadCsrf(){try{var r=await(await fetch("/api/csrf-token")).json();csrfToken=r.token||""}catch(e){}}
 /* CSRF-1: токен меняется при каждом старте платы — вкладка, открытая до перезагрузки, получала 403 молча. На 403 берём новый токен и повторяем один раз. */
 async function post(url,opts){opts=opts||{};opts.method="POST";var h=opts.headers||{};opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});var r=await fetch(url,opts);if(r.status===403){await loadCsrf();opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});r=await fetch(url,opts)}return r}
+
+/* AWF-4: Wi-Fi OTA (та же логика, что web/system.html). */
+function confirmOta(){
+ var f=document.getElementById("ota-file").files[0];
+ if(!f){alert(t("ota.noFile"));return;}
+ if(!confirm(t("ota.confirm")))return;
+ uploadFirmware(f);
+}
+async function otaFetchStatus(){try{var r=await fetch("/api/status");if(!r.ok)return null;return await r.json();}catch(e){return null;}}
+
+function uploadFirmware(file){
+ var bar=document.getElementById("ota-bar"),pct=document.getElementById("ota-pct"),
+     st=document.getElementById("ota-status"),btn=document.getElementById("ota-btn");
+ btn.disabled=true; st.className="mut"; st.textContent=t("ota.uploading");
+ if(bar)bar.style.width="0%"; if(pct)pct.textContent="0%";
+ var xhr=new XMLHttpRequest();
+ xhr.open("POST","/api/ota",true);
+ xhr.setRequestHeader("Content-Type","application/octet-stream");
+ xhr.setRequestHeader("X-CSRF-Token",csrfToken);
+ xhr.upload.onprogress=function(e){
+  if(!e.lengthComputable)return;
+  var p=Math.round(e.loaded/e.total*100);
+  if(bar)bar.style.width=p+"%"; if(pct)pct.textContent=p+"%";
+ };
+ xhr.onload=function(){
+  if(xhr.status>=200&&xhr.status<300){
+   st.className="";st.style.color=ac();st.textContent=t("ota.rebooting");
+   pollOtaReboot();
+  }else{
+   st.className="err";st.textContent=tfmt("ota.httpErr",xhr.status);btn.disabled=false;
+  }
+ };
+ xhr.onerror=function(){st.className="err";st.textContent=t("ota.netErr");btn.disabled=false;};
+ xhr.send(file);
+}
+
+function pollOtaReboot(){
+ var st=document.getElementById("ota-status"),btn=document.getElementById("ota-btn");
+ var tries=0,max=40;
+ var iv=setInterval(async function(){
+  tries++;
+  var s=await otaFetchStatus();
+  if(s){
+   clearInterval(iv);
+   st.className="";st.style.color=ac();
+   st.textContent=tfmt("ota.done",s.fw_version||"?",s.running_partition||"?");
+   btn.disabled=false;
+   curFwVer=s.fw_version||curFwVer;
+   var fwEl=document.getElementById("fw-ver"); if(fwEl)fwEl.textContent=curFwVer;
+  }else if(tries>=max){
+   clearInterval(iv);
+   st.className="err";st.textContent=t("ota.timeout");btn.disabled=false;
+  }
+ },3000);
+}
 
 function fmtKB(n){return (n/1024).toFixed(0)}
 function fmtUp(s){var d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60),x=s%60;

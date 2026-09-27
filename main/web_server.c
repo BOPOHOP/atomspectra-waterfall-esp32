@@ -35,6 +35,9 @@
 #include "esp_timer.h"
 #include "esp_littlefs.h"
 #include "esp_random.h"
+#include "esp_ota_ops.h"          // AWF-4: POST /api/ota (Wi-Fi OTA)
+#include "esp_app_format.h"       // AWF-4: ESP_CHIP_ID_ESP32S3
+#include "ota_image_check.h"      // AWF-4: проверка заголовка образа (host-тест)
 #include <dirent.h>
 
 static const char *TAG = "web";
@@ -138,6 +141,13 @@ static esp_err_t handle_status(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "tcp_client", tcp_bridge_client_connected());
     // AWF-1 (#3): ФС отформатирована при этой загрузке — видимость сброса flash.
     cJSON_AddBoolToObject(root, "fs_formatted", spectrum_fs_was_formatted());
+    // AWF-4: версия/раздел — UI опрашивает /api/status после OTA-заливки,
+    // чтобы показать новую версию/раздел без /api/system (там fw_version уже
+    // был, handle_system, #FW-28; здесь — тот же app_desc, для той же цели).
+    const esp_app_desc_t *app_desc = esp_app_get_description();
+    cJSON_AddStringToObject(root, "fw_version", app_desc ? app_desc->version : "?");
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    cJSON_AddStringToObject(root, "running_partition", running ? running->label : "?");
     // AWF-3 (#8): раньше "time" был di->time_sec (из -inf, опрос раз в ~30 мин —
     // застывало между опросами, пока spectrum.json со STAT рос каждую секунду;
     // наблюдение 25.09: time=3611 неподвижно против растущего spectrum.json).
@@ -490,6 +500,116 @@ static esp_err_t handle_reset(httpd_req_t *req)
     usb_host_cdc_send(pkt.data, pkt.len);
     spectrum_reset();
     httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
+// AWF-4: POST /api/ota — приём .bin потоком (буфер 4 КБ), запись в неактивный
+// OTA-раздел. CSRF как у остальных мутирующих POST. Тело — application/octet-stream
+// (не multipart): UI шлёт raw ArrayBuffer, curl — `--data-binary @file.bin`.
+static esp_err_t handle_ota(httpd_req_t *req)
+{
+    if (!csrf_check(req)) return ESP_FAIL;
+    int total = req->content_len;
+    if (total <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    const esp_partition_t *update = esp_ota_get_next_update_partition(NULL);
+    if (!update) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No OTA partition");
+        return ESP_FAIL;
+    }
+    if ((size_t)total > update->size) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Image too large for partition");
+        return ESP_FAIL;
+    }
+    // Как spectrum_reset(): прервать автосохранение, НЕ удаляя файлы спектра
+    // (writer не должен драться с OTA-write за flash-freeze/шину). Снимок
+    // спектра/водопада на flash — не трогаем, OTA его не касается.
+    spectrum_autosave_abort();
+
+    esp_ota_handle_t ota = 0;
+    esp_err_t err = esp_ota_begin(update, total, &ota);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "AWF-4: esp_ota_begin: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ota_begin");
+        return ESP_FAIL;
+    }
+
+    // Буфер в куче, не на стеке httpd-worker'а (config.stack_size=8192,
+    // web_server_init) — тот же приём, что handle_devlog (malloc(9000)).
+    const size_t bufsz = 4096;
+    uint8_t *buf = malloc(bufsz);
+    if (!buf) {
+        esp_ota_abort(ota);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+    int remaining = total, received = 0;
+    bool header_checked = false, image_ok = true;
+    while (remaining > 0) {
+        int to_read = remaining < (int)bufsz ? remaining : (int)bufsz;
+        int rd = httpd_req_recv(req, (char *)buf, to_read);
+        if (rd == HTTPD_SOCK_ERR_TIMEOUT) continue;   // повтор, не абор (задача 2)
+        if (rd <= 0) {
+            free(buf);
+            esp_ota_abort(ota);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv error");
+            return ESP_FAIL;
+        }
+        if (!header_checked) {
+            header_checked = true;
+            // main/ota_image_check.h (host-тест tests/host/test_ota_image_check.c):
+            // magic 0xE9 + chip_id ДО esp_ota_end() — не пропускаем битый/чужой образ.
+            if (!ota_image_header_is_valid((const uint8_t *)buf, (size_t)rd, ESP_CHIP_ID_ESP32S3))
+                image_ok = false;
+        }
+        if (!image_ok) break;
+        err = esp_ota_write(ota, buf, rd);
+        if (err != ESP_OK) {
+            free(buf);
+            esp_ota_abort(ota);
+            ESP_LOGE(TAG, "AWF-4: esp_ota_write: %s", esp_err_to_name(err));
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ota_write");
+            return ESP_FAIL;
+        }
+        remaining -= rd;
+        received += rd;
+    }
+    free(buf);
+    if (!image_ok) {
+        esp_ota_abort(ota);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad image header (magic/chip_id)");
+        return ESP_FAIL;
+    }
+
+    // esp_ota_end() сама проверяет образ (SHA-256/подпись при secure boot) и
+    // отвергает мусор эффективнее нашего header-чека выше — тот отбраковывает
+    // раньше (не тратит запись всего .bin), а не заменяет эту проверку.
+    err = esp_ota_end(ota);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "AWF-4: esp_ota_end (image validation failed): %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ota_end: invalid image");
+        return ESP_FAIL;
+    }
+    err = esp_ota_set_boot_partition(update);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "AWF-4: esp_ota_set_boot_partition: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "set_boot_partition");
+        return ESP_FAIL;
+    }
+
+    char resp[128];
+    snprintf(resp, sizeof(resp), "{\"ok\":true,\"bytes\":%d,\"partition\":\"%s\"}",
+             received, update->label);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, resp);
+    ESP_LOGW(TAG, "AWF-4: OTA written %d bytes to '%s', rebooting", received, update->label);
+    // Как handle_reboot_esp/handle_wifi_reset: ответ уже отдан httpd_resp_sendstr
+    // (блокирующий send() успел уйти в TCP-буфер), задержка — дать WiFi/LWIP
+    // время реально протолкнуть его в эфир до esp_restart().
+    vTaskDelay(pdMS_TO_TICKS(800));
+    esp_restart();
     return ESP_OK;
 }
 
@@ -2306,6 +2426,7 @@ void web_server_init(void)
         {"/api/debug/log/config",        HTTP_POST, handle_debug_log_config_set, NULL},  // CSRF
         {"/api/monitor/series",          HTTP_GET,  handle_monitor_series,   NULL},  // #MON-1
         {"/api/reset",                   HTTP_POST, handle_reset,            NULL},
+        {"/api/ota",                     HTTP_POST, handle_ota,              NULL},  // AWF-4
         {"/api/boot-config",             HTTP_GET,  handle_boot_config_get,  NULL},
         {"/api/boot-config",             HTTP_POST, handle_boot_config_set,  NULL},
         {"/api/save",                    HTTP_POST, handle_save,             NULL},

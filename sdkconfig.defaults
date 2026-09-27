@@ -105,3 +105,8 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # identical atomspectra_gw.bin (raw SHA256 comparable without normalization).
 # Forces CONFIG_APP_COMPILE_TIME_DATE=n via Kconfig depends.
 CONFIG_APP_REPRODUCIBLE_BUILD=y
+
+# AWF-4: Wi-Fi OTA (ota_0/ota_1, partitions.csv) — при неуспешном старте
+# нового образа (краш/watchdog до esp_ota_mark_app_valid_cancel_rollback()
+# в main.c) бутлоадер сам откатывает на предыдущий рабочий раздел.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

@@ -25,7 +25,8 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_wifi_return_plan.c \
        test_spectrum_base_plan.c \
        test_http_activity_plan.c \
-       test_boot_flag_plan.c
+       test_boot_flag_plan.c \
+       test_ota_image_check.c
 
 test: $(SRCS) test_util.h
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm

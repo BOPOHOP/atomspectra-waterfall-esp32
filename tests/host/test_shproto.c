@@ -44,6 +44,8 @@ void test_http_404_activity(void);
 void test_http_activity_quiet_model(void);
 // AWF-2a финал: семантика missing-key boot-флага (main/boot_flag_plan.h).
 void test_boot_flag_plan(void);
+// AWF-4: проверка заголовка OTA-образа (main/ota_image_check.h).
+void ota_image_check_suite(void);
 
 // Тестовая команда. CMD_HISTOGRAM (0x01) объявлена в main/atomspectra.h, но она
 // вне include-path host-сборки; shproto трактует cmd как обычный uint8_t.
@@ -215,6 +217,7 @@ int main(void)
     test_http_404_activity();
     test_http_activity_quiet_model();
     test_boot_flag_plan();
+    ota_image_check_suite();
 
     if (g_failures) {
         printf("\n%d CHECK(S) FAILED\n", g_failures);

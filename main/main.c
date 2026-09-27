@@ -13,6 +13,7 @@
 #include <inttypes.h>
 #include <sys/time.h>
 #include "esp_timer.h"
+#include "esp_ota_ops.h"  // AWF-4: mark_app_valid_cancel_rollback после успешного старта
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"   // #FW-13 фикс №2: ожидание коммита свипа перед autosave
@@ -147,8 +148,18 @@ void app_main(void)
     // AWF-2a (#2): проверка возврата из fallback Field AP — раз в 15 тиков
     // (10с*15=150с, ~2.5 мин); функция сама no-op вне Field AP/при клиентах.
     int wifi_return_tick = 0;
+    // AWF-4: rollback-подтверждение образа после Wi-Fi OTA. httpd уже поднят
+    // (web_server_init() выше, безусловно); ждём именно Wi-Fi (в Outdoor/Field
+    // AP wifi_is_connected() истинно, когда есть клиент, — тоже валидный "жив").
+    bool ota_valid_marked = false;
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(10000));
+        if (!ota_valid_marked && wifi_is_connected()) {
+            ota_valid_marked = true;
+            esp_err_t e = esp_ota_mark_app_valid_cancel_rollback();
+            if (e != ESP_OK)
+                ESP_LOGW(TAG, "AWF-4: mark_app_valid_cancel_rollback: %s", esp_err_to_name(e));
+        }
         if (++wifi_return_tick >= 15) {
             wifi_return_tick = 0;
             wifi_manager_try_return_to_sta();
