@@ -134,7 +134,15 @@ static esp_err_t http_get_alloc(const char *url, char **out_buf, size_t *out_len
         .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms = 15000,
         .max_redirection_count = 10,   // GitHub -> objects.githubusercontent.com
-        .buffer_size = 2048,
+        // fix: живой прогон -- заголовки редиректа github.com (Location с подписью
+        // на release-assets.githubusercontent.com + CSP/Vary/HSTS) весят 5207 Б
+        // (curl -sI, живой SHA256SUMS.txt firmware-v1.2.26-rc2); .buffer_size ->
+        // client->buffer_size_rx malloc'ится ОДИН РАЗ этим размером и используется
+        // как верхний предел esp_transport_read() на КАЖДЫЙ вызов внутри цикла
+        // esp_http_client_fetch_headers() (esp_http_client.c:1422); с 2048 цикл
+        // требовал ~3 сетевых чтения на один редирект вместо одного -- запас
+        // с кратным превышением измеренного размера.
+        .buffer_size = 8192,
     };
     esp_http_client_handle_t cl = esp_http_client_init(&hc);
     if (!cl) return ESP_ERR_NO_MEM;
@@ -326,7 +334,7 @@ static void install_task(void *arg)
         .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms = 30000,
         .max_redirection_count = 10,
-        .buffer_size = 4096,
+        .buffer_size = 8192,   // fix -- см. комментарий у http_get_alloc(), тот же механизм
     };
     esp_http_client_handle_t cl = esp_http_client_init(&hc);
     if (!cl) { install_fail(ota, "oom"); goto done; }
