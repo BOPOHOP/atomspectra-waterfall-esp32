@@ -28,8 +28,6 @@ nav a,nav span{ padding:12px 16px; font-size:13px; color:var(--dim); flex-shrink
 nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); }
 .panel{ background:var(--panel); border:1px solid var(--bd); border-radius:10px; padding:16px; }
 .mut{ color:#6b756a; }
-.cols{ columns:3; column-gap:14px; }
-.cols .panel{ break-inside:avoid; page-break-inside:avoid; -webkit-column-break-inside:avoid; margin-bottom:14px; }
 .ttl{ font-size:14px; font-weight:600; color:#e8efe2; margin-bottom:13px; display:flex; align-items:center; gap:8px; }
 .kv{ display:flex; justify-content:space-between; gap:12px; padding:7px 0; border-bottom:1px solid #161c15; font-size:12.5px; }
 .kv span:first-child{ color:#7c887c; } .kv span:last-child{ color:#dfe5dc; text-align:right; }
@@ -42,12 +40,23 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 .chip.lang:hover{ filter:brightness(1.15); }
 .boot-row{ display:flex; align-items:center; gap:9px; padding:8px 0; font-size:12.5px; cursor:pointer; border-bottom:1px solid #161c15; color:#dfe5dc; }
 .boot-row input{ width:16px; height:16px; accent-color:var(--accent); cursor:pointer; flex-shrink:0; }
-/* #UI-33: одна раскладка CSS columns — панели упаковываются плотно, без выравнивания
-   по высоте соседа. Пороги: 3 колонки держатся, пока на колонку остаётся ~350 px
-   (1121 px окна: (1121-44-28)/3 = 350); 2 колонки — до 760 px ((760-44-14)/2 = 351),
-   это прежний порог файла; уже — одна колонка (телефон). */
-@media(max-width:1120px){ .cols{ columns:2; } }
-@media(max-width:760px){ .cols{ columns:1; } }
+/* #AWF-6: grid-area на каждой карточке — визуальный порядок задаётся CSS,
+   не порядком тегов в DOM (это и позволяет мобильному порядку отличаться
+   от desktop-раскладки без физического переноса разметки). */
+.sys-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px;
+ grid-template-areas:
+  "plata wifi  boot"
+  "pribor field backup"
+  ".     tz    dose"
+  ".     tcp   ."
+  "fw    fw    fw"
+  "danger danger danger"; }
+.danger-row{ display:flex; gap:10px; flex-wrap:wrap; }
+.danger-row .btn{ width:auto; flex:1 1 200px; margin-top:0; }
+@media(max-width:760px){
+ .sys-grid{ grid-template-columns:1fr;
+  grid-template-areas:"plata" "pribor" "fw" "wifi" "field" "tz" "tcp" "boot" "backup" "dose" "danger"; }
+}
 </style>
 </head>
 <body>
@@ -66,12 +75,11 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 
 <div class="wrap">
 
-<!-- #UI-33: одна раскладка (CSS columns 3/2/1). Порядок панелей в DOM = порядок на
-     экране: сначала наблюдение (состояние), затем настройка (правится изредка). -->
-<div class="cols">
+<!-- #AWF-6: grid-area на каждой карточке (см. .sys-grid) — визуальный порядок
+     Состояние/Сеть и время/Настройки не зависит от порядка тегов ниже. -->
+<div class="sys-grid">
 
-<!-- наблюдение: прибор, ресурсы платы, связь -->
-<section class="panel">
+<section class="panel" style="grid-area:pribor">
 <div class="ttl"><span style="color:var(--accent)">&#9678;</span> <span data-i18n="dev.title">Прибор · AtomSpectra</span></div>
 <div style="display:flex;justify-content:space-between;margin-bottom:6px">
 <span style="font-size:12px;color:#8a9686" data-i18n="cpu.title">CPU спектрометра</span>
@@ -85,71 +93,30 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <div class="kv"><span data-i18n="dev.cal">Калибровка</span><span id="dev-cal">—</span></div>
 <div class="kv"><span data-i18n="dev.temp">Темп. T1/T2/T3</span><span id="dev-t">—</span></div>
 <div class="kv"><span data-i18n="dev.mode">Режим</span><span id="dev-mode">—</span></div>
-<button class="btn red" onclick="rebootDevice()" data-i18n="dev.reboot">Перезагрузить прибор</button>
 </section>
 
-<section class="panel">
-<div style="display:flex;justify-content:space-between;margin-bottom:8px">
-<span style="font-size:12px;color:#8a9686" data-i18n="flash.title">Flash (LittleFS)</span>
-<span style="font-size:18px;font-weight:600;color:var(--accent)"><span id="flash-cur">—</span> <span class="mut" style="font-size:11px" data-i18n="unit.kb">КБ</span></span>
-</div>
-<canvas id="flashc" width="700" height="90" style="width:100%;height:auto;display:block"></canvas>
-<div class="mut" style="font-size:11px;margin-top:5px"><span data-i18n="flash.used">занято:</span> <span id="flash-sub">—</span></div>
-</section>
-
-<section class="panel">
-<div class="ttl"><span style="color:var(--accent)">&#9636;</span> ESP32-S3</div>
+<section class="panel" style="grid-area:plata">
+<div class="ttl"><span style="color:var(--accent)">&#9636;</span> <span data-i18n="board.title">Плата</span></div>
 <div class="kv"><span data-i18n="esp.chip">Чип</span><span>ESP32-S3 N16R8</span></div>
 <div class="kv"><span data-i18n="esp.flashPsram">Flash / PSRAM</span><span data-i18n="esp.flashPsramVal">16 МБ / 8 МБ</span></div>
 <div class="kv"><span>ESP-IDF</span><span>v5.4</span></div>
 <div class="kv"><span data-i18n="esp.fw">Прошивка</span><span id="fw-ver">—</span></div>
-<div class="kv"><span data-i18n="esp.update">Обновление</span><span id="fw-upd" class="mut">—</span></div>
-<button class="btn" id="fw-upd-btn" onclick="checkUpdate()" data-i18n="esp.checkUpd" style="width:fit-content;margin-left:auto;padding:9px 16px">Проверить обновление</button>
-
-<!-- AWF-5: обновление с GitHub (плата сама качает/ставит; отдельно от ручной .bin-заливки выше) -->
-<div style="margin-top:14px;padding-top:12px;border-top:1px solid #333">
-<div class="kv"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="gh-prerel" onchange="ghChannelSet()"><span data-i18n="ghota.prerelease">Получать предрелизы</span></label></div>
-<div class="kv"><span data-i18n="ghota.title">Обновление с GitHub</span><span id="gh-status" class="mut">—</span></div>
-<div style="display:flex;gap:8px;margin-top:8px">
-<button class="btn" id="gh-check-btn" onclick="ghCheck()" data-i18n="ghota.checkBtn" style="width:fit-content;padding:9px 16px">Проверить на GitHub</button>
-<button class="btn red" id="gh-install-btn" onclick="ghInstall()" data-i18n="ghota.install" style="width:fit-content;padding:9px 16px;display:none">Установить с GitHub</button>
-</div>
-<div style="margin-top:10px;display:none" id="gh-progwrap">
-<div class="bar"><i id="gh-bar" style="width:0%;background:var(--accent)"></i></div>
-<div class="mut" id="gh-progtext" style="font-size:11px;margin-top:4px;text-align:center"></div>
-</div>
-</div>
 <div class="kv"><span data-i18n="esp.uptime">Uptime</span><span id="up">—</span></div>
+<div style="margin-top:10px;display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:#8a9686" data-i18n="heap.title">Свободная память (heap)</span><span style="font-size:14px;font-weight:600;color:var(--accent)"><span id="heap-cur">—</span> <span class="mut" style="font-size:10px" data-i18n="unit.kb">КБ</span></span></div>
+<canvas id="heapc" width="700" height="56" style="width:100%;height:auto;display:block"></canvas>
 <div class="kv"><span data-i18n="esp.freeHeap">Free heap</span><span id="heap-kv">—</span></div>
 <div class="kv"><span data-i18n="esp.minHeap">Min free heap</span><span id="heap-min-kv">—</span></div>
-<div style="margin-top:12px">
+<div class="mut" style="font-size:10.5px;margin-top:2px"><span data-i18n="heap.minSince">мин. с момента старта:</span> <span id="heap-min">—</span> <span data-i18n="unit.kb">КБ</span></div>
+<div style="margin-top:10px;display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:#8a9686" data-i18n="flash.title">Flash (LittleFS)</span><span style="font-size:14px;font-weight:600;color:var(--accent)"><span id="flash-cur">—</span> <span class="mut" style="font-size:10px" data-i18n="unit.kb">КБ</span></span></div>
+<canvas id="flashc" width="700" height="56" style="width:100%;height:auto;display:block"></canvas>
+<div class="mut" style="font-size:10.5px;margin-top:2px"><span data-i18n="flash.used">занято:</span> <span id="flash-sub">—</span></div>
+<div style="margin-top:8px">
 <div style="display:flex;justify-content:space-between;font-size:11px;color:#6b756a;margin-bottom:5px"><span>Flash LittleFS</span><span id="flash-pct">—</span></div>
 <div class="bar"><i id="flash-fi" style="width:0%;background:var(--accent)"></i></div>
 </div>
 </section>
 
-<!-- AWF-4: Wi-Fi OTA -->
-<section class="panel">
-<div class="ttl"><span style="color:var(--accent)">&#8681;</span> <span data-i18n="ota.title">Обновление прошивки</span></div>
-<input type="file" id="ota-file" accept=".bin" style="font-size:11px;color:var(--txt);background:var(--panel);border:1px solid #444;border-radius:4px;padding:3px 6px;width:100%;margin-bottom:8px">
-<button class="btn red" id="ota-btn" onclick="confirmOta()" data-i18n="ota.button" style="margin-top:0">Обновить прошивку</button>
-<div style="margin-top:10px" id="ota-progwrap">
-<div class="bar"><i id="ota-bar" style="width:0%;background:var(--accent)"></i></div>
-<div class="mut" style="font-size:11px;margin-top:4px;text-align:right"><span id="ota-pct">0%</span></div>
-</div>
-<div class="mut" id="ota-status" style="font-size:11px;margin-top:5px;text-align:center;min-height:14px"></div>
-</section>
-
-<section class="panel">
-<div style="display:flex;justify-content:space-between;margin-bottom:8px">
-<span style="font-size:12px;color:#8a9686" data-i18n="heap.title">Свободная память (heap)</span>
-<span style="font-size:18px;font-weight:600;color:var(--accent)"><span id="heap-cur">—</span> <span class="mut" style="font-size:11px" data-i18n="unit.kb">КБ</span></span>
-</div>
-<canvas id="heapc" width="700" height="90" style="width:100%;height:auto;display:block"></canvas>
-<div class="mut" style="font-size:11px;margin-top:5px"><span data-i18n="heap.minSince">мин. с момента старта:</span> <span id="heap-min">—</span> <span data-i18n="unit.kb">КБ</span></div>
-</section>
-
-<section class="panel">
+<section class="panel" style="grid-area:wifi">
 <div class="ttl"><span style="color:var(--accent)">&#8779;</span> WiFi</div>
 <div class="kv"><span data-i18n="wifi.state">Состояние</span><span id="wifi-state">—</span></div>
 <div class="kv"><span>SSID</span><span id="wifi-ssid">—</span></div>
@@ -159,22 +126,17 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <div style="display:flex;justify-content:space-between;font-size:11px;color:#6b756a;margin-bottom:5px"><span data-i18n="wifi.signal">Уровень сигнала</span><span id="rssi-desc">—</span></div>
 <div class="bar"><i id="rssi-fi" style="width:0%;background:var(--accent)"></i></div>
 </div>
-<button class="btn" onclick="resetWifi()" data-i18n="wifi.reset">Сбросить WiFi (режим настройки)</button>
 </section>
 
-<section class="panel">
+<section class="panel" style="grid-area:tcp">
 <div class="ttl"><span style="color:var(--accent)">&#8644;</span> <span data-i18n="tcp.title">TCP-мост (serial-over-WiFi)</span></div>
 <div class="kv"><span data-i18n="tcp.port">Порт</span><span>8234</span></div>
 <div class="kv"><span data-i18n="wifi.state">Состояние</span><span id="tcp-state">—</span></div>
 <div class="mut" style="font-size:11px;line-height:1.5;margin-top:11px" data-i18n-html="tcp.hint">BecqMoni / AtomSpectra на ПК подключаются к <span id="tcp-addr" style="color:#aeb6a8">—</span> вместо COM-порта.</div>
-<div style="display:flex;gap:8px;margin-top:13px">
-<button class="btn red" style="margin-top:0" onclick="rebootEsp()" data-i18n="btn.rebootEsp">Reboot ESP</button>
-<button class="btn green" style="margin-top:0" onclick="location.reload()" data-i18n="btn.refresh">Обновить</button>
-</div>
+<button class="btn green" style="margin-top:13px" onclick="location.reload()" data-i18n="btn.refresh">Обновить</button>
 </section>
 
-<!-- настройка: правится изредка -->
-<section class="panel">
+<section class="panel" style="grid-area:boot">
 <div class="ttl"><span style="color:var(--accent)">&#9654;</span> <span data-i18n="boot.titleBoot">Старт платы</span></div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
 <div>
@@ -198,7 +160,7 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 </section>
 
 <!-- issue #52: автоматические резервные снимки спектра -->
-<section class="panel">
+<section class="panel" style="grid-area:backup">
 <div class="ttl"><span style="color:var(--accent)">&#9654;</span> <span data-i18n="bk.title">Резервные копии спектра</span></div>
 <div class="kv"><span data-i18n="bk.keep">Хранить снимков (0 — выключено)</span>
  <input type="number" id="bk-keep" min="0" max="20" step="1" style="width:80px"></div>
@@ -217,7 +179,7 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <div class="mut" id="bk-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
 </section>
 
-<section class="panel">
+<section class="panel" style="grid-area:dose">
 <div class="ttl"><span style="color:var(--accent)">&#9654;</span> <span data-i18n="dose.title">Мощность дозы</span></div>
 <div class="kv"><span data-i18n="dose.label">Коэффициент k (µSv·h⁻¹/cps)</span>
 <input type="number" id="dose-k-val" min="0" step="any" style="width:130px;background:var(--panel);color:var(--txt);border:1px solid #444;padding:3px 6px;border-radius:4px">
@@ -238,7 +200,7 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 </div>
 </section>
 
-<section class="panel" id="field-panel">
+<section class="panel" id="field-panel" style="grid-area:field">
 <div class="ttl"><span style="color:var(--accent)">&#9788;</span> <span data-i18n="field.title">Полевой режим · Время</span></div>
 <div class="kv"><span data-i18n="field.mode">Режим сети</span><span id="net-mode">—</span></div>
 <div class="kv" id="ap-ssid-row" style="display:none"><span data-i18n="field.apSsid">Точка доступа</span><span id="ap-ssid">—</span></div>
@@ -255,13 +217,52 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <div id="ap-pass-status" class="mut" style="font-size:11px;margin-top:5px"></div>
 </section>
 
-<section class="panel">
+<section class="panel" style="grid-area:tz">
 <div class="ttl"><span style="color:var(--accent)">&#9202;</span> <span data-i18n="tz.title">Часовой пояс</span></div>
 <div class="kv"><span data-i18n="tz.label">Пояс отображения</span>
 <select id="tz-sel" onchange="saveTz()" style="background:var(--panel);color:var(--txt);border:1px solid #444;padding:4px 8px;border-radius:4px;font-family:inherit;font-size:12px"></select>
 </div>
 <div class="mut" style="font-size:11px;line-height:1.5;margin-top:6px" data-i18n="tz.hint">Влияет на ось времени, таблицу и CSV-экспорт вкладки «Мониторинг». Хранится в браузере.</div>
 <div class="mut" id="tz-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
+</section>
+
+<!-- #AWF-6/bug: единая карточка обновления. "Проверить обновление" теперь
+     всегда вызывает /api/ota/github/check -- прежний браузерный checkUpdate()
+     убран как дубль. "Установить с GitHub" видна всегда (disabled, пока
+     check не вернул installable): раньше исчезала целиком (display:none),
+     а сам баг с "невидимым блоком" на живой плате был не в разметке -- страницы
+     отдавались без Cache-Control (main/web_server.c, EMBED_HTML_HANDLER),
+     браузер показывал закешированную вкладку с прошивки ДО OTA. -->
+<section class="panel" style="grid-area:fw">
+<div class="ttl"><span style="color:var(--accent)">&#8681;</span> <span data-i18n="ota.title">Обновление прошивки</span></div>
+<div class="kv"><span data-i18n="esp.fw">Прошивка</span><span id="fw-ver-ota">—</span></div>
+<div class="kv"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="gh-prerel" onchange="ghChannelSet()"><span data-i18n="ghota.prerelease">Получать предрелизы</span></label></div>
+<div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap">
+<button class="btn" id="gh-check-btn" onclick="ghCheck()" data-i18n="ghota.checkBtn" style="width:fit-content;padding:9px 16px">Проверить обновление</button>
+<button class="btn red" id="gh-install-btn" onclick="ghInstall()" data-i18n="ghota.install" style="width:fit-content;padding:9px 16px" disabled>Установить с GitHub</button>
+</div>
+<div class="kv" style="margin-top:8px"><span data-i18n="ghota.title">Результат</span><span id="gh-status" class="mut">—</span></div>
+<div style="margin-top:10px;display:none" id="gh-progwrap">
+<div class="bar"><i id="gh-bar" style="width:0%;background:var(--accent)"></i></div>
+<div class="mut" id="gh-progtext" style="font-size:11px;margin-top:4px;text-align:center"></div>
+</div>
+<div style="margin-top:14px;padding-top:12px;border-top:1px solid #333">
+<div style="font-size:12px;color:#8a9686;margin-bottom:8px" data-i18n="ota.manualTitle">Ручная загрузка .bin</div>
+<input type="file" id="ota-file" accept=".bin" style="font-size:11px;color:var(--txt);background:var(--panel);border:1px solid #444;border-radius:4px;padding:3px 6px;width:100%;margin-bottom:8px">
+<button class="btn red" id="ota-btn" onclick="confirmOta()" data-i18n="ota.button" style="margin-top:0">Обновить прошивку</button>
+<div style="margin-top:10px" id="ota-progwrap">
+<div class="bar"><i id="ota-bar" style="width:0%;background:var(--accent)"></i></div>
+<div class="mut" style="font-size:11px;margin-top:4px;text-align:right"><span id="ota-pct">0%</span></div>
+</div>
+<div class="mut" id="ota-status" style="font-size:11px;margin-top:5px;text-align:center;min-height:14px"></div>
+</div>
+</section><section class="panel" style="grid-area:danger">
+<div class="ttl"><span style="color:var(--accent)">&#9888;</span> <span data-i18n="danger.title">Опасные действия</span></div>
+<div class="danger-row">
+<button class="btn red" onclick="rebootDevice()" data-i18n="dev.reboot">Перезагрузить прибор</button>
+<button class="btn red" onclick="rebootEsp()" data-i18n="btn.rebootEsp">Reboot ESP</button>
+<button class="btn red" onclick="resetWifi()" data-i18n="wifi.reset">Сбросить WiFi (режим настройки)</button>
+</div>
 </section>
 </div>
 </div>
@@ -278,14 +279,14 @@ var DICT={
   "flash.title":"Flash (LittleFS)","flash.used":"занято:",
   "unit.kb":"КБ","unit.mb":"МБ",
   "esp.chip":"Чип","esp.flashPsram":"Flash / PSRAM","esp.flashPsramVal":"16 МБ / 8 МБ",
-  "esp.fw":"Прошивка","esp.update":"Обновление","esp.checkUpd":"Проверить обновление",
-  "upd.checking":"проверка…","upd.latest":"актуальная версия","upd.available":"доступна %1","upd.dev":"версия новее релиза (dev)","upd.err":"нет связи с GitHub","upd.download":"скачать",
-  "ota.title":"Обновление прошивки","ota.button":"Обновить прошивку",
+  "esp.fw":"Прошивка","board.title":"Плата",
+  "ota.title":"Обновление прошивки","ota.button":"Обновить прошивку","ota.manualTitle":"Ручная загрузка .bin",
+  "danger.title":"Опасные действия",
   "ota.noFile":"Выберите файл .bin","ota.confirm":"Набор будет прерван, несохранённый спектр потеряется. Обновить прошивку?",
   "ota.uploading":"Загрузка… не выключайте плату","ota.rebooting":"Готово, плата перезагружается…",
   "ota.httpErr":"Ошибка загрузки (HTTP %1)","ota.netErr":"Ошибка сети","ota.timeout":"Плата не ответила после перезагрузки — проверьте вручную",
-  "ghota.title":"Обновление с GitHub","ghota.prerelease":"Получать предрелизы",
-  "ghota.checkBtn":"Проверить на GitHub","ghota.checking":"проверка…","ghota.uptodate":"актуальная версия",
+  "ghota.title":"Результат","ghota.prerelease":"Получать предрелизы","ghota.release":"страница релиза",
+  "ghota.checkBtn":"Проверить обновление","ghota.checking":"проверка…","ghota.uptodate":"актуальная версия",
   "ghota.available":"доступна %1","ghota.install":"Установить с GitHub",
   "ghota.confirm":"Набор будет прерван, несохранённый спектр потеряется. Установить %1 с GitHub?",
   "ghota.reason.no_internet":"нет интернета","ghota.reason.network_error":"ошибка сети",
@@ -348,14 +349,14 @@ var DICT={
   "flash.title":"Flash (LittleFS)","flash.used":"used:",
   "unit.kb":"KB","unit.mb":"MB",
   "esp.chip":"Chip","esp.flashPsram":"Flash / PSRAM","esp.flashPsramVal":"16 MB / 8 MB",
-  "esp.fw":"Firmware","esp.update":"Update","esp.checkUpd":"Check for update",
-  "upd.checking":"checking…","upd.latest":"up to date","upd.available":"%1 available","upd.dev":"newer than release (dev)","upd.err":"no GitHub connection","upd.download":"download",
-  "ota.title":"Firmware update","ota.button":"Update firmware",
+  "esp.fw":"Firmware","board.title":"Board",
+  "ota.title":"Firmware update","ota.button":"Update firmware","ota.manualTitle":"Manual .bin upload",
+  "danger.title":"Dangerous actions",
   "ota.noFile":"Select a .bin file","ota.confirm":"Acquisition will stop, unsaved spectrum will be lost. Update firmware?",
   "ota.uploading":"Uploading… do not power off the board","ota.rebooting":"Done, board is rebooting…",
   "ota.httpErr":"Upload failed (HTTP %1)","ota.netErr":"Network error","ota.timeout":"Board did not respond after reboot — check manually",
-  "ghota.title":"Update from GitHub","ghota.prerelease":"Receive pre-releases",
-  "ghota.checkBtn":"Check on GitHub","ghota.checking":"checking…","ghota.uptodate":"up to date",
+  "ghota.title":"Result","ghota.prerelease":"Receive pre-releases","ghota.release":"release page",
+  "ghota.checkBtn":"Check for update","ghota.checking":"checking…","ghota.uptodate":"up to date",
   "ghota.available":"%1 available","ghota.install":"Install from GitHub",
   "ghota.confirm":"Acquisition will stop, unsaved spectrum will be lost. Install %1 from GitHub?",
   "ghota.reason.no_internet":"no internet","ghota.reason.network_error":"network error",
@@ -435,26 +436,10 @@ function setLang(l){
 var csrfToken="";
 var heap=[],cpu=[],flash=[];
 var curFwVer="";
-// #FW-28: репо прошивки — latest release сверяется через GitHub API (CORS-открыт, GET anonymous).
-var FW_REPO="VibeEngineering-LLC/atomspectra-waterfall-esp32";
-function verParts(v){return String(v||"").replace(/^v/i,"").split(".").map(function(x){return parseInt(x,10)||0;});}
-function verCmp(a,b){var A=verParts(a),B=verParts(b),n=Math.max(A.length,B.length);for(var i=0;i<n;i++){var d=(A[i]||0)-(B[i]||0);if(d)return d<0?-1:1;}return 0;}
-async function checkUpdate(){
- var el=document.getElementById("fw-upd"),btn=document.getElementById("fw-upd-btn");
- el.className="mut"; el.textContent=t("upd.checking"); if(btn)btn.disabled=true;
- try{
-  var r=await fetch("https://api.github.com/repos/"+FW_REPO+"/releases/latest",{headers:{"Accept":"application/vnd.github+json"}});
-  if(!r.ok)throw 0;
-  var j=await r.json(), tag=j.tag_name||"", url=j.html_url||("https://github.com/"+FW_REPO+"/releases");
-  var c=verCmp(curFwVer,tag);
-  if(c<0){el.className="err";el.innerHTML=tfmt("upd.available",tag)+' · <a href="'+url+'" target="_blank" rel="noopener" style="color:var(--accent)">'+t("upd.download")+'</a>';}
-  else if(c>0){el.className="mut";el.textContent=tag+" — "+t("upd.dev");}
-  else{el.className="";el.style.color="var(--accent)";el.textContent=tag+" — "+t("upd.latest");}
- }catch(e){el.className="err";el.textContent=t("upd.err");}
- finally{if(btn)btn.disabled=false;}
-}
 
-/* AWF-5: обновление с GitHub -- плата сама GET /api/ota/github/check,
+/* #AWF-6 (оператор): "Проверить обновление" -- ОДНА кнопка, идёт только на
+ * /api/ota/github/check (плата сама спрашивает GitHub); старый браузерный
+ * checkUpdate()/verCmp() убран как дубль результата. AWF-5: обновление с GitHub --
  * POST /api/ota/github/install (фоновая задача), опрос /progress. */
 var ghLatestTag="",ghInstallable=false;
 async function ghLoadChannel(){
@@ -467,19 +452,23 @@ async function ghChannelSet(){
   body:JSON.stringify({prerelease:on})});}catch(e){}
 }
 function ghReason(code){return code?t("ghota.reason."+code):"";}
+// #AWF-6: "Установить" не пропадает, а просто disabled, пока не installable.
+function ghLinkHtml(url){
+ return url?(' · <a href="'+url+'" target="_blank" rel="noopener" style="color:var(--accent)">'+t("ghota.release")+'</a>'):"";
+}
 async function ghCheck(){
  var st=document.getElementById("gh-status"),btn=document.getElementById("gh-check-btn"),
      ibtn=document.getElementById("gh-install-btn");
  st.className="mut";st.textContent=t("ghota.checking");if(btn)btn.disabled=true;
- ibtn.style.display="none";ghInstallable=false;
+ ibtn.disabled=true;ghInstallable=false;
  try{
   var r=await(await fetch("/api/ota/github/check")).json();
   ghLatestTag=r.latest||"";
   if(r.installable){
-   ghInstallable=true;st.className="err";st.textContent=tfmt("ghota.available",r.latest);
-   ibtn.style.display="";
+   ghInstallable=true;st.className="err";st.innerHTML=tfmt("ghota.available",r.latest)+ghLinkHtml(r.html_url);
+   ibtn.disabled=false;
   }else if(r.newer){
-   st.className="mut";st.textContent=tfmt("ghota.available",r.latest)+" — "+ghReason(r.reason);
+   st.className="mut";st.innerHTML=tfmt("ghota.available",r.latest)+" — "+ghReason(r.reason)+ghLinkHtml(r.html_url);
   }else{
    st.className="";st.style.color=ac();
    st.textContent=r.reason?ghReason(r.reason):t("ghota.uptodate");
@@ -640,6 +629,7 @@ async function refreshSystem(){
   document.getElementById("up").textContent=fmtUp(r.uptime_sec||0);
   curFwVer=r.fw_version||"";
   document.getElementById("fw-ver").textContent=curFwVer||"—";
+  var fvo=document.getElementById("fw-ver-ota"); if(fvo)fvo.textContent=curFwVer||"—"; // #AWF-6
   var ft=r.flash_total||0, fu=r.flash_used||0;
   var pct=ft>0?(fu/ft*100):0;
   var flashSub=fmtKB(fu)+" / "+fmtKB(ft)+" "+t("unit.kb")+" ("+pct.toFixed(1)+"%)";

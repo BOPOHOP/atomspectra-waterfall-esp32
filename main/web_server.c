@@ -509,7 +509,7 @@ static esp_err_t handle_reset(httpd_req_t *req)
 // Ответ строит ota_gh_check() (main/ota_github_client.c).
 static esp_err_t handle_ota_gh_check(httpd_req_t *req)
 {
-    char resp[256];
+    char resp[512];   // #AWF-6: +html_url (до 200 Б) поверх прежних полей — 256 стало тесно
     ota_gh_check(resp, sizeof(resp));
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, resp);
@@ -988,10 +988,17 @@ static esp_err_t handle_list(httpd_req_t *req)
     return ESP_OK;
 }
 
+// #AWF-6/bug: страницы встроены в прошивку и отдаются по фиксированному URI без
+// версии в пути; без Cache-Control браузер применяет эвристическое кеширование
+// и после OTA (тот же /system, новый бинарник) показывает старую вкладку, пока
+// её не обновят через F5 -- новые блоки в разметке (напр. AWF-5 "Установить с
+// GitHub") тогда не видны, хотя уже зашиты. no-cache = обязательная ревалидация
+// (If-Modified-Since/ETag) на КАЖДЫЙ показ, не "не кешировать вовсе".
 #define EMBED_HTML_HANDLER(fn,sym) static esp_err_t fn(httpd_req_t *req){ \
     extern const uint8_t sym##_start[] asm("_binary_" #sym "_start"); \
     extern const uint8_t sym##_end[]   asm("_binary_" #sym "_end"); \
     httpd_resp_set_type(req,"text/html"); \
+    httpd_resp_set_hdr(req,"Cache-Control","no-cache"); \
     httpd_resp_send(req,(const char *)sym##_start, sym##_end - sym##_start); \
     return ESP_OK; }
 EMBED_HTML_HANDLER(handle_index,        index_html)

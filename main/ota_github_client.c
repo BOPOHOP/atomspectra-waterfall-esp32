@@ -184,7 +184,7 @@ esp_err_t ota_gh_check(char *out_json, size_t out_cap)
     if (!wifi_is_connected()) {
         snprintf(out_json, out_cap,
             "{\"current\":\"%s\",\"latest\":\"\",\"newer\":false,"
-            "\"installable\":false,\"reason\":\"no_internet\"}", cur_str);
+            "\"installable\":false,\"reason\":\"no_internet\",\"html_url\":\"\"}", cur_str);
         return ESP_OK;
     }
 
@@ -193,7 +193,7 @@ esp_err_t ota_gh_check(char *out_json, size_t out_cap)
     if (err != ESP_OK) {
         snprintf(out_json, out_cap,
             "{\"current\":\"%s\",\"latest\":\"\",\"newer\":false,"
-            "\"installable\":false,\"reason\":\"network_error\"}", cur_str);
+            "\"installable\":false,\"reason\":\"network_error\",\"html_url\":\"\"}", cur_str);
         return ESP_OK;
     }
 
@@ -205,7 +205,7 @@ esp_err_t ota_gh_check(char *out_json, size_t out_cap)
         free(buf);
         snprintf(out_json, out_cap,
             "{\"current\":\"%s\",\"latest\":\"\",\"newer\":false,"
-            "\"installable\":false,\"reason\":\"no_releases\"}", cur_str);
+            "\"installable\":false,\"reason\":\"no_releases\",\"html_url\":\"\"}", cur_str);
         return ESP_OK;
     }
 
@@ -217,6 +217,14 @@ esp_err_t ota_gh_check(char *out_json, size_t out_cap)
 
     char latest_str[32];
     fmt_version(&best, latest_str, sizeof(latest_str));
+    // #AWF-6 (оператор): ссылка на страницу релиза рядом с результатом проверки в UI.
+    size_t html_url_len = 0;
+    const char *html_url = ota_gh__string_field(os, oe, "\"html_url\"", &html_url_len);
+    char html_url_buf[200] = "";
+    if (html_url) {
+        size_t n = html_url_len < sizeof(html_url_buf) - 1 ? html_url_len : sizeof(html_url_buf) - 1;
+        memcpy(html_url_buf, html_url, n); html_url_buf[n] = '\0';
+    }
     size_t asset_len, sums_len;
     const char *asset_url = ota_gh_find_asset_url(os, oe, "atomspectra_gw.bin", &asset_len);
     const char *sums_url  = ota_gh_find_asset_url(os, oe, "SHA256SUMS.txt", &sums_len);
@@ -239,9 +247,9 @@ esp_err_t ota_gh_check(char *out_json, size_t out_cap)
 
     snprintf(out_json, out_cap,
         "{\"current\":\"%s\",\"latest\":\"%s\",\"newer\":%s,"
-        "\"installable\":%s,\"reason\":\"%s\"}",
+        "\"installable\":%s,\"reason\":\"%s\",\"html_url\":\"%s\"}",
         cur_str, latest_str, newer ? "true" : "false",
-        installable ? "true" : "false", reason);
+        installable ? "true" : "false", reason, html_url_buf);
     return ESP_OK;
 }
 
