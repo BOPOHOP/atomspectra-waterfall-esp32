@@ -118,3 +118,6 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # (нет живой платы в этой сессии) -- решение по документации Kconfig
 # (esp-tls "Use SPIRAM for mbedTLS buffers" в MENUCONFIG.in).
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+
+# AWF-5 (2026-09-27): 3584 мало, если включён журнал платы (перехватчик кладёт 512 Б на стек каждой задачи)
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192

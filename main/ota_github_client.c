@@ -104,13 +104,20 @@ static esp_err_t http_open_with_redirects(esp_http_client_handle_t cl, int64_t *
 {
     for (int hop = 0; ; hop++) {
         esp_err_t err = esp_http_client_open(cl, 0);
-        if (err != ESP_OK) return err;
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "diag: open() hop=%d err=%s", hop, esp_err_to_name(err));
+            return err;
+        }
         int64_t clen = esp_http_client_fetch_headers(cl);
         int status = esp_http_client_get_status_code(cl);
+        ESP_LOGI(TAG, "hop=%d status=%d clen=%lld", hop, status, (long long)clen);
         ota_http_redirect_action_t act = ota_http_redirect_decide(status, hop, OTA_GH_MAX_REDIRECTS);
         if (act == OTA_HTTP_REDIRECT_STOP_OK) { *out_clen = clen; return ESP_OK; }
         esp_http_client_close(cl);
-        if (act == OTA_HTTP_REDIRECT_STOP_FAIL) return ESP_FAIL;
+        if (act == OTA_HTTP_REDIRECT_STOP_FAIL) {
+            ESP_LOGW(TAG, "diag: redirect stop_fail hop=%d status=%d", hop, status);
+            return ESP_FAIL;
+        }
         // CONTINUE: Location уже распарсен esp-idf при fetch_headers() -- set_redirection
         // переставляет URL клиента на него, дальше открываем заново.
         if (esp_http_client_set_redirection(cl) != ESP_OK) return ESP_FAIL;
@@ -143,6 +150,9 @@ static esp_err_t http_get_alloc(const char *url, char **out_buf, size_t *out_len
         // требовал ~3 сетевых чтения на один редирект вместо одного -- запас
         // с кратным превышением измеренного размера.
         .buffer_size = 8192,
+        // Строка запроса после редиректа GitHub -- подписанный URL ~920 байт;
+        // дефолт buffer_size_tx 512 -> "Out of buffer" (esp_http_client.c:1529-1534).
+        .buffer_size_tx = 4096,
     };
     esp_http_client_handle_t cl = esp_http_client_init(&hc);
     if (!cl) return ESP_ERR_NO_MEM;
@@ -335,6 +345,7 @@ static void install_task(void *arg)
         .timeout_ms = 30000,
         .max_redirection_count = 10,
         .buffer_size = 8192,   // fix -- см. комментарий у http_get_alloc(), тот же механизм
+        .buffer_size_tx = 4096,
     };
     esp_http_client_handle_t cl = esp_http_client_init(&hc);
     if (!cl) { install_fail(ota, "oom"); goto done; }
