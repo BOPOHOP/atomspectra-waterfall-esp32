@@ -40,19 +40,47 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 .chip.lang:hover{ filter:brightness(1.15); }
 .boot-row{ display:flex; align-items:center; gap:9px; padding:8px 0; font-size:12.5px; cursor:pointer; border-bottom:1px solid #161c15; color:#dfe5dc; }
 .boot-row input{ width:16px; height:16px; accent-color:var(--accent); cursor:pointer; flex-shrink:0; }
-/* #AWF-7: три независимые flex-колонки одинаковой ширины вместо grid-areas —
-   grid выравнивал строки по самой высокой карточке (пустоты под короткими
-   карточками); flex-колонка тянет карточки плотно сверху вниз без растяжения
-   по высоте. .sys-stack — общий вертикальный ритм (тот же gap, что и внутри
-   колонки) для блоков во всю ширину (обновление прошивки, опасные действия). */
 .sys-stack{ display:flex; flex-direction:column; gap:14px; }
-.sys-cols{ display:flex; gap:14px; align-items:flex-start; }
-.sys-col{ flex:1 1 0; min-width:0; display:flex; flex-direction:column; gap:14px; }
-.sys-col > .panel{ margin:0; align-self:stretch; }
-.danger-row{ display:flex; gap:10px; flex-wrap:wrap; }
-.danger-row .btn{ width:auto; flex:1 1 200px; margin-top:0; }
+/* #AWF-8: вкладка «Система» по макету оператора — 5 плиток-сводок сверху
+   (клик раскрывает подробную карточку), три подписанных секции (grid3) и
+   «Обслуживание» (ota-danger-row). */
+.sum-grid{ display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; }
+.sum-tile{ background:var(--panel); border:1px solid var(--bd); border-radius:8px; padding:12px; display:flex; flex-direction:column; gap:6px; text-align:left; cursor:pointer; font:inherit; color:var(--txt); }
+.sum-tile:hover{ border-color:rgba(52,211,192,.45); }
+.sum-tile.open{ border-color:var(--accent); }
+.sum-lbl{ font-size:11px; color:#8a9686; }
+.sum-big{ font-size:18px; font-weight:700; line-height:1.2; }
+.sum-sub{ font-size:11px; color:#8a9686; }
+.sum-warn{ font-size:11px; color:#f0c45a; }
+.sum-bar{ height:4px; border-radius:2px; background:#1b211a; overflow:hidden; }
+.sum-bar > i{ display:block; height:100%; border-radius:2px; }
+.sum-bar.deco{ background:repeating-linear-gradient(90deg,#1f3a31 0 3px,transparent 3px 5px); }
+.sect-lbl{ font-size:11px; color:#8a9686; letter-spacing:.12em; text-transform:uppercase; }
+.grid3{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; align-items:start; }
+.stack-col{ display:flex; flex-direction:column; gap:14px; }
+.detail-wrap{ display:none; }
+.detail-wrap.open{ display:block; }
+/* #AWF-8: "Обновление прошивки" (2/3) и "Опасные действия" (1/3) в одну
+   строку вместо полной ширины каждая; верх — align-items:flex-start. */
+.ota-danger-row{ display:flex; gap:14px; align-items:flex-start; }
+.ota-danger-row > .ota-card{ flex:2 1 0; min-width:0; margin:0; }
+.ota-danger-row > .danger-card{ flex:1 1 0; min-width:0; margin:0; }
+.danger-row{ display:flex; flex-direction:column; gap:8px; }
+.danger-row .btn{ width:fit-content; flex:none; margin-top:0; }
+.ota-grid{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:2px; }
+.ota-col-manual{ border-left:1px solid var(--bd); padding-left:16px; }
+.dropzone{ border:1px dashed #3a453a; border-radius:6px; padding:10px; }
+.dropzone.drag{ border-color:var(--accent); background:var(--accent-dim); }
+.dropzone input[type=file]{ width:100%; font-size:11px; color:var(--txt); background:transparent; border:none; padding:2px 0; }
 @media(max-width:900px){
- .sys-cols{ flex-direction:column; }
+ .ota-danger-row{ flex-direction:column; }
+ .sum-grid{ grid-template-columns:repeat(2,minmax(0,1fr)); }
+ .grid3{ grid-template-columns:1fr; }
+ .ota-grid{ grid-template-columns:1fr; }
+ .ota-col-manual{ border-left:none; padding-left:0; border-top:1px solid var(--bd); padding-top:12px; margin-top:4px; }
+}
+@media(max-width:520px){
+ .sum-grid{ grid-template-columns:1fr; }
 }
 </style>
 </head>
@@ -72,12 +100,43 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 
 <div class="wrap">
 
-<!-- #AWF-7: три flex-колонки (Состояние/Сеть и время/Настройки) вместо grid-areas;
-     под ними во всю ширину — Обновление прошивки и Опасные действия, тот же .sys-stack gap. -->
+<!-- #AWF-8: вкладка «Система» по макету оператора (мокап System 1a.dc.html):
+     5 плиток-сводок сверху (клик раскрывает подробную карточку ниже), затем
+     подписанные секции (СЕТЬ И ВРЕМЯ / ИЗМЕРЕНИЯ / ОБСЛУЖИВАНИЕ). -->
 <div class="sys-stack">
-<div class="sys-cols">
+<div class="sum-grid">
+<button type="button" class="sum-tile" id="tile-board" onclick="toggleDetail('board')">
+<span class="sum-lbl"><span data-i18n="board.title">Плата</span> · ESP32-S3</span>
+<span class="sum-big" id="sum-fw">—</span>
+<span class="sum-sub" id="sum-uptime">—</span>
+</button>
+<button type="button" class="sum-tile" id="tile-heap" onclick="toggleDetail('board')">
+<span class="sum-lbl" data-i18n="heap.title">Свободная память (heap)</span>
+<span class="sum-big" style="color:var(--accent)"><span id="sum-heap-kb">—</span> <span data-i18n="unit.kb">КБ</span></span>
+<div class="sum-bar deco"><i></i></div>
+<span class="sum-sub"><span data-i18n="sum.min">мин</span> <span id="sum-heap-min">—</span> <span data-i18n="unit.kb">КБ</span></span>
+</button>
+<button type="button" class="sum-tile" id="tile-flash" onclick="toggleDetail('board')">
+<span class="sum-lbl" data-i18n="flash.title">Flash (LittleFS)</span>
+<span class="sum-big" id="sum-flash-kb">—</span>
+<div class="sum-bar"><i id="sum-flash-bar" style="width:0%;background:var(--accent)"></i></div>
+<span class="sum-sub" id="sum-flash-sub">—</span>
+</button>
+<button type="button" class="sum-tile" id="tile-wifi" onclick="toggleDetail('wifi')">
+<span class="sum-lbl">WiFi · <span id="sum-wifi-ssid">—</span></span>
+<span class="sum-big" id="sum-wifi-rssi">—</span>
+<div class="sum-bar"><i id="sum-wifi-bar" style="width:0%;background:var(--accent)"></i></div>
+<span class="sum-sub" id="sum-wifi-sub">—</span>
+</button>
+<button type="button" class="sum-tile" id="tile-device" onclick="toggleDetail('device')">
+<span class="sum-lbl" data-i18n="dev.title">Прибор · AtomSpectra</span>
+<span class="sum-big" id="sum-cpu-temp" style="color:#f0c45a">—</span>
+<span class="sum-sub" id="sum-usb-ch">—</span>
+<span class="sum-warn" id="sum-cal-warn" style="display:none"></span>
+</button>
+</div>
 
-<div class="sys-col">
+<div class="detail-wrap" id="detail-board">
 <section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#9636;</span> <span data-i18n="board.title">Плата</span></div>
 <div class="kv"><span data-i18n="esp.chip">Чип</span><span>ESP32-S3 N16R8</span></div>
@@ -98,7 +157,9 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <div class="bar"><i id="flash-fi" style="width:0%;background:var(--accent)"></i></div>
 </div>
 </section>
+</div>
 
+<div class="detail-wrap" id="detail-device">
 <section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#9678;</span> <span data-i18n="dev.title">Прибор · AtomSpectra</span></div>
 <div style="display:flex;justify-content:space-between;margin-bottom:6px">
@@ -114,27 +175,9 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <div class="kv"><span data-i18n="dev.temp">Темп. T1/T2/T3</span><span id="dev-t">—</span></div>
 <div class="kv"><span data-i18n="dev.mode">Режим</span><span id="dev-mode">—</span></div>
 </section>
-
-<!-- issue #52: перенесена из "Настройки" в "Состояние" -- балансировка высот
-     колонок (#AWF-7): без переноса "Настройки" были заметно выше остальных. -->
-<section class="panel">
-<div class="ttl"><span style="color:var(--accent)">&#9654;</span> <span data-i18n="bk.title">Резервные копии спектра</span></div>
-<div class="kv"><span data-i18n="bk.keep">Хранить снимков (0 — выключено)</span>
- <input type="number" id="bk-keep" min="0" max="20" step="1" style="width:80px"></div>
-<div class="kv"><span data-i18n="bk.hours">Снимать каждые, часов</span>
- <input type="number" id="bk-hours" min="1" max="168" step="1" style="width:80px"></div>
-<div class="mut" style="font-size:11px;line-height:1.5;margin-top:10px" data-i18n="bk.hint">Плата сама сохраняет спектр на flash с заданным периодом и держит только указанное число последних снимков. После пропадания питания счётчик сессии растёт, и новые снимки не смешиваются со старыми. Снимки видны на вкладке «Сохранённые»; ручные сохранения ротацией не удаляются.</div>
-<div class="mut" style="font-size:11px;margin-top:6px"><span data-i18n="bk.session">Текущая сессия платы</span>: <b id="bk-session">—</b></div>
-<div id="bk-testmode" style="display:none;margin-top:8px;padding:8px;border:1px solid rgba(240,180,60,.45);border-radius:6px;background:rgba(240,180,60,.07);font-size:11px;color:#f0c45a">
-<span data-i18n="bk.testOn">Включён стендовый режим: период считается в МИНУТАХ, не в часах.</span>
-<button class="btn" style="margin-top:6px" onclick="clearBackupTestMode()" data-i18n="bk.testOff">Выключить стендовый режим</button>
-</div>
-<button class="btn green" onclick="saveBackupConfig()" data-i18n="boot.save">Сохранить</button>
-<div class="mut" id="bk-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
-</section>
 </div>
 
-<div class="sys-col">
+<div class="detail-wrap" id="detail-wifi">
 <section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#8779;</span> WiFi</div>
 <div class="kv"><span data-i18n="wifi.state">Состояние</span><span id="wifi-state">—</span></div>
@@ -146,7 +189,10 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <div class="bar"><i id="rssi-fi" style="width:0%;background:var(--accent)"></i></div>
 </div>
 </section>
+</div>
 
+<div class="sect-lbl" data-i18n="sect.net">СЕТЬ И ВРЕМЯ</div>
+<div class="grid3">
 <section class="panel" id="field-panel">
 <div class="ttl"><span style="color:var(--accent)">&#9788;</span> <span data-i18n="field.title">Полевой режим · Время</span></div>
 <div class="kv"><span data-i18n="field.mode">Режим сети</span><span id="net-mode">—</span></div>
@@ -156,14 +202,20 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <input id="manual-time-inp" type="datetime-local" step="1" style="width:100%;padding:9px;background:#0a0c0a;color:#e8efe2;border:1px solid var(--bd);border-radius:6px;box-sizing:border-box;font-family:inherit;font-size:15px;margin-bottom:6px">
 <button class="btn" onclick="setManualTime()" data-i18n="field.setTime">Установить время платы</button>
 <div class="mut" style="font-size:11px;line-height:1.5;margin-top:6px" data-i18n="field.timeHint">В полевом режиме (без интернета) время берётся с телефона автоматически. Поле выше — ручная коррекция (пусто = текущее время телефона).</div>
-<div style="border-top:1px solid var(--bd);margin:12px 0 8px"></div>
+</section>
+
+<section class="panel" id="ap-panel">
+<div class="ttl"><span style="color:var(--accent)">&#128225;</span> <span data-i18n="ap.title">Точка доступа (AP)</span></div>
 <div style="font-size:12px;color:#8a9686;margin-bottom:6px" data-i18n="field.apPassTitle">Пароль полевой точки доступа</div>
 <div id="ap-pass-warn" style="display:none;font-size:11px;color:#f0c45a;margin-bottom:6px" data-i18n="field.passDefaultWarn">Пароль AP — публичный по умолчанию; для людных мест смени пароль.</div>
 <input id="ap-pass-inp" type="text" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;" style="width:100%;padding:9px;background:#0a0c0a;color:#e8efe2;border:1px solid var(--bd);border-radius:6px;box-sizing:border-box;font-family:inherit;font-size:15px">
 <button class="btn" onclick="changeApPass()" data-i18n="field.apPassSave">Сменить пароль AP (перезагрузка)</button>
 <div id="ap-pass-status" class="mut" style="font-size:11px;margin-top:5px"></div>
+<label class="boot-row" style="border-bottom:none;margin-top:6px"><input type="checkbox" id="bc-ap-fallback"><span data-i18n="boot.apFallback">Переходить в полевую точку доступа при потере Wi-Fi</span></label>
+<div class="mut" style="font-size:10.5px;line-height:1.4" data-i18n="boot.apFallbackApply">Действует сразу, без перезагрузки платы.</div>
 </section>
 
+<div class="stack-col">
 <section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#9202;</span> <span data-i18n="tz.title">Часовой пояс</span></div>
 <div class="kv"><span data-i18n="tz.label">Пояс отображения</span>
@@ -181,26 +233,16 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <button class="btn green" style="margin-top:13px" onclick="location.reload()" data-i18n="btn.refresh">Обновить</button>
 </section>
 </div>
+</div>
 
-<div class="sys-col">
+<div class="sect-lbl" data-i18n="sect.meas">ИЗМЕРЕНИЯ</div>
+<div class="grid3">
 <section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#9654;</span> <span data-i18n="boot.titleBoot">Старт платы</span></div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-<div>
-<div style="font-size:12px;color:#8a9686;margin-bottom:8px" data-i18n="boot.secSpec">Спектр</div>
 <label class="boot-row"><input type="checkbox" id="bc-as-spec"><span data-i18n="boot.asSpec">Автозапуск набора спектра</span></label>
-<label class="boot-row"><input type="checkbox" id="bc-clr-spec"><span data-i18n="boot.clrSpec">Очищать спектр при старте</span></label>
-</div>
-<div>
-<div style="font-size:12px;color:#8a9686;margin-bottom:8px" data-i18n="boot.secWf">Водопад</div>
 <label class="boot-row"><input type="checkbox" id="bc-as-wf"><span data-i18n="boot.asWf">Автозапуск записи водопада</span></label>
-<label class="boot-row"><input type="checkbox" id="bc-clr-wf"><span data-i18n="boot.clrWf">Очищать водопад при старте</span></label>
-</div>
-</div>
-<div style="font-size:12px;color:#8a9686;margin:10px 0 8px" data-i18n="boot.secNet">Сеть</div>
-<label class="boot-row"><input type="checkbox" id="bc-ap-fallback"><span data-i18n="boot.apFallback">Переходить в полевую точку доступа при потере Wi-Fi</span></label>
-<div class="mut" style="font-size:11px;line-height:1.5;margin:4px 0 0" data-i18n="boot.apFallbackHint">Выкл (по умолчанию) — во время работы плата в Field AP не уходит, переподключается к роутеру бесконечно. Страховка сохраняется всегда: если Wi-Fi не заработал 5 минут с момента включения питания, Field AP поднимется в любом случае. Вкл — плата уходит в Field AP через 5 минут без роутера и возвращается сама, когда роутер снова виден и с платой никто не работает 10 минут.</div>
-<div class="mut" style="font-size:11px;line-height:1.5;margin:4px 0 0" data-i18n="boot.apFallbackApply">Действует сразу, без перезагрузки платы.</div>
+<label class="boot-row"><input type="checkbox" id="bc-clr-spec"><span data-i18n="boot.clrSpec">Очищать спектр при старте</span></label>
+<label class="boot-row" style="border-bottom:none"><input type="checkbox" id="bc-clr-wf"><span data-i18n="boot.clrWf">Очищать водопад при старте</span></label>
 <div class="mut" style="font-size:11px;line-height:1.5;margin-top:10px" data-i18n="boot.hint">Спектр и Водопад выше — применяются один раз при включении / перезагрузке платы, по умолчанию выключены.</div>
 <button class="btn green" onclick="saveBootConfig('bc-status')" data-i18n="boot.save">Сохранить</button>
 <div class="mut" id="bc-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
@@ -227,36 +269,60 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 </div>
 </section>
 
+<section class="panel">
+<div class="ttl"><span style="color:var(--accent)">&#9654;</span> <span data-i18n="bk.title">Резервные копии спектра</span></div>
+<div class="kv"><span data-i18n="bk.keep">Хранить снимков (0 — выключено)</span>
+ <input type="number" id="bk-keep" min="0" max="20" step="1" style="width:80px"></div>
+<div class="kv"><span data-i18n="bk.hours">Снимать каждые, часов</span>
+ <input type="number" id="bk-hours" min="1" max="168" step="1" style="width:80px"></div>
+<div class="mut" style="font-size:11px;margin-top:6px"><span data-i18n="bk.session">Текущая сессия платы</span>: <b id="bk-session">—</b></div>
+<div id="bk-testmode" style="display:none;margin-top:8px;padding:8px;border:1px solid rgba(240,180,60,.45);border-radius:6px;background:rgba(240,180,60,.07);font-size:11px;color:#f0c45a">
+<span data-i18n="bk.testOn">Включён стендовый режим: период считается в МИНУТАХ, не в часах.</span>
+<button class="btn" style="margin-top:6px" onclick="clearBackupTestMode()" data-i18n="bk.testOff">Выключить стендовый режим</button>
 </div>
+<button class="btn green" onclick="saveBackupConfig()" data-i18n="boot.save">Сохранить</button>
+<div class="mut" id="bk-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
+</section>
+
 </div>
 
-<!-- #AWF-6/bug: единая карточка обновления -- см. историю в git blame. -->
-<section class="panel">
+<div class="sect-lbl" data-i18n="sect.maint">ОБСЛУЖИВАНИЕ</div>
+<div class="ota-danger-row">
+<section class="panel ota-card">
+<div class="ota-grid">
+<div>
 <div class="ttl"><span style="color:var(--accent)">&#8681;</span> <span data-i18n="ota.title">Обновление прошивки</span></div>
-<div class="kv"><span data-i18n="esp.fw">Прошивка</span><span id="fw-ver-ota">—</span></div>
-<div class="kv"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="gh-prerel" onchange="ghChannelSet()"><span data-i18n="ghota.prerelease">Получать предрелизы</span></label></div>
-<div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap">
+<div class="kv" style="align-items:center">
+<span><span data-i18n="esp.fw">Прошивка</span> <b id="fw-ver-ota">—</b></span>
+<label style="display:flex;gap:6px;align-items:center;cursor:pointer;font-size:11px"><input type="checkbox" id="gh-prerel" onchange="ghChannelSet()"><span data-i18n="ghota.prerelease">Получать предрелизы</span></label>
+</div>
+<div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;align-items:center">
 <button class="btn" id="gh-check-btn" onclick="ghCheck()" data-i18n="ghota.checkBtn" style="width:fit-content;padding:9px 16px">Проверить обновление</button>
 <button class="btn red" id="gh-install-btn" onclick="ghInstall()" data-i18n="ghota.install" style="width:fit-content;padding:9px 16px" disabled>Установить с GitHub</button>
 </div>
-<div class="kv" style="margin-top:8px"><span data-i18n="ghota.title">Результат</span><span id="gh-status" class="mut">—</span></div>
-<div style="margin-top:10px;display:none" id="gh-progwrap">
+<div class="mut" style="font-size:11px;margin-top:8px"><span data-i18n="ghota.title">Результат</span>: <span id="gh-status">—</span></div>
+<div style="margin-top:8px;display:none" id="gh-progwrap">
 <div class="bar"><i id="gh-bar" style="width:0%;background:var(--accent)"></i></div>
 <div class="mut" id="gh-progtext" style="font-size:11px;margin-top:4px;text-align:center"></div>
 </div>
-<div style="margin-top:14px;padding-top:12px;border-top:1px solid #333">
-<div style="font-size:12px;color:#8a9686;margin-bottom:8px" data-i18n="ota.manualTitle">Ручная загрузка .bin</div>
-<input type="file" id="ota-file" accept=".bin" style="font-size:11px;color:var(--txt);background:var(--panel);border:1px solid #444;border-radius:4px;padding:3px 6px;width:100%;margin-bottom:8px">
-<button class="btn red" id="ota-btn" onclick="confirmOta()" data-i18n="ota.button" style="margin-top:0">Обновить прошивку</button>
-<div style="margin-top:10px" id="ota-progwrap">
-<div class="bar"><i id="ota-bar" style="width:0%;background:var(--accent)"></i></div>
-<div class="mut" style="font-size:11px;margin-top:4px;text-align:right"><span id="ota-pct">0%</span></div>
 </div>
+<div class="ota-col-manual">
+<div style="font-size:11.5px;color:#8a9686;margin-bottom:6px" data-i18n="ota.manualTitle">Ручная загрузка .bin</div>
+<div class="dropzone" id="ota-dropzone">
+<div class="mut" style="font-size:10.5px;margin-bottom:4px;text-align:center" data-i18n="ota.dropHint">Перетащите файл или выберите</div>
+<input type="file" id="ota-file" accept=".bin">
+</div>
+<div style="margin-top:7px;display:none;align-items:center;gap:8px" id="ota-progwrap">
+<div class="bar" style="flex:1;height:4px"><i id="ota-bar" style="width:0%;background:var(--accent)"></i></div>
+<span class="mut" id="ota-pct" style="font-size:11px;min-width:30px;text-align:right">0%</span>
+</div>
+<button class="btn red" id="ota-btn" onclick="confirmOta()" data-i18n="ota.button" style="width:fit-content;margin-top:9px;padding:9px 14px">Обновить прошивку</button>
 <div class="mut" id="ota-status" style="font-size:11px;margin-top:5px;text-align:center;min-height:14px"></div>
+</div>
 </div>
 </section>
 
-<section class="panel">
+<section class="panel danger-card">
 <div class="ttl"><span style="color:var(--accent)">&#9888;</span> <span data-i18n="danger.title">Опасные действия</span></div>
 <div class="danger-row">
 <button class="btn red" onclick="rebootDevice()" data-i18n="dev.reboot">Перезагрузить прибор</button>
@@ -264,6 +330,7 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <button class="btn red" onclick="resetWifi()" data-i18n="wifi.reset">Сбросить WiFi (режим настройки)</button>
 </div>
 </section>
+</div>
 </div>
 </div>
 
@@ -338,7 +405,11 @@ var DICT={
   "confirm.rebootDev":"Перезагрузить прибор?","confirm.rebootEsp":"Перезагрузить ESP32?","confirm.resetWifi":"Сбросить WiFi и войти в режим настройки?",
   "field.title":"Полевой режим · Время","field.mode":"Режим сети","field.apSsid":"Точка доступа","field.apClients":"Подключено телефонов","field.timeSrc":"Источник времени","field.setTime":"Установить время с телефона","field.timeHint":"В полевом режиме (без интернета) время берётся с телефона. Кнопка задаёт его вручную.","field.apPassTitle":"Пароль полевой точки доступа","field.apPassSave":"Сменить пароль AP (перезагрузка)","field.modeSta":"Домашняя сеть (Indoor)","field.modeAp":"Полевой AP (Outdoor)","field.modeSetup":"Настройка","field.modeApForced":"Outdoor (полевой AP, принудительно)","field.modeApFallback":"Outdoor (полевой AP, fallback)","field.passDefaultWarn":"Пароль AP — публичный по умолчанию; для людных мест смени пароль.","field.srcNone":"нет (1970)","field.srcBrowser":"браузер (авто)","field.srcManual":"ручной","field.passChanged":"Пароль сохранён, перезагрузка...","field.passShort":"Минимум 8 символов","field.confirmPass":"Сменить пароль точки доступа? Плата перезагрузится.",
   "up.d":"д","up.h":"ч","up.m":"м","up.s":"с",
-  "tc":"TC"
+  "tc":"TC",
+  "sect.net":"Сеть и время","sect.meas":"Измерения","sect.maint":"Обслуживание",
+  "ap.title":"Точка доступа (AP)","sum.min":"мин","sum.of":"из","sum.ch":"кан.",
+  "sum.calOk":"калибровка задана","sum.calWarn":"калибровка не задана",
+  "ota.dropHint":"Перетащите файл или выберите"
  },
  en:{
   "page.title":"AtomSpectra · System",
@@ -408,7 +479,11 @@ var DICT={
   "confirm.rebootDev":"Reboot device?","confirm.rebootEsp":"Reboot ESP32?","confirm.resetWifi":"Reset WiFi and enter setup mode?",
   "field.title":"Field mode · Time","field.mode":"Network mode","field.apSsid":"Access point","field.apClients":"Phones connected","field.timeSrc":"Time source","field.setTime":"Set time from phone","field.timeHint":"In field mode (no internet) the time comes from the phone. This button sets it manually.","field.apPassTitle":"Field access point password","field.apPassSave":"Change AP password (reboot)","field.modeSta":"Home network (Indoor)","field.modeAp":"Field AP (Outdoor)","field.modeSetup":"Setup","field.modeApForced":"Outdoor (field AP, forced)","field.modeApFallback":"Outdoor (field AP, fallback)","field.passDefaultWarn":"AP password is public by default; change it for crowded places.","field.srcNone":"none (1970)","field.srcBrowser":"browser (auto)","field.srcManual":"manual","field.passChanged":"Password saved, rebooting...","field.passShort":"Minimum 8 characters","field.confirmPass":"Change access point password? The board will reboot.",
   "up.d":"d","up.h":"h","up.m":"m","up.s":"s",
-  "tc":"TC"
+  "tc":"TC",
+  "sect.net":"Network and time","sect.meas":"Measurements","sect.maint":"Maintenance",
+  "ap.title":"Access point (AP)","sum.min":"min","sum.of":"of","sum.ch":"ch",
+  "sum.calOk":"calibration set","sum.calWarn":"calibration not set",
+  "ota.dropHint":"Drop a file or choose one"
  }
 };
 var LANG=(function(){try{return localStorage.getItem("aswf-lang")||"ru";}catch(e){return"ru";}})();
@@ -550,8 +625,10 @@ async function otaFetchStatus(){try{var r=await fetch("/api/status");if(!r.ok)re
 
 function uploadFirmware(file){
  var bar=document.getElementById("ota-bar"),pct=document.getElementById("ota-pct"),
-     st=document.getElementById("ota-status"),btn=document.getElementById("ota-btn");
+     st=document.getElementById("ota-status"),btn=document.getElementById("ota-btn"),
+     wrap=document.getElementById("ota-progwrap");
  btn.disabled=true; st.className="mut"; st.textContent=t("ota.uploading");
+ if(wrap)wrap.style.display="flex";
  if(bar)bar.style.width="0%"; if(pct)pct.textContent="0%";
  var xhr=new XMLHttpRequest();
  xhr.open("POST","/api/ota",true);
@@ -622,6 +699,7 @@ async function refreshSystem(){
   var heapKB=Math.round((r.free_heap||0)/1024);
   heap.push(heapKB); if(heap.length>80)heap.shift();
   document.getElementById("heap-cur").textContent=heapKB;
+  var shk=document.getElementById("sum-heap-kb"); if(shk)shk.textContent=heapKB;
   document.getElementById("heap-min").textContent=Math.round((r.min_free_heap||0)/1024);
   document.getElementById("heap-kv").textContent=heapKB+" "+t("unit.kb");
   document.getElementById("heap-min-kv").textContent=Math.round((r.min_free_heap||0)/1024)+" "+t("unit.kb");
@@ -630,6 +708,10 @@ async function refreshSystem(){
   curFwVer=r.fw_version||"";
   document.getElementById("fw-ver").textContent=curFwVer||"—";
   var fvo=document.getElementById("fw-ver-ota"); if(fvo)fvo.textContent=curFwVer||"—"; // #AWF-6
+  // #AWF-8: плитки-сводки (новые id, дублируют уже посчитанные значения).
+  var sf=document.getElementById("sum-fw"); if(sf)sf.textContent=curFwVer||"—";
+  var su=document.getElementById("sum-uptime"); if(su)su.textContent="uptime "+fmtUp(r.uptime_sec||0)+" · IDF v5.4";
+  var shm=document.getElementById("sum-heap-min"); if(shm)shm.textContent=Math.round((r.min_free_heap||0)/1024);
   var ft=r.flash_total||0, fu=r.flash_used||0;
   var pct=ft>0?(fu/ft*100):0;
   var flashSub=fmtKB(fu)+" / "+fmtKB(ft)+" "+t("unit.kb")+" ("+pct.toFixed(1)+"%)";
@@ -637,6 +719,10 @@ async function refreshSystem(){
   var ffi=document.getElementById("flash-fi");
   ffi.style.width=pct.toFixed(1)+"%";
   ffi.style.background=pct>90?"#ff8a82":pct>70?"#f0c45a":"var(--accent)";
+  var sfk=document.getElementById("sum-flash-kb"),sfb=document.getElementById("sum-flash-bar"),sfs=document.getElementById("sum-flash-sub");
+  if(sfk)sfk.textContent=fmtKB(fu)+" "+t("unit.kb");
+  if(sfb){sfb.style.width=pct.toFixed(1)+"%";sfb.style.background=ffi.style.background;}
+  if(sfs)sfs.textContent=t("sum.of")+" "+fmtKB(ft)+" "+t("unit.kb")+" ("+pct.toFixed(1)+"%)";
   // #UI-30: график Flash (стиль как у памяти)
   var fuKB=Math.round(fu/1024);
   flash.push(fuKB); if(flash.length>80)flash.shift();
@@ -647,6 +733,7 @@ async function refreshSystem(){
    document.getElementById("wifi-state").innerHTML='<span style="color:var(--accent)">'+t("wifi.connected")+'</span>';
    document.getElementById("wifi-ssid").textContent=r.ssid||"—";
    document.getElementById("wifi-ip").textContent=location.hostname;
+   var sws=document.getElementById("sum-wifi-ssid"); if(sws)sws.textContent=r.ssid||"—";
    var rssi=r.rssi;
    if(typeof rssi==="number"){
     document.getElementById("wifi-rssi").textContent=rssi+" dBm";
@@ -656,6 +743,10 @@ async function refreshSystem(){
     var rfi=document.getElementById("rssi-fi");
     rfi.style.width=qPct.toFixed(0)+"%";
     rfi.style.background=qPct>=70?"var(--accent)":qPct>=40?"#f0c45a":"#ff8a82";
+    var swr=document.getElementById("sum-wifi-rssi"),swb=document.getElementById("sum-wifi-bar"),sws2=document.getElementById("sum-wifi-sub");
+    if(swr)swr.textContent=rssi+" dBm";
+    if(swb){swb.style.width=qPct.toFixed(0)+"%";swb.style.background=rfi.style.background;}
+    if(sws2)sws2.textContent=qDesc+" · "+location.hostname;
    }else{
     document.getElementById("wifi-rssi").textContent="—";
    }
@@ -664,6 +755,9 @@ async function refreshSystem(){
    document.getElementById("wifi-ssid").textContent="—";
    document.getElementById("wifi-ip").textContent=location.hostname;
    document.getElementById("wifi-rssi").textContent="—";
+   var sws0=document.getElementById("sum-wifi-ssid"); if(sws0)sws0.textContent="—";
+   var swr0=document.getElementById("sum-wifi-rssi"); if(swr0)swr0.textContent="—";
+   var sws20=document.getElementById("sum-wifi-sub"); if(sws20)sws20.textContent=t("wifi.disconnected");
   }
   // #FIELD-6: режим сети, статус полевого AP, источник времени
   var nm=r.net_mode||"sta";
@@ -687,6 +781,8 @@ async function refreshSystem(){
    devDot.classList.add("off"); devStat.textContent=t("dev.chipOff"); devChip.classList.add("warn"); devChip.classList.remove("ok");
    document.getElementById("dev-usb").innerHTML='<span style="color:#ff8a82">'+t("dev.disconnected")+'</span>';
   }
+  var suc=document.getElementById("sum-usb-ch");
+  if(suc){var chEl=document.getElementById("dev-ch");suc.textContent=(r.usb_connected?t("dev.connected"):t("dev.disconnected"))+" · "+((chEl&&chEl.textContent!=="—")?chEl.textContent:"—")+" "+t("sum.ch");}
   var tcpClient=!!r.tcp_client;
   document.getElementById("tcp-state").innerHTML=tcpClient?'<span style="color:var(--accent)">'+t("tcp.clientConnected")+'</span>':'<span class="mut">'+t("tcp.free")+'</span>';
   document.getElementById("tcp-addr").textContent=location.hostname+":8234";
@@ -702,13 +798,18 @@ async function refreshDevice(){
    var fmtT=function(v){return (typeof v==="number")?v:"—";};
    var tt=fmtT(r.t1)+" / "+fmtT(r.t2)+" / "+fmtT(r.t3)+" °C";
    document.getElementById("dev-t").textContent=tt;
+   var sct=document.getElementById("sum-cpu-temp");
+   if(sct){var cpuTxt=document.getElementById("cpu-cur").textContent;sct.textContent=(cpuTxt!=="—"?cpuTxt+"% · ":"")+fmtT(r.t1)+"°C";}
   }else{
    document.getElementById("dev-ver").textContent="—";
    document.getElementById("dev-mode").textContent="—";
    document.getElementById("dev-t").textContent="—";
   }
   document.getElementById("dev-serial").textContent=r.serial||"—";
-  document.getElementById("dev-cal").textContent=r.calibration?tfmt("cal.set",r.calibration.length,(r.calib_order||(r.calibration.length-1))):t("cal.unset");
+  var calOk=!!r.calibration;
+  document.getElementById("dev-cal").textContent=calOk?tfmt("cal.set",r.calibration.length,(r.calib_order||(r.calibration.length-1))):t("cal.unset");
+  var scw=document.getElementById("sum-cal-warn");
+  if(scw){scw.style.display=calOk?"none":"";scw.textContent=t("sum.calWarn");}
  }catch(e){}
 }
 
@@ -907,11 +1008,39 @@ async function clearDoseCurve(statusId){
  setTimeout(function(){s.textContent="";},2500);
 }
 
+// #AWF-8: плитки-сводки раскрывают подробную карточку (Плата/Прибор/WiFi).
+// Плитки Плата/Heap/Flash делят одну карточку detail-board.
+var TILE_MAP={board:["tile-board","tile-heap","tile-flash"],device:["tile-device"],wifi:["tile-wifi"]};
+function toggleDetail(key){
+ var dw=document.getElementById("detail-"+key); if(!dw)return;
+ var willOpen=!dw.classList.contains("open");
+ ["board","device","wifi"].forEach(function(k){
+  var el=document.getElementById("detail-"+k); if(el)el.classList.remove("open");
+  (TILE_MAP[k]||[]).forEach(function(tid){var t2=document.getElementById(tid); if(t2)t2.classList.remove("open");});
+ });
+ if(willOpen){
+  dw.classList.add("open");
+  (TILE_MAP[key]||[]).forEach(function(tid){var t2=document.getElementById(tid); if(t2)t2.classList.add("open");});
+ }
+}
+// Drag&drop поверх существующего input[type=file] id="ota-file" — id/логика не меняются.
+function initOtaDropzone(){
+ var dz=document.getElementById("ota-dropzone"),fi=document.getElementById("ota-file");
+ if(!dz||!fi)return;
+ ["dragenter","dragover"].forEach(function(ev){dz.addEventListener(ev,function(e){e.preventDefault();dz.classList.add("drag");});});
+ ["dragleave","drop"].forEach(function(ev){dz.addEventListener(ev,function(e){e.preventDefault();dz.classList.remove("drag");});});
+ dz.addEventListener("drop",function(e){
+  var files=e.dataTransfer&&e.dataTransfer.files;
+  if(files&&files.length)fi.files=files;
+ });
+}
+
 (async function(){
  applyI18n();
  initTz();
  document.getElementById("langBtn").onclick=function(){setLang(LANG==="ru"?"en":"ru");};
  document.getElementById("ip-chip").textContent=location.hostname;
+ initOtaDropzone();
  await loadCsrf();
  await ghLoadChannel();   // AWF-5
  await refreshSystem();
