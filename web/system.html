@@ -254,7 +254,8 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <div class="kv"><span data-i18n="dose.label">Коэффициент k (µSv·h⁻¹/cps)</span>
 <input type="number" id="dose-k-val" min="0" step="any" style="width:130px;background:var(--panel);color:var(--txt);border:1px solid #444;padding:3px 6px;border-radius:4px">
 </div>
-<div class="mut" style="font-size:11px;line-height:1.5;margin-top:6px" data-i18n="dose.hint">0 — мощность дозы не записывается (NaN в файле). Сохраняется в NVS.</div>
+<!-- #AWF-11: min-height — текст короче в EN (1 строка вместо 2), без резерва высоты ряд «ИЗМЕРЕНИЯ» разъезжается при переключении языка. -->
+<div class="mut" style="font-size:11px;line-height:1.5;margin-top:6px;min-height:33px" data-i18n="dose.hint">0 — мощность дозы не записывается (NaN в файле). Сохраняется в NVS.</div>
 <button class="btn green" onclick="saveDoseK('dose-k-status')" data-i18n="dose.save">Сохранить</button>
 <div class="mut" id="dose-k-status" style="font-size:11px;margin-top:5px;text-align:center;min-height:14px"></div>
 <div style="margin-top:12px;padding-top:11px;border-top:1px solid #1c241c">
