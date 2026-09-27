@@ -66,7 +66,7 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 .ota-danger-row > .ota-card{ flex:2 1 0; min-width:0; margin:0; }
 .ota-danger-row > .danger-card{ flex:1 1 0; min-width:0; margin:0; }
 .danger-row{ display:flex; flex-direction:column; gap:8px; }
-.danger-row .btn{ width:fit-content; flex:none; margin-top:0; }
+.danger-row .btn{ width:100%; flex:none; margin-top:0; }
 .ota-grid{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:2px; }
 .ota-col-manual{ border-left:1px solid var(--bd); padding-left:16px; }
 .dropzone{ border:1px dashed #3a453a; border-radius:6px; padding:10px; }
@@ -202,6 +202,8 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <input id="manual-time-inp" type="datetime-local" step="1" style="width:100%;padding:9px;background:#0a0c0a;color:#e8efe2;border:1px solid var(--bd);border-radius:6px;box-sizing:border-box;font-family:inherit;font-size:15px;margin-bottom:6px">
 <button class="btn" onclick="setManualTime()" data-i18n="field.setTime">Установить время платы</button>
 <div class="mut" style="font-size:11px;line-height:1.5;margin-top:6px" data-i18n="field.timeHint">В полевом режиме (без интернета) время берётся с телефона автоматически. Поле выше — ручная коррекция (пусто = текущее время телефона).</div>
+<!-- #AWF-10: статус сохранения часового пояса — сюда, разброс высот ряда был 40px. -->
+<div class="mut" id="tz-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
 </section>
 
 <section class="panel" id="ap-panel">
@@ -217,7 +219,6 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <select id="tz-sel" onchange="saveTz()" style="background:var(--panel);color:var(--txt);border:1px solid #444;padding:4px 8px;border-radius:4px;font-family:inherit;font-size:12px"></select>
 </div>
 <div class="mut" style="font-size:11px;line-height:1.5;margin-top:6px" data-i18n="tz.hint">Влияет на ось времени, таблицу и CSV-экспорт вкладки «Мониторинг». Хранится в браузере.</div>
-<div class="mut" id="tz-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
 </div>
 </section>
 
@@ -227,8 +228,8 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <div class="kv"><span data-i18n="wifi.state">Состояние</span><span id="tcp-state">—</span></div>
 <div class="mut" style="font-size:11px;line-height:1.5;margin-top:11px" data-i18n-html="tcp.hint">BecqMoni / AtomSpectra на ПК подключаются к <span id="tcp-addr" style="color:#aeb6a8">—</span> вместо COM-порта.</div>
 <button class="btn green" style="margin-top:13px" onclick="location.reload()" data-i18n="btn.refresh">Обновить</button>
-<!-- #AWF-9: чекбокс fallback перенесён сюда из карточки AP — балансировка высот ряда. -->
-<div style="margin-top:12px;padding-top:10px;border-top:1px solid #1c241c">
+<!-- #AWF-9/10: чекбокс fallback перенесён сюда из карточки AP — балансировка высот ряда. -->
+<div style="margin-top:6px;padding-top:6px;border-top:1px solid #1c241c">
 <label class="boot-row" style="border-bottom:none"><input type="checkbox" id="bc-ap-fallback"><span data-i18n="boot.apFallback">Переходить в полевую точку доступа при потере Wi-Fi</span></label>
 <div class="mut" style="font-size:10.5px;line-height:1.4" data-i18n="boot.apFallbackApply">Действует сразу, без перезагрузки платы.</div>
 </div>
@@ -260,6 +261,8 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <div style="font-size:12px;color:#8a9686;margin-bottom:7px" data-i18n="dose.curveLabel">Кривая мощности дозы</div>
 <div class="mut" id="dose-curve-stat" style="font-size:11px;margin-bottom:7px" data-i18n="dose.curveNone">Кривая не загружена (scalar k)</div>
 <div class="mut" style="font-size:11px;line-height:1.5" data-i18n="dose.curveHint">CSV: channel,k_factor (до 512 точек, без заголовка). Приоритет над scalar k.</div>
+<!-- #AWF-10: результат загрузки/сброса кривой — сюда же, к её описанию. -->
+<div class="mut" id="dose-curve-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
 </div>
 </section>
 
@@ -284,7 +287,6 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <button class="btn green" style="margin-top:0" onclick="loadDoseCurveFile('dose-curve-status')" data-i18n="dose.curveLoad">Загрузить CSV</button>
 <button class="btn" style="margin-top:0" onclick="clearDoseCurve('dose-curve-status')" data-i18n="dose.curveClear">Сбросить</button>
 </div>
-<div class="mut" id="dose-curve-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
 </section>
 
 </div>
