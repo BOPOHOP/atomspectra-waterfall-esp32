@@ -1249,7 +1249,10 @@ static void reg(httpd_handle_t srv, const char *uri, httpd_method_t m,
     s_wf_wrap_handlers[idx] = h;
     httpd_uri_t u = { .uri = uri, .method = m, .handler = wf_activity_trampoline,
                        .user_ctx = (void *)(intptr_t)idx };
-    httpd_register_uri_handler(srv, &u);
+    // issue #52b (sweep-B задача 7): громкий отказ вместо тихого 404.
+    esp_err_t rerr = httpd_register_uri_handler(srv, &u);
+    if (rerr != ESP_OK)
+        ESP_LOGE(TAG, "issue#52b: register '%s' failed: %s", uri, esp_err_to_name(rerr));
 }
 
 void web_waterfall_register(httpd_handle_t server)
@@ -1287,7 +1290,10 @@ void web_waterfall_register(httpd_handle_t server)
         .uri = "/ws/waterfall", .method = HTTP_GET,
         .handler = h_ws, .user_ctx = NULL, .is_websocket = true,
     };
-    httpd_register_uri_handler(server, &ws);
+    // issue #52b (sweep-B задача 7): та же громкая проверка, что в reg().
+    esp_err_t ws_rerr = httpd_register_uri_handler(server, &ws);
+    if (ws_rerr != ESP_OK)
+        ESP_LOGE(TAG, "issue#52b: register '/ws/waterfall' failed: %s", esp_err_to_name(ws_rerr));
 
     spectrogram_set_row_cb(wf_broadcast);
     ESP_LOGI(TAG, "waterfall endpoints registered");

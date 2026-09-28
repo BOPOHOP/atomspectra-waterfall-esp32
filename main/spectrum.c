@@ -9,6 +9,7 @@
 #include "backup_plan.h"   // issue #52: разбор имени снимка и план ротации
 #include "spectrum_restore_plan.h"  // AWF-1: выбор источника восстановления
 #include "spectrum_base_plan.h"     // AWF-3: сброс прибора и слияние база+прибор
+#include "ota_busy.h"   // sweep-B задача 2: не стартовать периодический автосейв во время OTA
 #include "esp_log.h"
 #include <stddef.h>
 #include <inttypes.h>
@@ -1273,6 +1274,16 @@ bool spectrum_autosave_begin(void)
     ESP_LOGI(TAG, "autosave skipped (HIST_DROP_E1_NO_AUTOSAVE)");
     return false;
 #endif
+    // Доп. наблюдение (verify-awf4-2026-09-27.md:262, sweep-B задача 2): OTA
+    // (ручная ИЛИ GitHub) держит ota_busy занятым на весь приём -- не начинать
+    // НИ новый цикл (s_as_snap==NULL), НИ возобновление после yield здесь:
+    // оба пути открывают/пишут AUTOSAVE_TMP_FILE и дерутся с OTA-записью за
+    // flash/шину. Уже открытый до начала OTA цикл прерывается отдельно --
+    // spectrum_autosave_abort() из handle_ota_locked() (web_server.c:619).
+    if (ota_busy_is_busy()) {
+        ESP_LOGI(TAG, "autosave begin skipped: OTA in progress");
+        return false;
+    }
     if (s_as_abort) {
         spectrum_autosave_consume_abort();
         return false;
@@ -1439,6 +1450,13 @@ void spectrum_autosave(void)
 #endif
     if (s_as_abort)
         spectrum_autosave_consume_abort();
+    // sweep-B задача 2: тот же гейт, что и в spectrum_autosave_begin() --
+    // "force one-shot" путь (main.c:212, offline/fail_streak>=5) не должен
+    // стартовать во время OTA либо.
+    if (ota_busy_is_busy()) {
+        ESP_LOGI(TAG, "autosave (one-shot) skipped: OTA in progress");
+        return;
+    }
     /* One-shot full write — safe when USB analyzer is silent/disconnected
      * (no 1 Hz burst). Used by offline path and as I2 timing baseline. */
     spectrum_data_t *snap = malloc(sizeof(*snap));

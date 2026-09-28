@@ -35,6 +35,8 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_ota_busy.c \
        test_ota_github_decision.c \
        test_ota_github_redirect.c \
+       test_ota_timeout_budget.c \
+       test_ota_github_download_retry.c \
        test_calib_autoread.c \
        test_text_accum.c \
        test_sweepA_small.c \

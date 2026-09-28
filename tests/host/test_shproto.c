@@ -54,6 +54,8 @@ void gh_parse_suite(void);
 void ota_busy_suite(void);
 void ota_gh_decision_suite(void);
 void ota_gh_redirect_suite(void);
+void ota_timeout_budget_suite(void);
+void ota_gh_dl_retry_suite(void);
 // #AWF-12: предикаты авто-считывания калибровки (main/calib_autoread.h).
 void calib_autoread_suite(void);
 void text_accum_predicates_suite(void);
@@ -253,6 +255,8 @@ int main(void)
     ota_busy_suite();
     ota_gh_decision_suite();
     ota_gh_redirect_suite();
+    ota_timeout_budget_suite();
+    ota_gh_dl_retry_suite();
     calib_autoread_suite();
     text_accum_predicates_suite();
     text_accum_triggers_suite();

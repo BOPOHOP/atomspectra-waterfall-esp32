@@ -277,8 +277,13 @@ static void start_captive_portal(void)
             {"/api/field-mode",HTTP_POST, handle_setup_field,    NULL},  // #FIELD-2c
             {"/*",             HTTP_GET,  handle_setup_redirect, NULL},
         };
-        for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++)
-            httpd_register_uri_handler(server, &uris[i]);
+        // issue #52b (sweep-B задача 7): громкий ESP_LOGE вместо тихого 404.
+        for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {
+            esp_err_t rerr = httpd_register_uri_handler(server, &uris[i]);
+            if (rerr != ESP_OK)
+                ESP_LOGE(TAG, "issue#52b: register '%s' failed: %s",
+                         uris[i].uri, esp_err_to_name(rerr));
+        }
         ESP_LOGI(TAG, "Captive portal started");
     }
 }

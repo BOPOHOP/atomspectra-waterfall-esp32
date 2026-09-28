@@ -6,6 +6,7 @@
 #include "ota_github_decision.h"
 #include "ota_github_redirect.h"
 #include "ota_busy.h"
+#include "ota_github_download_retry.h"   // P3 №7 (sweep-B задача 5)
 #include "ota_image_check.h"
 #include "atomspectra.h"      // wifi_is_connected()
 #include "esp_http_client.h"
@@ -100,6 +101,11 @@ static void set_progress(ota_gh_state_t st, uint32_t bytes, uint32_t total, cons
 // 30x на оба ассета релиза, install падал на первом же скачивании. Решение
 // "продолжать/стоп" -- чистая ota_http_redirect_decide() (host-тестируема).
 #define OTA_GH_MAX_REDIRECTS 10
+// P3 №7 (sweep-B задача 5): конечное число попыток ВОЗОБНОВЛЕНИЯ скачивания
+// образа после обрыва -- каждая попытка это TCP+TLS handshake заново (не
+// простой повтор recv() в уже открытом соединении, как у D4/ручной заливки),
+// поэтому меньше, чем 30 у D4: 5 попыток разумны для одиночного клиента.
+#define OTA_GH_DOWNLOAD_MAX_RETRIES 5
 static esp_err_t http_open_with_redirects(esp_http_client_handle_t cl, int64_t *out_clen)
 {
     for (int hop = 0; ; hop++) {
@@ -296,6 +302,44 @@ static void install_fail(esp_ota_handle_t ota, const char *reason)
     set_progress(OTA_GH_ST_ERROR, 0, 0, reason);
 }
 
+// P3 №7 (verify-awf5-github-ota-2026-09-27.md:260, sweep-B задача 5): вызывается
+// из install_task() при esp_http_client_read() < 0 (обрыв/таймаут). Решение --
+// ota_gh_dl_decide() (host-тест test_ota_github_download_retry.c). Возвращает
+// true, если чтение можно продолжать (cl уже переоткрыт и позиционирован).
+static bool ota_gh_download_retry(esp_http_client_handle_t cl, const esp_partition_t *update,
+                                   esp_ota_handle_t *ota, ota_image_walker_t *walker,
+                                   mbedtls_sha256_context *sha, bool *header_checked,
+                                   uint32_t *received, int *dl_attempt, int64_t *clen)
+{
+    esp_http_client_close(cl);
+    (*dl_attempt)++;
+    char range_hdr[32];
+    snprintf(range_hdr, sizeof(range_hdr), "bytes=%" PRIu32 "-", *received);
+    esp_http_client_set_header(cl, "Range", range_hdr);
+    int64_t clen2 = 0;
+    esp_err_t rerr = http_open_with_redirects(cl, &clen2);
+    int status = (rerr == ESP_OK) ? esp_http_client_get_status_code(cl) : -1;
+    ota_gh_dl_retry_action_t act =
+        ota_gh_dl_decide(status, *dl_attempt, OTA_GH_DOWNLOAD_MAX_RETRIES);
+    ESP_LOGW(TAG, "AWF-5 P3#7: download interrupted at %" PRIu32 " bytes, attempt=%d, "
+             "reopen_status=%d -> action=%d", *received, *dl_attempt, status, (int)act);
+    if (act == OTA_GH_DL_GIVE_UP) return false;
+    if (act == OTA_GH_DL_RESTART_ZERO) {
+        if (clen2 > 0 && (size_t)clen2 > update->size) return false;   // как исходная проверка до цикла
+        esp_ota_abort(*ota);
+        if (esp_ota_begin(update, OTA_SIZE_UNKNOWN, ota) != ESP_OK) return false;
+        mbedtls_sha256_free(sha);
+        mbedtls_sha256_init(sha);
+        mbedtls_sha256_starts(sha, 0);
+        ota_image_walker_init(walker);
+        *header_checked = false;
+        *received = 0;
+        *clen = clen2;
+        set_progress(OTA_GH_ST_DOWNLOADING, 0, clen2 > 0 ? (uint32_t)clen2 : 0, NULL);
+    }
+    return true;   // RESUME_RANGE либо успешный RESTART_ZERO -- продолжать чтение
+}
+
 // Фоновая задача: любой сбой -> install_fail() (esp_ota_abort, слот
 // загрузки НЕ меняется, реболута нет) -- по требованию задачи #AWF-5 п.2.
 static void install_task(void *arg)
@@ -371,9 +415,16 @@ static void install_task(void *arg)
     ota_image_walker_init(&walker);
     bool header_checked = false, image_ok = true;
     uint32_t received = 0;
+    int dl_attempt = 0;   // P3 №7: счётчик попыток возобновления
     for (;;) {
         int rd = esp_http_client_read(cl, (char *)buf, 4096);
-        if (rd < 0) { image_ok = false; break; }
+        if (rd < 0) {
+            if (!ota_gh_download_retry(cl, update, &ota, &walker, &sha,
+                                        &header_checked, &received, &dl_attempt, &clen)) {
+                image_ok = false; break;
+            }
+            continue;
+        }
         if (rd == 0) break;
         if (!header_checked) {
             header_checked = true;
