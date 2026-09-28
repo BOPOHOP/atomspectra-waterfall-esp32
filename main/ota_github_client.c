@@ -338,8 +338,17 @@ static bool ota_gh_download_retry(esp_http_client_handle_t cl, const esp_partiti
     if (act == OTA_GH_DL_GIVE_UP) return false;
     if (act == OTA_GH_DL_RESTART_ZERO) {
         if (clen2 > 0 && (size_t)clen2 > update->size) return false;   // как исходная проверка до цикла
+        // М4 сценарий 3: стирание слота (esp_ota_begin, 2 МиБ) идёт секундами —
+        // открытое соединение простаивало бы всё это время и рвалось по таймауту
+        // сервера. Закрываем, стираем, открываем заново уже без Range.
+        esp_http_client_close(cl);
         esp_ota_abort(*ota);
         if (esp_ota_begin(update, OTA_SIZE_UNKNOWN, ota) != ESP_OK) return false;
+        esp_http_client_delete_header(cl, "Range");
+        clen2 = 0;
+        if (http_open_with_redirects(cl, &clen2) != ESP_OK ||
+            esp_http_client_get_status_code(cl) != 200) return false;
+        if (clen2 > 0 && (size_t)clen2 > update->size) return false;
         mbedtls_sha256_free(sha);
         mbedtls_sha256_init(sha);
         mbedtls_sha256_starts(sha, 0);
