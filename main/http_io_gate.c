@@ -92,6 +92,12 @@ static bool gate_enter_common(httpd_req_t *req, uint32_t wait_ms)
     return false;
 }
 
+bool http_io_gate_enter_wait(uint32_t wait_ms)
+{
+    if (!s_slot) http_io_gate_init();
+    return s_slot && xSemaphoreTake(s_slot, pdMS_TO_TICKS(wait_ms)) == pdTRUE;
+}
+
 bool http_io_gate_enter_or_503(httpd_req_t *req)
 {
     return gate_enter_common(req, 0);

@@ -64,6 +64,15 @@ void text_accum_ok_then_inf_suite(void);
 void text_accum_generic_garbage_before_dump_suite(void);
 void text_accum_overflow_suite(void);
 void text_accum_overflow_boundary_suite(void);  // RT2
+// sweep-A 1.2.28: P-009 бюджет гейта, #REC-12 пин чтения, P-042 seg_seq,
+// #FW-19 план экспорта n42, R7 признак калибровки в файловых выводах.
+void http_gate_budget_suite(void);
+void wf_seg_pin_suite(void);
+void wf_seg_seq_suite(void);
+void wf_export_plan_suite(void);
+void calib_export_suite(void);
+void calib_export_sites_suite(void);
+void seg_pin_sites_suite(void);
 
 // Тестовая команда. CMD_HISTOGRAM (0x01) объявлена в main/atomspectra.h, но она
 // вне include-path host-сборки; shproto трактует cmd как обычный uint8_t.
@@ -253,6 +262,13 @@ int main(void)
     text_accum_generic_garbage_before_dump_suite();
     text_accum_overflow_suite();
     text_accum_overflow_boundary_suite();  // RT2
+    http_gate_budget_suite();      // sweep-A
+    wf_seg_pin_suite();
+    wf_seg_seq_suite();
+    wf_export_plan_suite();
+    calib_export_suite();
+    calib_export_sites_suite();
+    seg_pin_sites_suite();
 
     if (g_failures) {
         printf("\n%d CHECK(S) FAILED\n", g_failures);

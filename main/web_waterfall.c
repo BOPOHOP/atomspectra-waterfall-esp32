@@ -5,6 +5,10 @@
 #include "web_util.h"
 #include "wf_offload.h"   // #REC-11-A2: конфиг/статус автономной выгрузки
 #include "http_io_gate.h" // #PERF-2: HEAVY lane for segment/window/export
+#include "http_gate_budget.h" // P-009 (sweep-A): единый бюджет ожидания HEAVY-слота
+#include "calib_export.h"     // R7 (sweep-A): признак «калибровка есть» в файловых выводах
+#include "wf_export_plan.h"   // #FW-19 (sweep-A): экспорт n42 полной истории (host-pure)
+#include "wf_seg_pin.h"       // #REC-12 (sweep-A): WF_PIN_NONE для pull-пина h_segment
 #include "esp_http_server.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -25,17 +29,16 @@ static const char *TAG = "wf_web";
 
 #define WF_WS_MAX        4
 #define WS_INFLIGHT_MAX  8   // P2-3: лимит несброшенных кадров на клиента
-// #PERF-2: сколько ждать HEAVY-слот на /api/waterfall/segment, прежде чем отдать
-// 503. Единственный второй держатель слота — фоновая flash-запись автосейва
-// (десяток миллисекунд), поэтому запаса хватает с большим отрывом. Верхняя
-// граница выбрана НИЖЕ сокетных таймаутов httpd (recv/send_wait_timeout = 3 с):
-// httpd здесь однопоточный, и длинное ожидание в обработчике выбивало бы живые
-// соединения по LRU. Ждать дольше смысла нет и по другой причине: сегменты на
-// flash пишет wf_fs_task под своим s_fs_lock, ворот она не касается вовсе.
-#define WF_SEGMENT_GATE_WAIT_MS 250
-/* #FW-65: Clear unlinks many ~1 MiB files under FSLOCK. Wait longer than
- * the segment GET slot so a short autosave burst can finish first. */
-#define WF_CLEAR_GATE_WAIT_MS   250
+// #PERF-2 / P-009 (sweep-A): сколько ждать HEAVY-слот, прежде чем отдать 503.
+// Прежние 250 мс исходили из «держатель — автосейв, десяток миллисекунд»; это неверно:
+// разовый автосейв / снимок-бэкап / base.bin держат слот ~0,6–0,7 с (fwrite 33 КиБ
+// ~0,45 с + fopen/unlink/rename), и GET сегмента получал 503 при неработавшем кольце.
+// Другой HTTP-запрос держателем быть не может — httpd однозадачный. Значение и
+// обоснование — http_gate_budget.h (2000 мс, ниже сокетного таймаута httpd 3 с).
+#define WF_SEGMENT_GATE_WAIT_MS HTTP_GATE_WAIT_MS
+/* #FW-65: Clear unlinks many ~1 MiB files under FSLOCK; тот же класс ожидания —
+ * тот же бюджет (было 250 мс «длиннее, чем у GET», фактически равно ему). */
+#define WF_CLEAR_GATE_WAIT_MS   HTTP_GATE_WAIT_MS
 
 static httpd_handle_t s_server;
 static int            s_ws_fds[WF_WS_MAX];
@@ -424,7 +427,7 @@ static esp_err_t h_export_aswf(httpd_req_t *req)
         s.interval_sec, (long)first_ts);
     if (n > 0 && n < cap && sp && sp->serial_number[0])
         n += snprintf(hbuf + n, cap - n, ",\"serial\":\"%s\"", sp->serial_number);
-    if (n > 0 && n < cap && sp && sp->calib_valid) {
+    if (n > 0 && n < cap && calib_export_present(sp)) {   // R7: нули/NaN = «не задана»
         n += snprintf(hbuf + n, cap - n, ",\"calibration\":[");
         for (int i = 0; i <= sp->calib_order && n > 0 && n < cap; i++)
             n += snprintf(hbuf + n, cap - n, "%s%.15g", i ? "," : "", sp->calibration[i]);
@@ -476,168 +479,313 @@ static esp_err_t h_export_aswf(httpd_req_t *req)
     return ESP_OK;
 }
 
-/* Контекст отдачи одной строки кольца как <RadMeasurement>. */
-typedef struct {
-    httpd_req_t *req;
-    char        *acc;
-    uint32_t     interval_sec;
-    time_t       started_at;
-    bool         have_cal;
-    uint32_t     r;
-    /* #FW-5: реальные длительности срезов окна (сек). durs[] выровнен с потоком
-       строк stream_window; локальный индекс = r - r0. row_start — накопительное
-       реальное начало текущего среза (StartDateTime). */
-    const uint16_t *durs;
-    uint32_t     r0;
-    time_t       row_start;
-} n42_ctx_t;
+#define WF_N42_ACC 8192
+#define WF_N42_ROWBUF (WF_ROW_BYTES + 128)
 
-static bool n42_row_emit(void *vctx, const uint16_t *row, size_t bytes)
+/* Эмитирует одно измерение в формате N42 XML */
+static bool n42_emit_meas(httpd_req_t *req, char *acc, uint32_t id, int64_t start,
+                          uint32_t dur, bool have_cal, const uint16_t *row)
 {
-    n42_ctx_t *c = (n42_ctx_t *)vctx;
-    (void)bytes;
-    char *acc = c->acc, tbuf[40];
-    struct tm tmv;
-    uint32_t r = c->r++;
-    /* #FW-5: реальная длительность среза (дельта живого времени прибора) вместо
-       номинального interval_sec. dur==0 (или durs нет) → подставляем номинал, чтобы
-       CPS = counts/dur не делился на ноль и таймлайн не застывал. */
-    uint32_t local = r - c->r0;
-    uint32_t dur = c->durs ? c->durs[local] : 0;
-    if (dur == 0) dur = c->interval_sec;
-    time_t ts = c->row_start;
+    char tbuf[40]; struct tm tmv; time_t ts = (time_t)start;
     gmtime_r(&ts, &tmv);
     strftime(tbuf, sizeof(tbuf), "%Y-%m-%dT%H:%M:%SZ", &tmv);
-    int n = snprintf(acc, 8192,
+    int n = snprintf(acc, WF_N42_ACC,
         "  <RadMeasurement id=\"m-%" PRIu32 "\">\n    <MeasurementClassCode>Foreground</MeasurementClassCode>\n    <StartDateTime>%s</StartDateTime>\n    <RealTimeDuration>PT%" PRIu32 "S</RealTimeDuration>\n    <Spectrum id=\"m-%" PRIu32 "-s-1\" radDetectorInformationReference=\"det-1\"%s>\n      <LiveTimeDuration>PT%" PRIu32 "S</LiveTimeDuration>\n      <ChannelData compressionCode=\"CountedZeroes\">",
-        r, tbuf, dur, r, c->have_cal ? " energyCalibrationReference=\"ecal-1\"" : "", dur);
-    c->row_start += dur;   /* #FW-5: следующий срез стартует после этого */
-    if (httpd_resp_send_chunk(c->req, acc, n) != ESP_OK) return false;
+        id, tbuf, dur, id, have_cal ? " energyCalibrationReference=\"ecal-1\"" : "", dur);
+    if (httpd_resp_send_chunk(req, acc, n) != ESP_OK) return false;
     int off = 0; bool first = true; uint32_t i = 0;
     while (i < WF_CHANNELS) {
         int wrote;
         if (row[i] == 0) {
             uint32_t z = 0;
             while (i < WF_CHANNELS && row[i] == 0) { z++; i++; }
-            wrote = snprintf(acc + off, 8192 - off, "%s0 %" PRIu32, first ? "" : " ", z);
+            wrote = snprintf(acc + off, WF_N42_ACC - off, "%s0 %" PRIu32, first ? "" : " ", z);
         } else {
-            wrote = snprintf(acc + off, 8192 - off, "%s%u", first ? "" : " ", (unsigned)row[i]); i++;
+            wrote = snprintf(acc + off, WF_N42_ACC - off, "%s%u", first ? "" : " ", (unsigned)row[i]); i++;
         }
         off += wrote; first = false;
-        if (off > 8192 - 32) { if (httpd_resp_send_chunk(c->req, acc, off) != ESP_OK) return false; off = 0; }
+        if (off > WF_N42_ACC - 32) { if (httpd_resp_send_chunk(req, acc, off) != ESP_OK) return false; off = 0; }
     }
-    if (off > 0) { if (httpd_resp_send_chunk(c->req, acc, off) != ESP_OK) return false; }
-    n = snprintf(acc, 8192, "</ChannelData>\n    </Spectrum>\n  </RadMeasurement>\n");
-    if (httpd_resp_send_chunk(c->req, acc, n) != ESP_OK) return false;
+    if (off > 0) { if (httpd_resp_send_chunk(req, acc, off) != ESP_OK) return false; }
+    n = snprintf(acc, WF_N42_ACC, "</ChannelData>\n    </Spectrum>\n  </RadMeasurement>\n");
+    return httpd_resp_send_chunk(req, acc, n) == ESP_OK;
+}
+
+/* Контекст экспорта N42 */
+typedef struct {
+    httpd_req_t *req;
+    char        *acc;
+    uint8_t     *rowbuf;      /* WF_N42_ROWBUF bytes, PSRAM */
+    char        *hdr;         /* WF_HDR_RESERVE + 1 bytes, PSRAM */
+    bool         have_cal;
+    uint32_t     id;          /* running RadMeasurement counter */
+    uint32_t     def_interval;/* s.interval_sec — fallback when a segment header has no interval_sec */
+    uint32_t     skipped;     /* segments/rows that disappeared before being read (logged at the end) */
+} n42_exp_t;
+
+/* Поток одного сегмента с флеш-памяти */
+static int n42_stream_segment(n42_exp_t *x, uint32_t idx)
+{
+    FILE *f = NULL;
+    int res = 0; /* 0 = fatal, 1 = ok/skipped */
+    bool gate = false;   /* HEAVY-слот держим мы — отпустить на любом выходе */
+
+    if (!spectrogram_seg_pin_read(idx)) { x->skipped++; return 1; }
+
+    char path[128]; snprintf(path, sizeof(path), "%.90s/seg_%05" PRIu32 ".aswf", spectrogram_seg_dir(), idx);
+
+    if (!http_io_gate_enter_wait(HTTP_GATE_WAIT_MS)) {
+        ESP_LOGW(TAG, "n42 export: HEAVY gate timeout, abort");
+        res = 0; goto cleanup;
+    }
+    gate = true;
+
+    struct stat sb;
+    /* Файл исчез/нечитаем/не ASWF — пропуск сегмента (res=1, skipped++), не обрыв экспорта. */
+    res = 1;
+    if (stat(path, &sb) != 0) { x->skipped++; goto cleanup; }
+
+    f = fopen(path, "rb");
+    if (!f) { x->skipped++; goto cleanup; }
+
+    uint8_t magic[4]; uint32_t hlen_le = 0;
+    if (fread(magic, 1, 4, f) != 4 || memcmp(magic, "ASWF", 4) != 0) { x->skipped++; goto cleanup_close; }
+    uint8_t hl_bytes[4];
+    if (fread(hl_bytes, 1, 4, f) != 4) { x->skipped++; goto cleanup_close; }
+    hlen_le = (uint32_t)hl_bytes[0] | ((uint32_t)hl_bytes[1] << 8) | ((uint32_t)hl_bytes[2] << 16) | ((uint32_t)hl_bytes[3] << 24);
+
+    if (hlen_le < 64 || hlen_le > WF_HDR_RESERVE) { x->skipped++; goto cleanup_close; }
+
+    if (fread(x->hdr, 1, hlen_le, f) != hlen_le) { x->skipped++; goto cleanup_close; }
+    x->hdr[hlen_le] = '\0';
+
+    wf_seg_hdr_info_t info; wf_seg_hdr_parse(x->hdr, &info);
+    long poff = wf_seg_payload_offset(info.version, hlen_le);
+    uint32_t rows = wf_seg_rows_in((long)sb.st_size, poff, info.stride);
+
+    if (fseek(f, poff, SEEK_SET) != 0) { x->skipped++; goto cleanup_close; }
+
+    http_io_gate_leave();
+    gate = false;   /* в сеть — только с отпущенным слотом */
+
+    uint32_t iv = info.interval_sec ? info.interval_sec : x->def_interval;
+    uint64_t cum = 0;
+
+    for (uint32_t r = 0; r < rows; r++) {
+        if (!http_io_gate_enter_wait(HTTP_GATE_WAIT_MS)) {
+            ESP_LOGW(TAG, "n42 export: HEAVY gate timeout, abort");
+            res = 0; goto cleanup_close;
+        }
+
+        size_t rd = fread(x->rowbuf, 1, info.stride, f);
+        http_io_gate_leave();
+
+        if (rd != info.stride) break;
+
+        uint32_t dur = wf_exp_eff_dur(wf_row_dur(x->rowbuf, info.stride), iv);
+        int64_t start = wf_exp_row_start(wf_row_ts(x->rowbuf, info.version, info.stride), info.started_at, cum);
+        cum += dur;
+
+        if (!n42_emit_meas(x->req, x->acc, x->id++, start, dur, x->have_cal, (const uint16_t *)x->rowbuf)) {
+            res = 0; goto cleanup_close;
+        }
+    }
+
+    res = 1;
+
+cleanup_close:
+    if (f) fclose(f);
+cleanup:
+    if (gate) http_io_gate_leave();
+    spectrogram_seg_unpin_read(idx);
+    return res;
+}
+
+/* Поток строк из кольцевого буфера */
+static bool n42_stream_ring(n42_exp_t *x, uint32_t a, uint32_t b, uint32_t r0, time_t base,
+                            const uint16_t *durs, uint32_t ndurs, uint32_t epoch,
+                            uint32_t *rg, uint64_t *rcum)
+{
+    while (*rg < a) {
+        uint32_t idx = *rg - r0;
+        uint16_t d = (idx < ndurs) ? durs[idx] : 0;
+        *rcum += wf_exp_eff_dur(d, x->def_interval);
+        (*rg)++;
+    }
+
+    for (uint32_t g = a; g < b; g++) {
+        uint32_t idx = g - r0;
+        uint16_t d = (idx < ndurs) ? durs[idx] : 0;
+        uint32_t dur = wf_exp_eff_dur(d, x->def_interval);
+        int64_t start = (int64_t)base + (int64_t)*rcum;
+
+        if (spectrogram_copy_ring_row(g, epoch, (uint16_t *)x->rowbuf)) {
+            if (!n42_emit_meas(x->req, x->acc, x->id++, start, dur, x->have_cal, (const uint16_t *)x->rowbuf)) {
+                return false;
+            }
+        } else {
+            x->skipped++;
+        }
+
+        *rcum += dur;
+        *rg = g + 1;
+    }
+
     return true;
 }
 
-
-/* GET /api/waterfall/export.n42 -> ANSI N42.42-2011 XML.
-   Каждая строка водопада = отдельный <RadMeasurement> со спектром-дельтой
-   за интервал; ChannelData сжата CountedZeroes. Калибровка (если валидна) —
-   в <EnergyCalibration>. Источник — кольцо PSRAM (как /api/waterfall/window),
-   поэтому экспорт работает и при выключенном persist (Flash). */
+/* GET /api/waterfall/export.n42[?ring=1] -> ANSI N42.42-2011 XML.
+   #FW-19 (sweep-A): ПОЛНАЯ история, а не только кольцо PSRAM (256 строк):
+   завершённые сегменты с flash (старые — по idx; текущей сессии — вперемешку с участками
+   кольца по глобальному индексу строки, план wf_exp_plan) + строки, которых на flash ещё
+   нет (открытый сегмент, не сброшенные писателем, набранные при persist=off) — из кольца.
+   ?ring=1 — прежнее поведение (только кольцо). Каждая строка = <RadMeasurement> со
+   спектром-дельтой, ChannelData — CountedZeroes (формат строки не менялся).
+   Потоково, без буфера в RAM на весь объём: одна строка (16,5 КБ PSRAM) + 8 КБ текста.
+   HEAVY-слот берётся только вокруг fopen/fread строки и отпускается перед КАЖДОЙ отправкой
+   в сеть — фоновые автосейв/бэкап не стоят весь экспорт. Сегмент на время чтения запинен
+   (#REC-12). Калибровка — calib_export_present (R7). Обрыв посреди выдачи (сеть, гейт) —
+   ESP_FAIL без закрывающего тега и без финального чанка: клиент видит разрыв, а не
+   «целый» усечённый файл. Калибровка в файле одна — текущая прибора (как и раньше);
+   смена калибровки между сегментами (#FW-62 calib_changed) в n42 не отражается. */
 static esp_err_t h_export_n42(httpd_req_t *req)
 {
-    if (!http_io_gate_enter_or_503(req)) return ESP_OK;
-    wf_status_t s;
-    spectrogram_get_status(&s);
-    if (s.ring_count == 0) {
-        http_io_gate_leave();
+    esp_err_t ret = ESP_FAIL;   /* ESP_OK — только после финального чанка */
+    bool ring_only = false;
+    char q[32];
+    if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK) {
+        char v[8];
+        if (httpd_query_key_value(q, "ring", v, sizeof(v)) == ESP_OK && v[0] == '1') ring_only = true;
+    }
+
+    wf_seg_reg_t *reg = NULL;
+    wf_exp_step_t *plan = NULL;
+    uint16_t *durs = NULL;
+    uint8_t *rowbuf = NULL;
+    char *hdr = NULL;
+    char *acc = NULL;
+    spectrum_data_t *sp = NULL;
+
+    reg = heap_caps_malloc(sizeof(wf_seg_reg_t) * WF_SEG_REG_MAX, MALLOC_CAP_SPIRAM);
+    if (!reg) goto fail_oom;
+
+    const int plan_cap = 2 * WF_SEG_REG_MAX + 2;
+    plan = heap_caps_malloc(sizeof(wf_exp_step_t) * plan_cap, MALLOC_CAP_SPIRAM);
+    if (!plan) goto fail_oom;
+
+    durs = heap_caps_calloc(WF_RING_ROWS_DEFAULT, sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+    if (!durs) goto fail_oom;
+
+    rowbuf = heap_caps_malloc(WF_N42_ROWBUF, MALLOC_CAP_SPIRAM);
+    if (!rowbuf) goto fail_oom;
+
+    hdr = heap_caps_malloc(WF_HDR_RESERVE + 1, MALLOC_CAP_SPIRAM);
+    if (!hdr) goto fail_oom;
+
+    acc = malloc(WF_N42_ACC);
+    if (!acc) goto fail_oom;
+
+    sp = heap_caps_malloc(sizeof(spectrum_data_t), MALLOC_CAP_SPIRAM);
+    if (sp) {
+        memset(sp, 0, sizeof(*sp));
+        spectrum_get_meta(sp);
+    }
+
+    wf_status_t s; uint32_t epoch = 0;
+    int nreg = spectrogram_export_snapshot(reg, WF_SEG_REG_MAX, durs, WF_RING_ROWS_DEFAULT, &s, &epoch);
+    if (nreg < 0) nreg = 0;
+    if (ring_only) nreg = 0;
+
+    uint32_t r0 = (s.ring_count <= s.total_rows) ? (s.total_rows - s.ring_count) : 0;
+    int nsteps = wf_exp_plan(reg, nreg, r0, s.total_rows, plan, plan_cap);
+
+    if (nsteps <= 0) {
         httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "no waterfall data");
-        return ESP_FAIL;
+        goto cleanup;
     }
 
-    spectrum_data_t *sp = malloc(sizeof(*sp));
-    if (sp) spectrum_get_snapshot(sp);
-    bool have_cal = sp && sp->calib_valid;
-
-    uint16_t *row = heap_caps_malloc(WF_ROW_BYTES, MALLOC_CAP_SPIRAM);
-    char *acc = malloc(8192);
-    if (!row || !acc) {
-        if (row) heap_caps_free(row);
-        if (acc) free(acc);
-        if (sp) free(sp);
-        http_io_gate_leave();
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
-        return ESP_FAIL;
-    }
-
-    char wf_name[48], wf_disp[80];                           // #FW-42: префикс
+    char wf_name[48], wf_disp[80];
     web_build_export_name(wf_name, sizeof(wf_name), "waterfall.n42");
     snprintf(wf_disp, sizeof(wf_disp), "attachment; filename=\"%s\"", wf_name);
     httpd_resp_set_type(req, "application/octet-stream");
     httpd_resp_set_hdr(req, "Content-Disposition", wf_disp);
 
+    bool have_cal = sp ? calib_export_present(sp) : false;
+
     int n;
-    n = snprintf(acc, 8192,
+    n = snprintf(acc, WF_N42_ACC,
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
         "<RadInstrumentData xmlns=\"http://physics.nist.gov/N42/2011/N42\">\n"
         "  <RadInstrumentInformation id=\"inst-1\">\n"
         "    <RadInstrumentManufacturerName>KB Radar</RadInstrumentManufacturerName>\n"
         "    <RadInstrumentModelName>Atom Spectra</RadInstrumentModelName>\n");
-    httpd_resp_send_chunk(req, acc, n);
+    if (httpd_resp_send_chunk(req, acc, n) != ESP_OK) goto cleanup;
+
     if (sp && sp->serial_number[0]) {
         char esc[512];
         web_xml_escape(sp->serial_number, esc, sizeof(esc));
-        n = snprintf(acc, 8192,
-            "    <RadInstrumentIdentifier>%s</RadInstrumentIdentifier>\n", esc);
-        httpd_resp_send_chunk(req, acc, n);
+        n = snprintf(acc, WF_N42_ACC, "    <RadInstrumentIdentifier>%s</RadInstrumentIdentifier>\n", esc);
+        if (httpd_resp_send_chunk(req, acc, n) != ESP_OK) goto cleanup;
     }
-    n = snprintf(acc, 8192,
+
+    n = snprintf(acc, WF_N42_ACC,
         "    <RadInstrumentClassCode>Spectroscopic Personal Radiation Detector</RadInstrumentClassCode>\n"
         "  </RadInstrumentInformation>\n"
         "  <RadDetectorInformation id=\"det-1\">\n"
         "    <RadDetectorCategoryCode>Gamma</RadDetectorCategoryCode>\n"
         "    <RadDetectorKindCode>CsI</RadDetectorKindCode>\n"
         "  </RadDetectorInformation>\n");
-    httpd_resp_send_chunk(req, acc, n);
+    if (httpd_resp_send_chunk(req, acc, n) != ESP_OK) goto cleanup;
 
     if (have_cal) {
-        n = snprintf(acc, 8192,
-            "  <EnergyCalibration id=\"ecal-1\">\n    <CoefficientValues>");
-        httpd_resp_send_chunk(req, acc, n);
+        n = snprintf(acc, WF_N42_ACC, "  <EnergyCalibration id=\"ecal-1\">\n    <CoefficientValues>");
+        if (httpd_resp_send_chunk(req, acc, n) != ESP_OK) goto cleanup;
         for (int i = 0; i <= sp->calib_order; i++) {
-            n = snprintf(acc, 8192, "%s%.9g", i ? " " : "", sp->calibration[i]);
-            httpd_resp_send_chunk(req, acc, n);
+            n = snprintf(acc, WF_N42_ACC, "%s%.9g", i ? " " : "", sp->calibration[i]);
+            if (httpd_resp_send_chunk(req, acc, n) != ESP_OK) goto cleanup;
         }
-        n = snprintf(acc, 8192, "</CoefficientValues>\n  </EnergyCalibration>\n");
-        httpd_resp_send_chunk(req, acc, n);
+        n = snprintf(acc, WF_N42_ACC, "</CoefficientValues>\n  </EnergyCalibration>\n");
+        if (httpd_resp_send_chunk(req, acc, n) != ESP_OK) goto cleanup;
     }
 
-    /* #FW-5: реальные длительности строк окна (сек). calloc → незаполненные
-       элементы = 0 → n42_row_emit подставит номинал. NULL (oom) тоже безопасен. */
-    uint16_t *durs = calloc(s.ring_count, sizeof(uint16_t));
-    if (durs) spectrogram_copy_window_durations(durs, s.ring_count);
+    n42_exp_t x = { .req = req, .acc = acc, .rowbuf = rowbuf, .hdr = hdr, .have_cal = have_cal, .id = 0, .def_interval = s.interval_sec, .skipped = 0 };
 
-    /* Источник — кольцо PSRAM: row служит bounce-буфером, каждая строка
-       отдаётся колбэком n42_row_emit() ВНЕ лока рекордера. r0 — глобальный индекс
-       первой строки окна; строки до окна уже выпали из кольца, поэтому их суммарное
-       время приближаем номиналом (r0*interval), а внутри окна время честное. */
-    uint32_t r0 = (s.ring_count <= s.total_rows) ? (s.total_rows - s.ring_count) : 0;
-    n42_ctx_t ctx = {
-        .req = req, .acc = acc,
-        .interval_sec = s.interval_sec,
-        .started_at = s.started_at,
-        .have_cal = have_cal,
-        .r = r0,
-        .durs = durs,
-        .r0 = r0,
-        .row_start = s.started_at + (time_t)r0 * (time_t)s.interval_sec,
-    };
-    spectrogram_stream_window(row, s.ring_count, NULL, n42_row_emit, &ctx);
+    time_t base = s.started_at + (time_t)r0 * (time_t)s.interval_sec;
+    uint32_t ndurs = s.ring_count < WF_RING_ROWS_DEFAULT ? s.ring_count : WF_RING_ROWS_DEFAULT;
+    uint32_t rg = r0;
+    uint64_t rcum = 0;
 
-    n = snprintf(acc, 8192, "</RadInstrumentData>\n");
-    httpd_resp_send_chunk(req, acc, n);
-    httpd_resp_send_chunk(req, NULL, 0);
+    for (int i = 0; i < nsteps; i++) {
+        if (plan[i].kind == WF_EXP_STEP_SEG) {
+            if (n42_stream_segment(&x, plan[i].a) == 0) goto cleanup;
+        } else if (plan[i].kind == WF_EXP_STEP_RING) {
+            if (!n42_stream_ring(&x, plan[i].a, plan[i].b, r0, base, durs, ndurs, epoch, &rg, &rcum)) goto cleanup;
+        }
+    }
 
-    heap_caps_free(row);
+    n = snprintf(acc, WF_N42_ACC, "</RadInstrumentData>\n");
+    if (httpd_resp_send_chunk(req, acc, n) != ESP_OK) goto cleanup;
+    if (httpd_resp_send_chunk(req, NULL, 0) != ESP_OK) goto cleanup;
+    ret = ESP_OK;
+
+    if (x.skipped) {
+        ESP_LOGW(TAG, "n42 export: %" PRIu32 " segment(s)/row(s) vanished before read", x.skipped);
+    }
+    ESP_LOGI(TAG, "n42 export: %" PRIu32 " measurements, %d plan steps%s", x.id, nsteps, ring_only ? " (ring only)" : "");
+
+cleanup:
+    heap_caps_free(reg);
+    heap_caps_free(plan);
+    heap_caps_free(durs);
+    heap_caps_free(rowbuf);
+    heap_caps_free(hdr);
     free(acc);
-    if (durs) free(durs);   /* #FW-5 */
-    if (sp) free(sp);
-    http_io_gate_leave();
-    return ESP_OK;
+    heap_caps_free(sp);
+    return ret;
+
+fail_oom:
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+    goto cleanup;
 }
 
 /* ---- #REC-11-A1: листинг и отдача сегментов /storage/wf (СТРОГО read-only) ---- */
@@ -765,11 +913,30 @@ static esp_err_t h_segment(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad name");
         return ESP_FAIL;
     }
+    // #REC-12 (sweep-A): пин ДО fopen, зеркально push-пути (wf_offload/s_seg_pinned) —
+    // кольцо make_room и прочие удаления не сотрут файл, пока он уходит в сеть. Снимается
+    // на КАЖДОМ выходе ниже: успех, 404, oom, обрыв клиента. Отказ пина = файл прямо
+    // сейчас удаляется: 503 + Retry-After — повтор получит либо файл, либо честный 404.
+    uint32_t idx = (uint32_t)strtoul(name + 4, NULL, 10);
+    if (idx == WF_PIN_NONE) {                 // 4294967295 — такого сегмента быть не может
+        http_io_gate_leave();
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "not found");
+        return ESP_FAIL;
+    }
+    if (!spectrogram_seg_pin_read(idx)) {
+        http_io_gate_leave();
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Retry-After", "1");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"err\":\"segment-busy\"}");
+        return ESP_OK;
+    }
     char path[128];
     // %.90s/%.30s: доказуемая граница для -Wformat-truncation (name[40] валидно ≤24).
     snprintf(path, sizeof(path), "%.90s/%.30s", spectrogram_seg_dir(), name);
     FILE *f = fopen(path, "rb");      // read-only: отдаём, не трогая файл
     if (!f) {
+        spectrogram_seg_unpin_read(idx);
         http_io_gate_leave();
         httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "not found");
         return ESP_FAIL;
@@ -778,6 +945,7 @@ static esp_err_t h_segment(httpd_req_t *req)
     char *bufp = malloc(4096);
     if (!bufp) {
         fclose(f);
+        spectrogram_seg_unpin_read(idx);
         http_io_gate_leave();
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
         return ESP_FAIL;
@@ -793,12 +961,14 @@ static esp_err_t h_segment(httpd_req_t *req)
         if (httpd_resp_send_chunk(req, bufp, rd) != ESP_OK) {
             free(bufp);
             fclose(f);
+            spectrogram_seg_unpin_read(idx);   // обрыв клиента
             http_io_gate_leave();
             return ESP_FAIL;
         }
     }
     free(bufp);
     fclose(f);
+    spectrogram_seg_unpin_read(idx);
     httpd_resp_send_chunk(req, NULL, 0);
     http_io_gate_leave();
     return ESP_OK;
