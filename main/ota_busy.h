@@ -27,7 +27,20 @@ static inline void ota_busy_release_pure(ota_busy_owner_t *state, ota_busy_owner
     if (*state == who) *state = OTA_BUSY_NONE;
 }
 
+// Доп. наблюдение (verify-awf4-2026-09-27.md:262, sweep-B задача 2): true, если
+// занято ЛЮБЫМ владельцем -- периодический автосейв гистограммы (main/spectrum.c
+// spectrum_autosave_begin()/spectrum_autosave()) не должен СТАРТОВАТЬ новый цикл,
+// пока идёт запись OTA-образа (ручная или GitHub) -- обе пишут в тот же слот
+// flash/шину, что и autosave. Не мешает уже НАЧАТОМУ автосейву: тот и так
+// прерывается spectrum_autosave_abort() из handle_ota_locked() (web_server.c:619)
+// в начале приёма.
+static inline bool ota_busy_is_busy_pure(ota_busy_owner_t state)
+{
+    return state != OTA_BUSY_NONE;
+}
+
 // FreeRTOS-обёртки (main/ota_busy.c) -- реальная точка вызова из обоих путей.
 bool ota_busy_acquire(ota_busy_owner_t who);
 void ota_busy_release(ota_busy_owner_t who);
+bool ota_busy_is_busy(void);
 void ota_busy_init(void);   // один раз из app_main(), до web_server_init()

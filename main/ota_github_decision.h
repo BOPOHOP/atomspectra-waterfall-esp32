@@ -12,10 +12,10 @@ typedef struct {
 } ota_gh_decision_t;
 
 // have_cur=false -- текущая версия не распознана (эквивалент старого кода:
-// "считаем best новее", ota_gh_check() уже вело себя так). Порядок причин
-// сохранён из исходного ota_gh_check(): !newer проверяется ПЕРВЫМ (та же
-// версия ИЛИ даунгрейд -> "up_to_date", известный P3 из аудита -- не правим
-// здесь, вне поручения этого хода), затем !above_min.
+// "считаем best новее"). Порядок причин: !newer проверяется ПЕРВЫМ, затем
+// !above_min. P3 №6 (verify-awf5-github-ota-2026-09-27.md:259, sweep-B
+// задача 4): best<cur (даунгрейд) -> "downgrade_blocked", best==cur ->
+// "up_to_date" -- раньше обе ветки давали одну и ту же причину "up_to_date".
 static inline ota_gh_decision_t ota_gh_decide(const ota_gh_version_t *best,
                                                const ota_gh_version_t *cur, bool have_cur,
                                                const ota_gh_version_t *min_ver)
@@ -24,7 +24,10 @@ static inline ota_gh_decision_t ota_gh_decide(const ota_gh_version_t *best,
     d.newer = have_cur ? (ota_gh_version_cmp(best, cur) > 0) : true;
     bool above_min = ota_gh_version_cmp(best, min_ver) >= 0;
     d.installable = d.newer && above_min;
-    if (!d.newer) d.reason = "up_to_date";
+    if (!d.newer) {
+        bool is_downgrade = have_cur && ota_gh_version_cmp(best, cur) < 0;
+        d.reason = is_downgrade ? "downgrade_blocked" : "up_to_date";
+    }
     else if (!above_min) d.reason = "too_old_for_wifi_ota";
     else d.reason = "";
     return d;

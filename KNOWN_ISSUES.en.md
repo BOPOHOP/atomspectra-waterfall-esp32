@@ -128,13 +128,40 @@ saving **two** of its replies once, as a reference "snapshot" of the DSP configu
 Then a future reset can be detected and both snapshots handed to the manufacturer
 (KB Radar) as a reference of the factory tuning.
 
+**Implemented in v1.2.28.** The recommendation above is now done: a "Save DSP tuning
+snapshot" button on the "Service" page — `POST /api/settings/snapshot` saves both replies
+(`-inf` and `-tc_pot?`) to LittleFS with a timestamp; `GET /api/settings/snapshot` returns
+the last saved snapshot WITHOUT re-querying the instrument (important if the DSP tuning is
+broken right now — a POST would not overwrite it with a bad read). `main/web_server.c:2072-2238`
+(`handle_settings_snapshot`, `handle_settings_snapshot_get`), `web/service.html` and
+`demo/service.html` (button + "Download last snapshot" link). The root defect itself (the
+instrument zeroing its own tuning) remains an instrument limitation — the snapshot only
+speeds up recovery through the manufacturer, it does not remove the cause.
+
 ### BUG-AS-03: Serial number is not read
 
-**Status:** open
+**Status:** open (diagnostics — needs confirmation on live hardware).
 
 The instrument serial number (`serial_number`) stays empty after connection.
 
-**Cause:** in response to the `-inf` command the instrument returns fewer than 40 text lines. The code expects the serial number on line 39 (`process_info_response`), but the actual response is shorter. The calibration (lines 0–10) is read correctly; the serial number is not.
+**Cause (wording corrected in 1.2.28 — the previous text conflated `-inf` and `-cal`).**
+The serial number is parsed EXCLUSIVELY from the `-cal` dump (40 lines: calibration + CRC +
+serial on line 39, 0-indexed) — NOT from `-inf`. `-inf` and `-cal` are told apart by content
+(`-inf` carries the `VERSION ` key, `-cal` does not) and are handled by the same function
+`spectrum_process_info_response()`; the serial branch is `main/spectrum.c:558-573`, gated by
+`if (!is_inf)` — `main/spectrum.c:474`. The empty serial number is caused by the instrument's
+reply to `-cal` (not `-inf`) being shorter than 40 lines; the calibration (lines 0–10 of the
+same dump) is still read correctly.
+
+**Mitigated, but NOT fixed, in v1.2.28.** The calibration auto-read before starting
+acquisition (#AWF-12) sends `-cal` as long as no calibration is set — if it succeeds once,
+the serial number gets filled the same way. The mitigation is one-shot: once
+`spectrum_calibration_is_missing()` turns false, further starts stop requesting `-cal`
+(`main/usb_host_cdc.c:982-983`, `main/calib_autoread.h:99-109`), so the serial number loses
+its automatic chances to update until the calibration is cleared again. Auto-read does not
+fire at all for starts over the TCP bridge (see F3 below). The root cause (an instrument
+that genuinely truncates its `-cal` reply) is not verifiable by static reading — it needs
+an instrument that actually returns a short `-cal` to confirm or rule it out.
 
 **Impact:** in the Web UI and the XML / CSV export the serial number field is empty. Spectrometer functionality is not affected.
 
@@ -158,17 +185,6 @@ the PHASE relative to a sweep is not locked.
 **Impact:** negligible loss of acquisition completeness. With the period set in minutes (bench-only
 key `backup_test_minutes` in `/api/boot-config`, not exposed in the Web UI) the loss becomes
 noticeable — that mode is for testing, not for measurements.
-
-### issue #52: URI handler table overflow stays silent
-
-**Status:** open (diagnostics)
-
-When `config.max_uri_handlers` is exhausted, `httpd_register_uri_handler` returns an error the
-code never checks: the route is silently not registered and clients get a 404 with nothing in the
-log. The route that breaks is the LAST one in the table, not the one just added — so the search
-starts in the wrong place. The limit is currently 80 against 73 actual routes (see the comment at
-`config.max_uri_handlers` in `web_server.c`, which carries the commands to recount). Fix: log the
-registration failure.
 
 ### The acquisition watchdog is inactive after TCP-client commands and after `-sta` with parameters
 
@@ -212,9 +228,127 @@ seconds of the new session — the count in that narrow window may double once; 
 saves race each other, the flash can briefly hold a version older than the one in memory (it is
 overwritten by the next save). Neither case loses data permanently or affects normal operation.
 
+### #AWF-12b: "Read" no longer applies a zero or NaN calibration dump (F12)
+
+**Status:** limitation by design (v1.2.28).
+
+As of `v1.2.28` a `-cal` dump with CRC-valid but zero or non-finite (NaN/Inf) coefficients is
+treated as "calibration not set", same as a CRC-invalid dump — it no longer overwrites the
+board's current calibration. This applies to both the manual "Read" button and the auto-read
+before starting acquisition. Telling "a dump arrived but was ignored" apart from "no dump
+arrived" requires `/api/device` (`calib_set`) and the command log.
+
+**UI feedback added in v1.2.28 (F12/RO1).** Previously the rejection was only visible via
+`/api/device`; now the "Read" button on the "Spectrum" and "Service" pages compares the
+`calib_reject_seq` counter (`/api/device`) before and ~900 ms after the request, and if it
+grew, logs `cal.readEmpty` ("device returned an empty calibration (zeros/NaN) — board
+calibration unchanged") to the log panel. The counter is `main/spectrum.c:90,548,1196`
+(bumped under the same `SPEC_LOCK` as the rejection branch itself), the reply field is
+`main/web_server.c:1746`, the UI read is `web/index.html:690-698`, `web/service.html:337-344`
+(+ demo mirrors). The behavior itself (do not overwrite) is unchanged — only visibility was
+added.
+
+### #AWF-12b: the TCP bridge does not request calibration before `-sta` (F3)
+
+**Status:** limitation by design (v1.2.24+).
+
+The calibration auto-read before starting acquisition (when none is set) only fires for `-sta`
+sent by the gateway itself (the "Start" button, auto-resume after reconnect/reboot, watchdog
+resend). An `-sta` coming from a TCP client (AtomSpectra/BecqMoni via the bridge, port 8234)
+goes to the instrument on the raw pass-through path, bypassing this entry point — deliberately:
+an external application drives the bridge, and injecting a gateway command into its stream would
+corrupt the PC app's protocol.
+
 ---
 
 ## Fixed
+
+### issue #52b: URI handler table overflow stayed silent — FIXED (v1.2.28)
+
+`httpd_register_uri_handler` returned an error the code never checked when
+`config.max_uri_handlers` was exhausted: the route was silently not registered, the client
+got a 404 with nothing in the log, and the route that broke was the LAST one in the table,
+not the one just added — the search would have started in the wrong place (the same class
+that already cost an incident at the old limit of 45).
+
+As of v1.2.28 all 4 registration sites check the return value and log the failure:
+`ESP_LOGE(TAG, "issue#52b: register '%s' failed: %s", ...)` — `main/web_server.c:2786`,
+`main/web_waterfall.c:1253,1298`, `main/wifi_manager.c:284`. `config.max_uri_handlers` was
+recounted and raised from the old 80 (against 73 actual) to **90** against **79** actual
+routes (headroom +11) — `main/web_server.c:2628,2670` (`WEB_SERVER_URI_MAX`); a
+`_Static_assert` there keeps `uris[]` from exceeding the limit at compile time
+(`:2769-2770`).
+
+### #AWF-12b: theoretical instrument-response packet sequences (R2/R3) — FIXED (v1.2.28)
+
+Parsing the instrument's text replies (`main/text_accum.h`) only searched for the start of a
+`-cal` dump at position 0 in the accumulator, and copying a packet (`text_accum_feed`) did
+not handle a `\0` byte inside it — both were hypothetical (never observed in gateway logs),
+but the code was vulnerable: a one-line stray hex reply before a dump, a dump shorter than 9
+bytes as its first frame, or `-ok`+dump in a single frame would misalign the parse (the CRC
+would not match, calibration would not apply), and a `\0` inside a packet would mask every
+later text reply until the accumulator overflowed (~4 KB, ≈2 h at a 30-minute poll).
+
+As of v1.2.28 (`fadde1c`, sweep-C): `text_accum_find_cal_window()` scans the whole
+accumulator byte-by-byte looking for 10 coefficient lines plus a CRC line valid under CRC32
+— `main/text_accum.h:52-118`; a `\0` inside a packet is replaced with a space on copy
+(`main/text_accum.h:332-336`, was a bare `memcpy`); `main/usb_host_cdc.c:160-165` (via
+`text_accum_dispatch()`, `main/text_accum.h:443-460`) now passes
+`spectrum_process_info_response()` the found window instead of always position 0. Verified
+against a real-world fixture (an actual dump `REAL_DUMP_110` from `.logs/cal_capture.txt`,
+CRC32 independently checked with `zlib.crc32`) and by mutation testing — 4/4 mutants killed. None of these sequences has still ever fired live — the fix closes
+a code-level vulnerability, not an observed incident.
+
+**Split dump and a lost frame (1.2.28 review, round 3).** If the instrument sends the `-cal` dump
+in several frames and the last frame is lost, the next dump could "complete" the old one to 40
+lines, and the serial number was taken from someone else's line. The accumulator now remembers
+packet starts (`text_accum_marks_t`, `main/text_accum.h:241-245`): if a packet started on a line
+boundary in the dump's tail and the CRC window of a possible new dump has not fully arrived, the
+serial is not taken until the next packet or one second of silence decides
+(`TEXT_ACCUM_QUIET_MS`, `main/usb_host_cdc.c:253-259`); a new dump with the same beginning is
+recognised at once. The cost: for a dump whose last frame starts on a line boundary the serial
+arrives up to ~1 s later. Remaining: (1) a double loss (the previous dump lost its last frame,
+the next one lost everything after its first frame) combined with recalibrating the instrument
+between the two `-cal` requests yields a wrong serial until the next complete `-cal`; (2) a
+stray reply in the same frame as a dump start shorter than 110 bytes still loses that dump, as
+in 1.2.27 and ae667ba (calibration is not applied, the automatic `-cal` request repeats). The
+dump's frame size on the live instrument has not been captured; only whole Text(400) replies
+were observed.
+
+### #FW-19: n42 export was truncated by the flash-ring capacity (256 rows ≈ 4.25 h) — FIXED (v1.2.28)
+
+`GET /api/waterfall/export.n42` only streamed the PSRAM ring (`WF_RING_ROWS_DEFAULT=256`
+rows) — a recording longer than ~4.25 h exported truncated to the last 256 rows, even though
+the write path itself lost no data (`seg_dropped=0`).
+
+As of v1.2.28 (`425b4df`, sweep-A) the n42 export streams FINALIZED flash segments (up to
+~760 rows) merged with the current session's ring sections by global row index — the plan is
+built by a pure `wf_exp_plan()` (`main/wf_export_plan.h`), the handler is `h_export_n42`
+(`main/web_waterfall.c:651`), the atomic registry snapshot is
+`spectrogram_export_snapshot` (`main/spectrogram.c:2012`). No row is ever emitted twice;
+`?ring=1` keeps the old behavior (ring only, ≤256 rows) — `main/web_waterfall.c:637-658`.
+The export-time cost on a full flash (tens of seconds, httpd fully busy, same class as
+before when serving one segment) and the single current-calibration-per-file limitation
+remain, documented in [`WATERFALL.en.md`](WATERFALL.en.md). Verified with 32 mutants (32/32
+killed); live-board acceptance (recording >256 rows, checking the
+`<RadMeasurement>` count) is planned in that report but was not run as part of this
+documentation sweep.
+
+### Pull polling (`wf_pull_client.py`, #REC-12): the keep-last ring did not pin the segment being downloaded — FIXED (v1.2.28)
+
+`GET /api/waterfall/segment` (the pull path) did not pin the segment it served in
+`s_seg_pinned` — the keep-last ring could delete it mid-download (the push path pinned it
+correctly).
+
+As of v1.2.28 (`425b4df`, sweep-A) a separate "read pin" was added (`main/wf_seg_pin.h`, a
+4-slot state machine under a spinlock, not under `s_fs_lock`, which the writer holds for
+seconds) — `spectrogram_seg_pin_read()`/`spectrogram_seg_unpin_read()`
+(`main/spectrogram.c:375-382`). `h_segment` (`main/web_waterfall.c:919-971`) pins the
+segment before `fopen` and releases it on every exit path (404, out-of-memory, client
+disconnect, success); a pin failure returns 503 + `Retry-After: 1`. Every deleting path
+(`seg_oldest_completed`, `make_room`, `offload_claim`/`offload_done`, `seg_delete`,
+`seg_unlink_unpinned`) checks the pin. Verified with 9 mutants (M5-M9, M19 — 9/9 killed). A known narrow edge (an empty segment stub deleted exactly while
+being read) is described in that report — not fixed, but does not corrupt data.
 
 ### "Reboot instrument" wipes the accumulated spectrum — FIXED (v1.2.24)
 
@@ -795,55 +929,11 @@ actual exhaustion of the 763-row partition (the segment keep-last ring still has
 run to real overflow) — but a **separate** export limitation was found along the way: the
 `ring_capacity` field in `/api/waterfall/status` is fixed at **256 rows** (~4.25 h at a
 ~60 s cadence) — smaller than the ~763-row partition-capacity estimate above. n42 exports
-of recordings longer than ~4.25 h come out truncated (see #FW-19 below). Full writeup:
-[`docs/stab2_report.md`](docs/stab2_report.md) §6.
+of recordings longer than ~4.25 h used to come out truncated — see "#FW-19" under "Fixed"
+(resolved in v1.2.28). Full writeup: [`docs/stab2_report.md`](docs/stab2_report.md) §6.
 
-### #FW-19: n42 export truncated by the flash-ring capacity (256 rows ≈ 4.25 h)
-
-**Status:** open (task #32).
-
-When exporting to n42 a recording that ran longer than ~4.25 h, the file contains only
-the **last 256 rows** — regardless of how many rows were actually recorded
-(`total_rows`). Cause: `ring_capacity=256` (`/api/waterfall/status`) — the ring
-physically holds only the last 256 rows; older ones get overwritten by new ones before
-the export is pulled.
-
-This is **not a #WF-1 regression** — the `seg_dropped` counter (write losses) stays at 0,
-i.e. the write path itself loses no data; the limitation is in the exported ring's
-storage size, not write reliability. The `RING_OVERFLOW` event does not detect the
-overwrite itself (its condition is the write-lag `total_rows − flash_rows ≥
-ring_capacity`, not the wraparound fact).
-
-**Workaround:** for recordings longer than ~4.25 h, periodically pull segments via
-`/api/waterfall/segment` (see [`WATERFALL.en.md`](WATERFALL.en.md#autonomous-segment-recording-rec-11-a1))
-instead of waiting until the end of the recording for a single export. Details and the
-telemetry from the test that found this: [`docs/stab2_report.md`](docs/stab2_report.md) §6.
-
-### Pull polling (`wf_pull_client.py`, #REC-12): no pin against the keep-last ring
-
-The keep-last ring (`make_room()`, `main/spectrogram.c:304-321`) deletes the oldest
-FINALIZED segment when Flash space is short — except the currently open segment and any
-**pinned** one (`s_seg_pinned`). Only the push offload path (#REC-11-A2, `wf_offload.c`)
-pins a segment; the pull path (`GET /api/waterfall/segment`, `main/web_waterfall.c:468`)
-does **not** pin the segment while it downloads it.
-
-If the PC client polls SLOWER than the board fills Flash with unread segments, the ring
-can delete a segment before `wf_pull_client.py` gets a chance to fetch it. The next
-`GET .../segment?name=...` then fails (`error:get:...` in the client log), no delete/ack
-is sent, but the segment is already physically gone — the data is lost for good, leaving
-a hole in the stitched `.aswf`. This is NOT detected as a "board pause" (the `gap` check
-in `wf_pull_client.py:161-169` only catches recording pauses, not segments the ring ate).
-
-**Workaround:** keep the client's `--interval` well below the time it takes the ring to
-eat an unread segment at the current recording rate. There is currently no automatic
-protection (a pin, like push has) for the pull download path — not implemented.
-
-**Confirmed in practice (2026-08-16/17, joint testing):** the risk actually fires when the
-polling interval is close to the segment period (polling every 330 s with a 320 s period —
-one segment lost) and when polling pauses exceed the ring capacity. Rule of thumb: **poll at
-least twice as often as the segment close period**. Client `v0.4.0+` distinguishes "ring ate
-it before pull" from "open segment cut by a reboot" better than before, but the loss class
-itself is only prevented by interval discipline.
+The pull-polling limitation with no segment pin (#REC-12) was also resolved in v1.2.28, see
+"Fixed".
 
 ---
 

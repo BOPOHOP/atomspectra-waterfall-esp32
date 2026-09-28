@@ -34,7 +34,19 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_ota_github_parse.c \
        test_ota_busy.c \
        test_ota_github_decision.c \
-       test_ota_github_redirect.c
+       test_ota_github_redirect.c \
+       test_ota_timeout_budget.c \
+       test_ota_github_download_retry.c \
+       test_calib_autoread.c \
+       test_text_accum.c \
+       test_sweepA_small.c \
+       test_wf_export_plan.c \
+       test_wf_seg_rebuild_range.c \
+       test_spec_cache_gen.c \
+       test_calib_export.c \
+       test_text_accum_r3a.c \
+       test_text_accum_r3.c \
+       test_round3_misc.c
 
 test: $(SRCS) test_util.h
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm

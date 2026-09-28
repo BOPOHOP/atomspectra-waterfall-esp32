@@ -141,6 +141,32 @@ static void parse_synthetic_empty_and_unparsable(void)
     CHECK(!ota_gh_releases_pick_best(bad_json, strlen(bad_json), true, &os, &oe, &best));
 }
 
+// P3 №5 (verify-awf5-github-ota-2026-09-27.md:258, sweep-B задача 3): "assets"
+// (с РЕАЛЬНЫМИ именами из fixtures/releases_page1_raw.json) идёт ПЕРЕД
+// top-level "name" -- без учёта глубины find_key нашёл бы вложенное
+// asset.name="atomspectra_gw.bin" раньше настоящего release.name.
+static const char *k_nested_name_json =
+    "[{\"assets\":[{\"name\":\"atomspectra_gw.bin\","
+    "\"browser_download_url\":\"http://x/a\"},"
+    "{\"name\":\"SHA256SUMS.txt\",\"browser_download_url\":\"http://x/b\"}],"
+    "\"tag_name\":\"firmware-v1.2.28\",\"draft\":false,\"prerelease\":false,"
+    "\"name\":\"firmware-v1.2.28-release-title\"}]";
+
+static void parse_nested_name_does_not_mask_toplevel_field(void)
+{
+    const char *json = k_nested_name_json;
+    const char *os, *oe;
+    ota_gh_version_t best;
+    CHECK(ota_gh_releases_pick_best(json, strlen(json), false, &os, &oe, &best));
+    size_t nlen;
+    const char *name = ota_gh__string_field(os, oe, "\"name\"", &nlen);
+    CHECK(name != NULL);
+    if (name) {
+        CHECK(nlen == strlen("firmware-v1.2.28-release-title"));
+        CHECK(memcmp(name, "firmware-v1.2.28-release-title", nlen) == 0);
+    }
+}
+
 void gh_parse_suite(void)
 {
     parse_real_fixture_stable_only();
@@ -149,4 +175,5 @@ void gh_parse_suite(void)
     parse_synthetic_prerelease_gate();
     parse_synthetic_body_with_braces_and_quotes();
     parse_synthetic_empty_and_unparsable();
+    parse_nested_name_does_not_mask_toplevel_field();
 }

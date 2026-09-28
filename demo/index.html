@@ -222,6 +222,8 @@ var DICT={
   "saved.saveErrNoData":"Нет данных спектра (прибор не подключён/не выдаёт спектр)","saved.saveErrNoSpace":"Мало места на flash — удалите старые снимки",
   "log.start":"Start sent","log.stop":"Stop sent","log.reset":"Reset sent","log.info":"Info requested",
   "log.ovlOk":"Overlay loaded: #%1","log.ovlErr":"Overlay error: %1","log.ovlClear":"Overlay cleared",
+  "ovl.noTime":" (время не задано — показан счёт, не CPS)",
+  "cal.readEmpty":"Прибор вернул пустую калибровку (нули/NaN) — калибровка платы не изменена",
   "log.del":"Deleted #%1","log.rebootDev":"Reboot device sent",
   "log.exportOk":"Выгружено: %1","log.exportErr":"Экспорт не удался: %1",
   "log.cal":"Calibration: [%1]","log.calErr":"Calibration error: %1","log.calClear":"Calibration cleared",
@@ -269,6 +271,8 @@ var DICT={
   "saved.saveErrNoData":"No spectrum data (device not connected / no spectrum)","saved.saveErrNoSpace":"Low flash space — delete old snapshots",
   "log.start":"Start sent","log.stop":"Stop sent","log.reset":"Reset sent","log.info":"Info requested",
   "log.sent":"Sent: %1","log.ovlOk":"Overlay loaded: #%1","log.ovlErr":"Overlay error: %1","log.ovlClear":"Overlay cleared",
+  "ovl.noTime":" (time unknown — showing counts, not CPS)",
+  "cal.readEmpty":"Device returned an empty calibration (zeros/NaN) — board calibration unchanged",
   "log.del":"Deleted #%1","log.rebootDev":"Reboot device sent",
   "log.exportOk":"Exported: %1","log.exportErr":"Export failed: %1",
   "log.cal":"Calibration: [%1]","log.calErr":"Calibration error: %1","log.calClear":"Calibration cleared",
@@ -311,9 +315,16 @@ var Ccur=document.getElementById("spcur"),Xcur=Ccur.getContext("2d");
 (function(){var dpr=Math.max(2,window.devicePixelRatio||1);/* #UI-18: supersample ≥2× → в zoom-оверлее источник downscale'ится, цифры чёткие */function hidpi(c,ctx,w,h){c.width=Math.round(w*dpr);c.height=Math.round(h*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);}hidpi(C,X,1200,400);hidpi(Ccur,Xcur,1200,400);})();
 var cursorCh=-1;
 var logEl=document.getElementById("log");
-var overlayBins=null,overlayIdx=-1;
+var overlayBins=null,overlayIdx=-1,overlayTime=0;   /* #WF-CPS-1: своё время оверлея */
 var isLog=true,isCps=true,isKev=true;  /* #UI-34: дефолты тумблеров — Log / CPS / keV */
 var calib=null,lastD=null,calibEditing=false;
+/* #AWF-12b F2 (release-gate-1.2.28-code.md): единый признак "калибровка
+   задана" — предпочитаем булево поле calib_set прошивки (тот же предикат,
+   что гейт авто-считывания), запасной вариант для старой прошивки без поля
+   — хотя бы один коэффициент != 0 (наличие поля само по себе не значит
+   "задана": прошивка отдаёт массив уже при calib_valid, даже нулевой). */
+function calibArraySet(c){return !!(c&&c.length&&c.some(function(v){return v!==0}))}
+function calibIsSet(dev){if(!dev)return false;if(typeof dev.calib_set==="boolean")return dev.calib_set;return calibArraySet(dev.calibration||dev.calib)}
 var devSeq=0;  /* #UI-1: курсор seq последнего показанного ответа прибора (/api/devlog) */
 var failStreak=0;  /* #UI-2: подряд-неудачи fetch спектра; гасим экран только после >=3 (одиночный 503 при конкуренции — не гасит) */
 var PL=65,PT=15,PW=1120,PH=340,PR=PL+PW,PB=PT+PH;
@@ -391,7 +402,7 @@ async function update(){
   var d=await rm.json();
   d.bins=new Uint32Array(ab);
   failStreak=0;  /* #UI-2: успешный кадр — сброс счётчика подряд-неудач */
-  if(d.calib){calib=d.calib;if(!calibEditing)fillCalibFields(d.calib);nucBtnEnable(true);} else if(!calib){nucBtnEnable(false);}
+  if(calibIsSet(d)){calib=d.calib;if(!calibEditing)fillCalibFields(d.calib);nucBtnEnable(true);} else {calib=null;if(!calibEditing&&d.calib)fillCalibFields(d.calib);nucBtnEnable(false);}
   if(d.serial)document.getElementById("device-chip").textContent=d.serial;
   document.getElementById("ip-chip").textContent=location.hostname;
   lastD=d;
@@ -426,7 +437,12 @@ function draw(d){
  var yV=new Array(N);
  for(var i=0;i<N;i++)yV[i]=isCps?bins[i]/tt:bins[i];
  var yO=null;
- if(overlayBins){yO=new Array(overlayBins.length);for(var i=0;i<overlayBins.length;i++)yO[i]=isCps?overlayBins[i]/tt:overlayBins[i]}
+ /* #WF-CPS-1: делим на СВОЁ время оверлея (overlayTime), не на tt живого набора —
+    было overlayBins[i]/tt, дало разбухший CPS у оверлея короче текущего набора и
+    заниженный у длиннее. overlayTime<=0 (не пришло/битые метаданные) — не делим,
+    показываем счёт как есть (пометка — см. loadOverlay). */
+ if(overlayBins){var ot=overlayTime>0?overlayTime:0;yO=new Array(overlayBins.length);
+  for(var i=0;i<overlayBins.length;i++)yO[i]=(isCps&&ot>0)?overlayBins[i]/ot:overlayBins[i]}
  var mx=0;
  for(var i=0;i<N;i++)if(yV[i]>mx)mx=yV[i];
  if(yO)for(var i=0;i<yO.length;i++)if(yO[i]>mx)mx=yO[i];
@@ -536,7 +552,7 @@ async function applyCalib(){
  var coeffs=[e,d,c,b,a];
  try{
   var r=await post("/api/calibration",{headers:{"Content-Type":"application/json"},body:JSON.stringify({coeffs:coeffs})});
-  if(r.ok){calibEditing=false;calib=coeffs;var s=document.getElementById("calib-status");s.textContent=tr("cal.applied");s.style.color="var(--accent)";lg(tfmt("log.cal",coeffs.join(", ")));nucBtnEnable(true);if(lastD)draw(lastD)}
+  if(r.ok){calibEditing=false;var setNow=calibArraySet(coeffs);calib=setNow?coeffs:null;var s=document.getElementById("calib-status");s.textContent=tr("cal.applied");s.style.color="var(--accent)";lg(tfmt("log.cal",coeffs.join(", ")));nucBtnEnable(setNow);if(lastD)draw(lastD)}
   else{var s2=document.getElementById("calib-status");s2.textContent=tr("cal.error");s2.style.color="#ff8a82"}
  }catch(err){lg(tfmt("log.calErr",err))}
 }
@@ -577,10 +593,12 @@ async function toggleMode(){
 }
 async function loadOverlay(idx){
  try{var r=await(await fetch("/api/saved/"+idx+"/spectrum.json")).json();overlayBins=r.bins;overlayIdx=idx;
- document.getElementById("overlay-label").textContent="Overlay: #"+idx;document.getElementById("btn-clear-ovl").style.display="";
+ overlayTime=(typeof r.time==="number"&&r.time>0)?r.time:0;   /* #WF-CPS-1 */
+ document.getElementById("overlay-label").textContent="Overlay: #"+idx+(overlayTime>0?"":tr("ovl.noTime"));
+ document.getElementById("btn-clear-ovl").style.display="";
  lg(tfmt("log.ovlOk",idx));if(lastD)draw(lastD);loadSaved();}catch(e){lg(tfmt("log.ovlErr",e))}
 }
-function clearOverlay(){overlayBins=null;overlayIdx=-1;document.getElementById("overlay-label").textContent="";document.getElementById("btn-clear-ovl").style.display="none";lg(tr("log.ovlClear"));if(lastD)draw(lastD);loadSaved();}
+function clearOverlay(){overlayBins=null;overlayIdx=-1;overlayTime=0;document.getElementById("overlay-label").textContent="";document.getElementById("btn-clear-ovl").style.display="none";lg(tr("log.ovlClear"));if(lastD)draw(lastD);loadSaved();}
 async function loadSaved(retry){
  var el=document.getElementById("saved");
  try{
@@ -616,7 +634,15 @@ async function saveSpectrum(){var r=await(await post("/api/save")).json();
 function exportSpectrum(url){
  window.heavyDownload(url).then(function(name){lg(tfmt("log.exportOk",name));})
   .catch(function(e){lg(tfmt("log.exportErr",String(e && e.message||e)));});}
-async function requestInfo(){calibEditing=false;await post("/api/command",{body:"-inf"});await post("/api/command",{body:"-cal"});lg(tr("log.info"));setTimeout(update,800);setTimeout(pollDevLog,600);setTimeout(pollDevLog,1500)}  /* #UI-1: быстро подхватить ответы -inf/-cal */
+// F12/RO1: см. web/index.html — тот же приём "до"/"после" по calib_reject_seq.
+async function requestInfo(){
+ calibEditing=false;
+ var before=0; try{before=(await(await fetch("/api/device")).json()).calib_reject_seq||0}catch(e){}
+ await post("/api/command",{body:"-inf"});await post("/api/command",{body:"-cal"});lg(tr("log.info"));
+ setTimeout(async function(){try{var after=(await(await fetch("/api/device")).json()).calib_reject_seq||0;
+  if(after!==before)lg(tr("cal.readEmpty"))}catch(e){}},900);
+ setTimeout(update,800);setTimeout(pollDevLog,600);setTimeout(pollDevLog,1500)   /* #UI-1: быстро подхватить ответы -inf/-cal */
+}
 async function rebootDevice(){if(!confirm(tr("confirm.rebootDev")))return;await post("/api/reboot-device");lg(tr("log.rebootDev"))}
 async function rebootEsp(){if(!confirm(tr("confirm.rebootEsp")))return;await post("/api/reboot-esp");document.getElementById("status").textContent=tr("status.rebooting")}
 async function resetWifi(){if(!confirm(tr("confirm.wifiReset")))return;await post("/api/wifi/reset");document.getElementById("status").textContent=tr("status.wifiSetup")}
@@ -631,7 +657,8 @@ document.getElementById("cal-head").onclick=function(){
 
 async function initCalib(){
  try{var r=await(await fetch("/api/device")).json();
- if(r.calibration){calib=r.calibration;if(!calibEditing)fillCalibFields(r.calibration);nucBtnEnable(true);}
+ if(r.calibration){if(!calibEditing)fillCalibFields(r.calibration);}
+ if(calibIsSet(r)){calib=r.calibration;nucBtnEnable(true);}
  if(r.serial){document.getElementById("device-chip").textContent=r.serial}}catch(e){}
 }
 

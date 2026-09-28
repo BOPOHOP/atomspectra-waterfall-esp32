@@ -6,6 +6,7 @@
 #include "ota_github_decision.h"
 #include "ota_github_redirect.h"
 #include "ota_busy.h"
+#include "ota_github_download_retry.h"   // P3 №7 (sweep-B задача 5)
 #include "ota_image_check.h"
 #include "atomspectra.h"      // wifi_is_connected()
 #include "esp_http_client.h"
@@ -100,8 +101,18 @@ static void set_progress(ota_gh_state_t st, uint32_t bytes, uint32_t total, cons
 // 30x на оба ассета релиза, install падал на первом же скачивании. Решение
 // "продолжать/стоп" -- чистая ota_http_redirect_decide() (host-тестируема).
 #define OTA_GH_MAX_REDIRECTS 10
-static esp_err_t http_open_with_redirects(esp_http_client_handle_t cl, int64_t *out_clen)
+// P3 №7 (sweep-B задача 5): конечное число попыток ВОЗОБНОВЛЕНИЯ скачивания
+// образа после обрыва -- каждая попытка это TCP+TLS handshake заново (не
+// простой повтор recv() в уже открытом соединении, как у D4/ручной заливки),
+// поэтому меньше, чем 30 у D4: 5 попыток разумны для одиночного клиента.
+#define OTA_GH_DOWNLOAD_MAX_RETRIES 5
+// Н4 (раунд 2): *out_fail_status (если не NULL) — HTTP-код ответа, на котором
+// открытие остановилось с ESP_FAIL (4xx/5xx, лимит редиректов); 0 — ответа не
+// было (сбой сети/TLS). Нужен решателю докачки: ошибка сервера != обрыв сети.
+static esp_err_t http_open_with_redirects_st(esp_http_client_handle_t cl, int64_t *out_clen,
+                                             int *out_fail_status)
 {
+    if (out_fail_status) *out_fail_status = 0;
     for (int hop = 0; ; hop++) {
         esp_err_t err = esp_http_client_open(cl, 0);
         if (err != ESP_OK) {
@@ -116,12 +127,18 @@ static esp_err_t http_open_with_redirects(esp_http_client_handle_t cl, int64_t *
         esp_http_client_close(cl);
         if (act == OTA_HTTP_REDIRECT_STOP_FAIL) {
             ESP_LOGW(TAG, "diag: redirect stop_fail hop=%d status=%d", hop, status);
+            if (out_fail_status) *out_fail_status = status;
             return ESP_FAIL;
         }
         // CONTINUE: Location уже распарсен esp-idf при fetch_headers() -- set_redirection
         // переставляет URL клиента на него, дальше открываем заново.
         if (esp_http_client_set_redirection(cl) != ESP_OK) return ESP_FAIL;
     }
+}
+
+static esp_err_t http_open_with_redirects(esp_http_client_handle_t cl, int64_t *out_clen)
+{
+    return http_open_with_redirects_st(cl, out_clen, NULL);
 }
 
 // Скачивает url целиком в буфер PSRAM (heap_caps_malloc/realloc,
@@ -296,6 +313,94 @@ static void install_fail(esp_ota_handle_t ota, const char *reason)
     set_progress(OTA_GH_ST_ERROR, 0, 0, reason);
 }
 
+/* Н4 (раунд 2): reopen/wait для ota_gh_dl_reopen_until_decided() (ota_github_download_retry.h,
+   host-тест) — здесь только ввод-вывод, решения там. */
+typedef struct { esp_http_client_handle_t cl; const char *asset_url; uint32_t received; int64_t clen2; int status; } ota_gh_reopen_ctx_t;
+
+/* У5 (раунд 3): ввод-вывод для ota_gh_dl_open_from() — порядок и решение там (host-тест) */
+static int ota_gh_io_set_url(void *cl, const char *url) { return esp_http_client_set_url(cl, url) == ESP_OK ? 0 : -1; }
+static void ota_gh_io_set_range(void *cl, uint32_t from)
+{
+    char h[32];
+    snprintf(h, sizeof(h), "bytes=%" PRIu32 "-", from);
+    if (from) esp_http_client_set_header(cl, "Range", h); else esp_http_client_delete_header(cl, "Range");
+}
+static int ota_gh_io_open(void *cl, int64_t *clen, int *fs) { return http_open_with_redirects_st(cl, clen, fs) == ESP_OK ? 0 : -1; }
+static int ota_gh_io_status(void *cl) { return esp_http_client_get_status_code(cl); }
+static const ota_gh_dl_io_t s_ota_gh_dl_io = { ota_gh_io_set_url, ota_gh_io_set_range, ota_gh_io_open, ota_gh_io_status };
+
+static int ota_gh_dl_reopen_cb(void *p)
+{
+    ota_gh_reopen_ctx_t *c = (ota_gh_reopen_ctx_t *)p;
+    esp_http_client_close(c->cl); /* идемпотентно, IDF закрывает только при state > INIT */
+    c->status = ota_gh_dl_open_from(&s_ota_gh_dl_io, c->cl, c->asset_url, c->received, &c->clen2);
+    return c->status;
+}
+
+static void ota_gh_dl_wait_cb(void *p, int attempt)
+{
+    (void)p;
+    for (int i = 0; i < 60 && !wifi_is_connected(); ++i) {
+        vTaskDelay(pdMS_TO_TICKS(500)); /* до 30 с ждать Wi-Fi */
+    }
+    vTaskDelay(pdMS_TO_TICKS(ota_gh_dl_backoff_ms(attempt)));
+}
+
+// P3 №7 (verify-awf5-github-ota-2026-09-27.md:260, sweep-B задача 5): вызывается
+// из install_task() при esp_http_client_read() < 0 (обрыв/таймаут). Решение --
+// ota_gh_dl_decide() (host-тест test_ota_github_download_retry.c). Возвращает
+// true, если чтение можно продолжать (cl уже переоткрыт и позиционирован),
+// *out_done=true — образ уже принят целиком (М4 сценарий 2, как штатный EOF).
+static bool ota_gh_download_retry(esp_http_client_handle_t cl, const char *asset_url,
+                                   const esp_partition_t *update,
+                                   esp_ota_handle_t *ota, ota_image_walker_t *walker,
+                                   mbedtls_sha256_context *sha, bool *header_checked,
+                                   uint32_t *received, int *dl_attempt, int64_t *clen,
+                                   bool *out_done)
+{
+    *out_done = false;
+    // М4 сценарий 2 (release-gate-firmware-v1.2.28-code.md): обрыв ровно на
+    // конце образа — Range: bytes=received- на этой границе законно вернёт 416
+    // и раньше уходило в GIVE_UP, теряя уже полностью принятый и верный образ.
+    if (ota_gh_dl_is_already_complete(*received, *clen)) {
+        ESP_LOGI(TAG, "AWF-5 P3#7 M4: read error at exact EOF (%" PRIu32 "/%" PRId64
+                 " bytes) - treating as complete, not retrying", *received, *clen);
+        *out_done = true;
+        return true;
+    }
+    // Н4 (раунд 2): переоткрытие до решения — на сбое сети (-1) ждём и
+    // переоткрываем ЗДЕСЬ, чтение на закрытом соединении не продолжается;
+    // 4xx/5xx доходят своим кодом и дают GIVE_UP сразу (как в 1.2.27).
+    ota_gh_reopen_ctx_t rc = { .cl = cl, .asset_url = asset_url, .received = *received, .clen2 = 0, .status = -1 };
+    ota_gh_dl_retry_action_t act = ota_gh_dl_reopen_until_decided(
+        ota_gh_dl_reopen_cb, ota_gh_dl_wait_cb, &rc, dl_attempt, OTA_GH_DOWNLOAD_MAX_RETRIES);
+    int64_t clen2 = rc.clen2;
+    ESP_LOGW(TAG, "AWF-5 P3#7: download interrupted at %" PRIu32 " bytes, attempt=%d, "
+             "reopen_status=%d -> action=%d", *received, *dl_attempt, rc.status, (int)act);
+    if (act == OTA_GH_DL_GIVE_UP) return false;
+    if (act == OTA_GH_DL_RESTART_ZERO) {
+        if (clen2 > 0 && (size_t)clen2 > update->size) return false;   // как исходная проверка до цикла
+        // М4 сценарий 3: стирание слота (esp_ota_begin, 2 МиБ) идёт секундами —
+        // открытое соединение простаивало бы всё это время и рвалось по таймауту
+        // сервера. Закрываем, стираем, открываем заново уже без Range.
+        esp_http_client_close(cl);
+        esp_ota_abort(*ota);
+        if (esp_ota_begin(update, OTA_SIZE_UNKNOWN, ota) != ESP_OK) return false;
+        // У5: заново от адреса ассета (свежая подписанная ссылка), без Range
+        if (ota_gh_dl_open_from(&s_ota_gh_dl_io, cl, asset_url, 0, &clen2) != 200) return false;
+        if (clen2 > 0 && (size_t)clen2 > update->size) return false;
+        mbedtls_sha256_free(sha);
+        mbedtls_sha256_init(sha);
+        mbedtls_sha256_starts(sha, 0);
+        ota_image_walker_init(walker);
+        *header_checked = false;
+        *received = 0;
+        *clen = clen2;
+        set_progress(OTA_GH_ST_DOWNLOADING, 0, clen2 > 0 ? (uint32_t)clen2 : 0, NULL);
+    }
+    return true;   // RESUME_RANGE либо успешный RESTART_ZERO -- продолжать чтение
+}
+
 // Фоновая задача: любой сбой -> install_fail() (esp_ota_abort, слот
 // загрузки НЕ меняется, реболута нет) -- по требованию задачи #AWF-5 п.2.
 static void install_task(void *arg)
@@ -371,9 +476,18 @@ static void install_task(void *arg)
     ota_image_walker_init(&walker);
     bool header_checked = false, image_ok = true;
     uint32_t received = 0;
+    int dl_attempt = 0;   // P3 №7: счётчик попыток возобновления
     for (;;) {
         int rd = esp_http_client_read(cl, (char *)buf, 4096);
-        if (rd < 0) { image_ok = false; break; }
+        if (rd < 0) {
+            bool done = false;
+            if (!ota_gh_download_retry(cl, cache.asset_url, update, &ota, &walker, &sha,
+                                        &header_checked, &received, &dl_attempt, &clen, &done)) {
+                image_ok = false; break;
+            }
+            if (done) break;   // М4 сценарий 2: как штатный EOF (rd==0)
+            continue;
+        }
         if (rd == 0) break;
         if (!header_checked) {
             header_checked = true;

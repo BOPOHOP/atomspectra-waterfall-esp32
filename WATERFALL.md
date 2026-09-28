@@ -17,7 +17,8 @@
 - **забрать готовые сегменты `.aswf` по HTTP** (`/api/waterfall/segments` →
   `/api/waterfall/segment?name=…`) и склеить на ПК/в браузере;
 - **выгрузить кнопкой «⬇ Экспорт .n42»** прямо из Web UI — на плате собирается
-  **ANSI N42.42** из кольца PSRAM (работает и без записи во flash);
+  **ANSI N42.42** всей истории: сегменты с flash + строки из кольца PSRAM, которых на
+  flash ещё нет (работает и без записи во flash — тогда только кольцо);
 - конвертировать в **ANSI N42.42** скриптами из репозитория;
 - открыть как 2D-водопад в офлайн-просмотрщике из этого репозитория.
 
@@ -124,10 +125,13 @@ keep-last).
 > ребутов, 0 `seg_dropped`, все `SEG_ROLLOVER` чистые (см. фикс #WF-1 в
 > [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md)). Полный отчёт: [`docs/stab2_report.md`](docs/stab2_report.md).
 >
-> **⚠ #FW-19:** экспорт n42 отдаёт только последние **256 строк** (~4.25 ч при кадансе
-> ~60 с) — это отдельный лимит поля `ring_capacity` (`/api/waterfall/status`), меньше
-> оценки ёмкости раздела (763 строки) выше. Для записей длиннее ~4.25 ч забирать сегменты
-> периодически через `/api/waterfall/segment` (см. ниже), не дожидаясь конца записи.
+> **#FW-19 (с 1.2.28):** экспорт n42 отдаёт **всю историю на flash** (все завершённые
+> сегменты, по возрастанию индекса) плюс строки, которых на flash ещё нет (открытый
+> сегмент, строки при выключенном persist) — из кольца PSRAM; строка не выдаётся дважды.
+> Раньше экспорт был ограничен кольцом — последние **256 строк** (`ring_capacity`).
+> Прежнее поведение — `GET /api/waterfall/export.n42?ring=1`. Выдача потоковая; при
+> заполненной flash (~760 строк) она занимает десятки секунд, веб-интерфейс на это время
+> отвечает с задержкой (httpd однозадачный). Калибровка в файле — текущая калибровка прибора.
 > Подробности: [`docs/stab2_report.md`](docs/stab2_report.md) §6, [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) (#FW-19).
 
 > Отдача сегмента (`/api/waterfall/segment?name=…`) — **строго read-only**: плата
@@ -149,7 +153,7 @@ keep-last).
 | `/api/waterfall/segments` | GET | **Список сегментов на Flash** (JSON-массив, см. ниже). Не требует CSRF |
 | `/api/waterfall/segment?name=seg_NNNNN.aswf` | GET | **Сырой файл сегмента** (`application/octet-stream`, read-only). Строгая валидация имени (anti-traversal): `seg_`+цифры+`.aswf`. `400 bad name` / `404 not found` |
 | `/api/waterfall/segment/delete?name=seg_NNNNN.aswf` | POST | Удалить сегмент с flash **после** подтверждённого приёма на ПК (`wf_pull_client.py`, #REC-12). `{"ok":true}` / `{"ok":false,"err":"not-deletable"}` — сегмент ещё пишется или запинен |
-| `/api/waterfall/export.n42` | GET | **Экспорт в ANSI N42.42** из кольца PSRAM (одна `<RadMeasurement>` на строку, `CountedZeroes`, калибровка в `<EnergyCalibration>`). Кнопка «⬇ Экспорт .n42» в Web UI. Не требует записи во flash |
+| `/api/waterfall/export.n42` | GET | **Экспорт в ANSI N42.42** всей истории: сегменты с flash + недостающие строки из кольца PSRAM (одна `<RadMeasurement>` на строку, `CountedZeroes`, калибровка в `<EnergyCalibration>` — только если задана: нулевая = нет калибровки). `?ring=1` — только кольцо (до 256 строк), как до 1.2.28. Кнопка «⬇ Экспорт .n42» в Web UI. Не требует записи во flash |
 | `/api/waterfall/offload` | GET | Конфиг + статистика автовыгрузки сегментов push-методом (#REC-11-A2): `{"enabled","url","user","has_pass","sent_ok","failed","last_status","last_ok_at","busy"}`. Пароль наружу никогда не отдаётся |
 | `/api/waterfall/offload` | POST | Задать конфиг автовыгрузки: `{"enabled":bool,"url":"http://…","user":"…","pass":"…"}` (без `pass` — прежний пароль сохраняется). `url` с хостом `narodmon` отвергается (`err:"narodmon-blocked"`, БАН Народмон) |
 | `/ws/waterfall` | WS | Текстовый заголовок при подключении, далее по одному бинарному кадру (16384 Б) на каждую новую строку |

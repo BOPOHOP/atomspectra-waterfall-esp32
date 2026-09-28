@@ -54,6 +54,46 @@ void gh_parse_suite(void);
 void ota_busy_suite(void);
 void ota_gh_decision_suite(void);
 void ota_gh_redirect_suite(void);
+void ota_timeout_budget_suite(void);
+void ota_gh_dl_retry_suite(void);
+// #AWF-12: предикаты авто-считывания калибровки (main/calib_autoread.h).
+void calib_autoread_suite(void);
+void text_accum_predicates_suite(void);
+void text_accum_triggers_suite(void);
+void text_accum_f1_regression_suite(void);
+void text_accum_split_dump_suite(void);
+void text_accum_ok_then_inf_suite(void);
+void text_accum_generic_garbage_before_dump_suite(void);
+void text_accum_overflow_suite(void);
+void text_accum_overflow_boundary_suite(void);  // RT2
+// sweep-A 1.2.28: P-009 бюджет гейта, #REC-12 пин чтения, P-042 seg_seq,
+// #FW-19 план экспорта n42, R7 признак калибровки в файловых выводах.
+void http_gate_budget_suite(void);
+void wf_seg_pin_suite(void);
+void wf_seg_seq_suite(void);
+void wf_export_plan_suite(void);
+void calib_export_suite(void);
+void calib_export_sites_suite(void);
+void seg_pin_sites_suite(void);
+// R2/R3 (release-gate-1.2.28-code-rc2.md §2.1, sweep-C группа D): S10/S07/S22
+// (дамп теряется/сдвигается), S17-класс (\0 внутри пакета маскирует -inf).
+void text_accum_r2_offset_dump_suite(void);
+void text_accum_r2_fragment_before_dump_suite(void);
+void text_accum_r2_ok_plus_dump_one_frame_suite(void);
+void text_accum_r3_null_byte_suite(void);
+void text_accum_m1_split_real_dump_suite(void);
+void wf_seg_rebuild_range_suite(void);
+void spec_cache_gen_suite(void);
+void text_accum_round2_suite(void);       // Н1/Н2 раунда 2
+void round2_wiring_sites_suite(void);     // Н12 раунда 2: проводка в прошивочных .c
+void text_accum_r3_old_api_suite(void);  // У1/У2 раунда 3: прежний API
+void text_accum_r3_u1_suite(void);       // У1 раунда 3: дробление, потеря кадра
+void text_accum_r3_u2_suite(void);       // У2 раунда 3: мусор + дробление
+void text_accum_r3_dispatch_suite(void); // У6 раунда 3: проводка разбора
+void round3_flash_lock_suite(void);      // У3 раунда 3
+void round3_snapshot_file_suite(void);   // У4 раунда 3
+void round3_ota_reopen_suite(void);      // У5 раунда 3
+void round3_seg_rebuild_entry_suite(void); // У6/О5 раунда 3
 
 // Тестовая команда. CMD_HISTOGRAM (0x01) объявлена в main/atomspectra.h, но она
 // вне include-path host-сборки; shproto трактует cmd как обычный uint8_t.
@@ -234,6 +274,41 @@ int main(void)
     ota_busy_suite();
     ota_gh_decision_suite();
     ota_gh_redirect_suite();
+    ota_timeout_budget_suite();
+    ota_gh_dl_retry_suite();
+    calib_autoread_suite();
+    text_accum_predicates_suite();
+    text_accum_triggers_suite();
+    text_accum_f1_regression_suite();
+    text_accum_split_dump_suite();
+    text_accum_ok_then_inf_suite();
+    text_accum_generic_garbage_before_dump_suite();
+    text_accum_overflow_suite();
+    text_accum_overflow_boundary_suite();  // RT2
+    http_gate_budget_suite();      // sweep-A
+    wf_seg_pin_suite();
+    wf_seg_seq_suite();
+    wf_export_plan_suite();
+    calib_export_suite();
+    calib_export_sites_suite();
+    seg_pin_sites_suite();
+    text_accum_r2_offset_dump_suite();
+    text_accum_r2_fragment_before_dump_suite();
+    text_accum_r2_ok_plus_dump_one_frame_suite();
+    text_accum_r3_null_byte_suite();
+    text_accum_m1_split_real_dump_suite();
+    wf_seg_rebuild_range_suite();
+    spec_cache_gen_suite();
+    text_accum_round2_suite();
+    round2_wiring_sites_suite();
+    text_accum_r3_old_api_suite();
+    text_accum_r3_u1_suite();
+    text_accum_r3_u2_suite();
+    text_accum_r3_dispatch_suite();
+    round3_flash_lock_suite();
+    round3_snapshot_file_suite();
+    round3_ota_reopen_suite();
+    round3_seg_rebuild_entry_suite();
 
     if (g_failures) {
         printf("\n%d CHECK(S) FAILED\n", g_failures);

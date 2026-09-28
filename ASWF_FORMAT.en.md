@@ -70,7 +70,7 @@ The header is fully self-describing — every field needed for decoding is prese
 | `saved_rows`   | int              | yes | Rows in file; `0` for an open/unfinalised file |
 | `saved_at`     | int (unix ts)    | yes | Finalisation timestamp; `0` for an open file |
 | `serial`       | string           | no  | Device serial number |
-| `calibration`  | array of floats  | no  | Energy calibration polynomial coefficients |
+| `calibration`  | array of floats  | no  | Energy calibration polynomial coefficients. Written only when a calibration is set: since 1.2.28 (R7) an all-zero polynomial and NaN/Inf are treated as "not set" and the field is omitted. In files from earlier versions an all-zero array means "not set" |
 
 ### Additional v2 Fields
 

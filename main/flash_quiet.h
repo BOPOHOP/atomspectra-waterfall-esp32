@@ -39,6 +39,10 @@ bool flash_quiet_can_start_slice(void);
 bool flash_quiet_writer_lock(TickType_t wait_ticks);
 void flash_quiet_writer_unlock(void);
 
+/** У3: лок писателя, взятый в тихом окне (ждём окно до лока и перепроверяем после);
+ *  max_polls опросов по 50 мс, не дождались — лок без окна, как 1.2.27. */
+bool flash_quiet_writer_lock_in_window(int max_polls);
+
 static inline int flash_quiet_budget_ms(void) { return FLASH_QUIET_BUDGET_MS; }
 static inline int64_t flash_quiet_slice_guard_us(void)
 {

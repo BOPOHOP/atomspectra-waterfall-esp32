@@ -27,3 +27,12 @@ void ota_busy_release(ota_busy_owner_t who)
     ota_busy_release_pure(&s_state, who);
     xSemaphoreGive(s_lock);
 }
+
+bool ota_busy_is_busy(void)
+{
+    if (!s_lock) return false;   // ota_busy_init() не вызван -- как и до фикса, не блокируем
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool busy = ota_busy_is_busy_pure(s_state);
+    xSemaphoreGive(s_lock);
+    return busy;
+}

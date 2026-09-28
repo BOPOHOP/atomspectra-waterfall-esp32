@@ -92,6 +92,25 @@ static bool gate_enter_common(httpd_req_t *req, uint32_t wait_ms)
     return false;
 }
 
+// О2 (release-gate-firmware-v1.2.28-code.md): раньше не вела s_waiters/
+// s_rejects (в отличие от gate_enter_common выше) — таймауты гейта в
+// экспорте n42 (h_export_n42 -> n42_stream_segment, вызывает эту функцию,
+// не *_or_503) были невидимы в http_io_gate_reject_count()/waiters(). Чисто
+// счётчики — возвращаемое значение и тайминг xSemaphoreTake не меняются.
+bool http_io_gate_enter_wait(uint32_t wait_ms)
+{
+    if (!s_slot) http_io_gate_init();
+    portENTER_CRITICAL(&s_spin);
+    s_waiters++;
+    portEXIT_CRITICAL(&s_spin);
+    bool got = s_slot && xSemaphoreTake(s_slot, pdMS_TO_TICKS(wait_ms)) == pdTRUE;
+    portENTER_CRITICAL(&s_spin);
+    s_waiters--;
+    if (!got) s_rejects++;
+    portEXIT_CRITICAL(&s_spin);
+    return got;
+}
+
 bool http_io_gate_enter_or_503(httpd_req_t *req)
 {
     return gate_enter_common(req, 0);
