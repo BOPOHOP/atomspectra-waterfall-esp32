@@ -48,6 +48,11 @@ CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
 # Поднимаем до 64 КБ (максимум без window scaling) — мост терпит секунды задержки.
 CONFIG_LWIP_TCP_SND_BUF_DEFAULT=65535
 CONFIG_LWIP_TCP_WND_DEFAULT=65535
+# #FW-50: 64 КБ выше действуют на ВСЕ сокеты (11 у httpd). Мелкие pbuf'ы (<16 КБ,
+# SPIRAM_MALLOC_ALWAYSINTERNAL) шли в internal и выедали её под нагрузкой браузера;
+# Wi-Fi не мог выделить буфер крупного кадра -> UI вис, сам не восстанавливался.
+# Замер 29.09 (4 клиента, 75 с): без опции 0/56 ответов, с опцией 2224/2224.
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 
 # WebSocket support для /ws/waterfall (live-стрим строк спектрограммы)
 CONFIG_HTTPD_WS_SUPPORT=y

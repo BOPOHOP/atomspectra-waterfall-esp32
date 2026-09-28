@@ -1789,6 +1789,11 @@ static esp_err_t handle_system(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "psram_total", heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
     cJSON_AddNumberToObject(root, "psram_free", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     cJSON_AddNumberToObject(root, "psram_largest", heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+    // Wi-Fi берёт буферы кадров из internal: при исчерпании теряются крупные
+    // кадры, а free_heap (с PSRAM) этого не показывает.
+    cJSON_AddNumberToObject(root, "int_free", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    cJSON_AddNumberToObject(root, "int_largest", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    cJSON_AddNumberToObject(root, "int_min", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
     cJSON_AddNumberToObject(root, "uptime_sec", (double)(esp_timer_get_time() / 1000000));
     cJSON_AddBoolToObject(root, "usb_connected", usb_host_cdc_is_connected());
     cJSON_AddBoolToObject(root, "wifi_connected", wifi_is_connected());
