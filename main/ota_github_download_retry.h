@@ -72,3 +72,23 @@ static inline ota_gh_dl_retry_action_t ota_gh_dl_reopen_until_decided(
     }
 }
 
+/* У5 (раунд 3): открыть загрузку образа заново от ИСХОДНОГО адреса ассета: редирект на
+ * подписанную ссылку хранилища проходится заново (у подписи есть срок, докачка после
+ * ожидания шла бы по истёкшей). from > 0 — с заголовком Range, 0 — без него. */
+typedef struct {
+    int  (*set_url)(void *cl, const char *url);                    /* 0 — ок */
+    void (*set_range)(void *cl, uint32_t from);                    /* 0 — снять Range */
+    int  (*open)(void *cl, int64_t *clen, int *fail_status);       /* 0 — ок (с редиректами) */
+    int  (*status)(void *cl);                                      /* код ответа после open */
+} ota_gh_dl_io_t;
+
+static inline int ota_gh_dl_open_from(const ota_gh_dl_io_t *io, void *cl, const char *asset_url,
+                                      uint32_t from, int64_t *clen)
+{
+    *clen = 0;
+    if (io->set_url(cl, asset_url) != 0) return -1;
+    io->set_range(cl, from);
+    int fail_status = 0;
+    bool ok = io->open(cl, clen, &fail_status) == 0;
+    return ota_gh_dl_reopen_status(ok, ok ? io->status(cl) : 0, fail_status);
+}

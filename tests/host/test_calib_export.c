@@ -419,8 +419,10 @@ void round2_wiring_sites_suite(void)
     w_site("../../main/ota_github_client.c", "ota_gh_download_retry", "ota_gh_dl_is_already_complete(", "ota_gh_dl_reopen_until_decided(");
     /* Н4 без прямого decide */
     w_absent("../../main/ota_github_client.c", "ota_gh_download_retry", "ota_gh_dl_decide(");
-    /* Н4 код отказа */
-    w_site("../../main/ota_github_client.c", "ota_gh_dl_reopen_cb", "http_open_with_redirects_st(", "ota_gh_dl_reopen_status(");
+    /* Н4 код отказа; У5 раунда 3: переоткрытие — от адреса ассета (ota_gh_dl_open_from, test_round3_misc.c) */
+    w_site("../../main/ota_github_client.c", "ota_gh_dl_reopen_cb", "esp_http_client_close(", "ota_gh_dl_open_from(&s_ota_gh_dl_io, c->cl, c->asset_url");
+    w_site("../../main/ota_github_client.c", "ota_gh_download_retry", "esp_ota_begin(", "ota_gh_dl_open_from(&s_ota_gh_dl_io, cl, asset_url, 0");
+    w_site("../../main/ota_github_client.c", "ota_gh_io_open", "http_open_with_redirects_st(", NULL);
     /* Н4 код отказа наружу */
     w_site("../../main/ota_github_client.c", "http_open_with_redirects_st", "*out_fail_status = status", NULL);
     /* М4 сц.2 выход по EOF */

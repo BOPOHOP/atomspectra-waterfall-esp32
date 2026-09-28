@@ -315,19 +315,25 @@ static void install_fail(esp_ota_handle_t ota, const char *reason)
 
 /* Н4 (раунд 2): reopen/wait для ota_gh_dl_reopen_until_decided() (ota_github_download_retry.h,
    host-тест) — здесь только ввод-вывод, решения там. */
-typedef struct { esp_http_client_handle_t cl; uint32_t received; int64_t clen2; int status; } ota_gh_reopen_ctx_t;
+typedef struct { esp_http_client_handle_t cl; const char *asset_url; uint32_t received; int64_t clen2; int status; } ota_gh_reopen_ctx_t;
+
+/* У5 (раунд 3): ввод-вывод для ota_gh_dl_open_from() — порядок и решение там (host-тест) */
+static int ota_gh_io_set_url(void *cl, const char *url) { return esp_http_client_set_url(cl, url) == ESP_OK ? 0 : -1; }
+static void ota_gh_io_set_range(void *cl, uint32_t from)
+{
+    char h[32];
+    snprintf(h, sizeof(h), "bytes=%" PRIu32 "-", from);
+    if (from) esp_http_client_set_header(cl, "Range", h); else esp_http_client_delete_header(cl, "Range");
+}
+static int ota_gh_io_open(void *cl, int64_t *clen, int *fs) { return http_open_with_redirects_st(cl, clen, fs) == ESP_OK ? 0 : -1; }
+static int ota_gh_io_status(void *cl) { return esp_http_client_get_status_code(cl); }
+static const ota_gh_dl_io_t s_ota_gh_dl_io = { ota_gh_io_set_url, ota_gh_io_set_range, ota_gh_io_open, ota_gh_io_status };
 
 static int ota_gh_dl_reopen_cb(void *p)
 {
     ota_gh_reopen_ctx_t *c = (ota_gh_reopen_ctx_t *)p;
     esp_http_client_close(c->cl); /* идемпотентно, IDF закрывает только при state > INIT */
-    char range_hdr[32];
-    snprintf(range_hdr, sizeof(range_hdr), "bytes=%" PRIu32 "-", c->received);
-    esp_http_client_set_header(c->cl, "Range", range_hdr);
-    int fail_status = 0;
-    c->clen2 = 0;
-    esp_err_t err = http_open_with_redirects_st(c->cl, &c->clen2, &fail_status);
-    c->status = ota_gh_dl_reopen_status(err == ESP_OK, err == ESP_OK ? esp_http_client_get_status_code(c->cl) : 0, fail_status);
+    c->status = ota_gh_dl_open_from(&s_ota_gh_dl_io, c->cl, c->asset_url, c->received, &c->clen2);
     return c->status;
 }
 
@@ -345,7 +351,8 @@ static void ota_gh_dl_wait_cb(void *p, int attempt)
 // ota_gh_dl_decide() (host-тест test_ota_github_download_retry.c). Возвращает
 // true, если чтение можно продолжать (cl уже переоткрыт и позиционирован),
 // *out_done=true — образ уже принят целиком (М4 сценарий 2, как штатный EOF).
-static bool ota_gh_download_retry(esp_http_client_handle_t cl, const esp_partition_t *update,
+static bool ota_gh_download_retry(esp_http_client_handle_t cl, const char *asset_url,
+                                   const esp_partition_t *update,
                                    esp_ota_handle_t *ota, ota_image_walker_t *walker,
                                    mbedtls_sha256_context *sha, bool *header_checked,
                                    uint32_t *received, int *dl_attempt, int64_t *clen,
@@ -364,7 +371,7 @@ static bool ota_gh_download_retry(esp_http_client_handle_t cl, const esp_partiti
     // Н4 (раунд 2): переоткрытие до решения — на сбое сети (-1) ждём и
     // переоткрываем ЗДЕСЬ, чтение на закрытом соединении не продолжается;
     // 4xx/5xx доходят своим кодом и дают GIVE_UP сразу (как в 1.2.27).
-    ota_gh_reopen_ctx_t rc = { .cl = cl, .received = *received, .clen2 = 0, .status = -1 };
+    ota_gh_reopen_ctx_t rc = { .cl = cl, .asset_url = asset_url, .received = *received, .clen2 = 0, .status = -1 };
     ota_gh_dl_retry_action_t act = ota_gh_dl_reopen_until_decided(
         ota_gh_dl_reopen_cb, ota_gh_dl_wait_cb, &rc, dl_attempt, OTA_GH_DOWNLOAD_MAX_RETRIES);
     int64_t clen2 = rc.clen2;
@@ -379,10 +386,8 @@ static bool ota_gh_download_retry(esp_http_client_handle_t cl, const esp_partiti
         esp_http_client_close(cl);
         esp_ota_abort(*ota);
         if (esp_ota_begin(update, OTA_SIZE_UNKNOWN, ota) != ESP_OK) return false;
-        esp_http_client_delete_header(cl, "Range");
-        clen2 = 0;
-        if (http_open_with_redirects(cl, &clen2) != ESP_OK ||
-            esp_http_client_get_status_code(cl) != 200) return false;
+        // У5: заново от адреса ассета (свежая подписанная ссылка), без Range
+        if (ota_gh_dl_open_from(&s_ota_gh_dl_io, cl, asset_url, 0, &clen2) != 200) return false;
         if (clen2 > 0 && (size_t)clen2 > update->size) return false;
         mbedtls_sha256_free(sha);
         mbedtls_sha256_init(sha);
@@ -476,7 +481,7 @@ static void install_task(void *arg)
         int rd = esp_http_client_read(cl, (char *)buf, 4096);
         if (rd < 0) {
             bool done = false;
-            if (!ota_gh_download_retry(cl, update, &ota, &walker, &sha,
+            if (!ota_gh_download_retry(cl, cache.asset_url, update, &ota, &walker, &sha,
                                         &header_checked, &received, &dl_attempt, &clen, &done)) {
                 image_ok = false; break;
             }
