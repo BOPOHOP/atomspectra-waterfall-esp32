@@ -23,4 +23,9 @@ bool http_io_gate_enter_or_503(httpd_req_t *req);
 // страховка, если слот не освободился за отведённое время.
 bool http_io_gate_enter_wait_or_503(httpd_req_t *req, uint32_t wait_ms);
 
+// #FW-19 (sweep-A): ждать слот до wait_ms БЕЗ ответа клиенту — для потоковой выдачи,
+// которая уже начала ответ (экспорт n42 берёт слот на чтение каждой строки с flash).
+// true = слот наш (вызвать leave).
+bool http_io_gate_enter_wait(uint32_t wait_ms);
+
 uint32_t http_io_gate_reject_count(void);

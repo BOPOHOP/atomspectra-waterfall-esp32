@@ -1,5 +1,7 @@
 #include "atomspectra.h"
 #include "calib_autoread.h"  // #AWF-12b R4: calib_is_missing — тот же снимок, что "calibration"
+#include "calib_export.h"    // R7 (sweep-A): признак «калибровка есть» в экспорте XML/N42/SPE
+#include "http_gate_budget.h" // P-009 (sweep-A): единый бюджет ожидания HEAVY-слота
 #include "spectrum_t1.h"
 #include "shproto.h"
 #include "web_waterfall.h"
@@ -52,11 +54,12 @@ static const char *TAG = "web";
 #define WF_TIME_SYNCED_EPOCH 1700000000L   // 2023-11-14 UTC
 static inline bool time_is_synced(time_t t) { return t >= WF_TIME_SYNCED_EPOCH; }
 
-// #3/Codeaudit P1: короткое ожидание HEAVY-слота для сохранённых-спектров
-// эндпоинтов (спектры/save/list/export/delete на Flash) — тот же принцип и
-// то же значение, что WF_SEGMENT_GATE_WAIT_MS в web_waterfall.c: пользователь
-// ждёт клик, мгновенный 503 на пустяковой задержке слота — плохой UX.
-#define SAVED_FLASH_GATE_WAIT_MS 250
+// #3/Codeaudit P1: ожидание HEAVY-слота для сохранённых-спектров эндпоинтов
+// (спектры/save/list/export/delete на Flash): пользователь ждёт клик, мгновенный 503
+// на задержке слота — плохой UX. P-009 (sweep-A): 250 мс было короче одного удержания
+// фоновым автосейвом/бэкапом (~0,6–0,7 с) — теперь общий бюджет с web_waterfall.c,
+// значение и обоснование в http_gate_budget.h (2000 мс).
+#define SAVED_FLASH_GATE_WAIT_MS HTTP_GATE_WAIT_MS
 
 static void json_add_temp(cJSON *o, const char *key, float t)
 {
@@ -1097,7 +1100,7 @@ static esp_err_t render_spectrum_xml(httpd_req_t *req, const spectrum_data_t *sp
         SPECTRUM_CHANNELS);
     httpd_resp_send_chunk(req, buf, n);
 
-    if (sp->calib_valid) {
+    if (calib_export_present(sp)) {          // R7 (sweep-A): нули/NaN = «не задана»
         n = snprintf(buf, 4096,
             "        <EnergyCalibration>\r\n"
             "          <PolynomialOrder>%d</PolynomialOrder>\r\n"
@@ -1249,7 +1252,8 @@ static esp_err_t render_spectrum_n42(httpd_req_t *req, const spectrum_data_t *sp
         "      <RadInstrumentComponentVersion>2026.6.15.1</RadInstrumentComponentVersion>\r\n"
         "    </RadInstrumentVersion>\r\n"
         "  </RadInstrumentInformation>\r\n");
-    if (sp->calib_valid) {
+    const bool have_cal = calib_export_present(sp);   // R7 (sweep-A): один признак на файл
+    if (have_cal) {
         httpd_resp_sendstr_chunk(req,
             "  <EnergyCalibration id=\"SpectrumCalibration-0\">\r\n"
             "    <CoefficientValues>");
@@ -1273,7 +1277,7 @@ static esp_err_t render_spectrum_n42(httpd_req_t *req, const spectrum_data_t *sp
         ts.tm_mday, ts.tm_mon + 1, ts.tm_year + 1900, ts.tm_hour, ts.tm_min, ts.tm_sec,
         sp->total_time_sec);
     httpd_resp_send_chunk(req, buf, n);
-    if (sp->calib_valid) {
+    if (have_cal) {
         httpd_resp_sendstr_chunk(req,
             "    <Spectrum id=\"SpectrumData\" radDetectorInformationReference=\"Detector\""
             " energyCalibrationReference=\"SpectrumCalibration-0\">\r\n");
@@ -1341,7 +1345,7 @@ static esp_err_t render_spectrum_spe(httpd_req_t *req, const spectrum_data_t *sp
     // #FIELD-9 (A11): near-epoch → строка COMMENT (SPE игнорирует неизвестные ключи); только при рассинхроне
     if (!time_is_synced(end_time))
         pos += snprintf(buf + pos, 4096 - pos, "COMMENT=TIME NOT SYNCHRONIZED (board clock near-epoch)\r\n");
-    if (sp->calib_valid) {
+    if (calib_export_present(sp)) {          // R7 (sweep-A): нули/NaN = «не задана»
         double emax = 0.0;
         for (int i = sp->calib_order; i >= 0; i--)
             emax = emax * (SPECTRUM_CHANNELS - 1) + sp->calibration[i];
