@@ -1,5 +1,6 @@
 #include "spectrum_http_cache.h"
 #include "atomspectra.h"
+#include "json_uint_fmt.h"        // UI-P1: быстрый forматтер bins[] (не vsnprintf)
 #include "spectrum_t1.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -27,6 +28,11 @@ static bool               s_have;
 // ноль, пересборка кэша не освобождает буферы — иначе httpd_resp_send() уедет
 // по освобождённому указателю.
 static int                s_readers;
+// UI-P1: сборка JSON идёт ВНЕ s_mtx (в scratch-снимок s_sp_build), под
+// мьютексом только swap указателей. s_building — single-flight (не пускать
+// вторую параллельную сборку с того же tick).
+static spectrum_data_t   *s_sp_build;    // PSRAM, scratch для снимка при пересборке
+static bool               s_building;
 
 static float compute_live_time(const spectrum_data_t *sp)
 {
@@ -64,13 +70,34 @@ static bool append_fmt(char **buf, size_t *len, size_t *cap, const char *fmt, ..
     }
 }
 
+// UI-P1 (ui-perf-2026-09-27.md P1): та же семантика роста буфера, что и
+// append_fmt (доубливание при нехватке места), но ЗАПИСЬ элемента —
+// json_append_uint32_csv (main/json_uint_fmt.h, host-тест
+// tests/host/test_json_uint_fmt.c: побайтовое совпадение со старым
+// vsnprintf-путём) вместо vsnprintf на КАЖДЫЙ из 8192 бинов.
+static bool append_uint32_csv_grow(char **buf, size_t *len, size_t *cap,
+                                    uint32_t v, int need_comma)
+{
+    for (;;) {
+        size_t w = json_append_uint32_csv(*buf, *cap, *len, v, need_comma);
+        if (w > 0) { *len += w; return true; }
+        size_t need = *len + 12;   // max 1 запись ("," + 10 цифр)
+        size_t ncap = *cap ? *cap * 2 : 65536;
+        while (ncap < need) ncap *= 2;
+        char *nb = heap_caps_realloc(*buf, ncap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!nb) nb = realloc(*buf, ncap);
+        if (!nb) return false;
+        *buf = nb; *cap = ncap;
+    }
+}
+
 static bool build_json_full(const spectrum_data_t *sp, char **out, size_t *out_len)
 {
     char *buf = NULL;
     size_t len = 0, cap = 0;
     if (!append_fmt(&buf, &len, &cap, "{\"bins\":[")) goto fail;
     for (int i = 0; i < SPECTRUM_CHANNELS; i++) {
-        if (!append_fmt(&buf, &len, &cap, "%s%" PRIu32, i ? "," : "", sp->bins[i])) goto fail;
+        if (!append_uint32_csv_grow(&buf, &len, &cap, sp->bins[i], i != 0)) goto fail;
     }
     uint32_t hist_ok = 0, hist_drop = 0;
     spectrum_get_hist_stats(&hist_ok, &hist_drop);
@@ -158,8 +185,62 @@ void spectrum_http_cache_init(void)
         s_mtx = xSemaphoreCreateMutex();
         s_sp = heap_caps_malloc(sizeof(*s_sp), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!s_sp) s_sp = malloc(sizeof(*s_sp));
-        ESP_LOGI(TAG, "spectrum HTTP cache init (TTL=2s)");
+        // UI-P1: второй буфер того же размера — сборка снимка ВНЕ мьютекса
+        // пишет сюда, не трогая s_sp (который читатели могут держать через
+        // PAYLOAD_BINS до s_readers==0).
+        s_sp_build = heap_caps_malloc(sizeof(*s_sp_build), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!s_sp_build) s_sp_build = malloc(sizeof(*s_sp_build));
+        ESP_LOGI(TAG, "spectrum HTTP cache init (TTL=2s, double-buffered build)");
     }
+}
+
+// UI-P1: снимок+сборка JSON ВНЕ s_mtx, применение результата — под мьютексом,
+// вызывается уже с s_building=true и мьютексом ОТПУЩЕННЫМ.
+static bool spectrum_http_cache_finish_build(int64_t now)
+{
+    bool snap_ok = s_sp_build && spectrum_get_snapshot(s_sp_build);
+    char *nj = NULL, *nm = NULL;
+    size_t njl = 0, nml = 0;
+    bool build_ok = snap_ok && build_json_full(s_sp_build, &nj, &njl) &&
+                     build_json_meta(s_sp_build, &nm, &nml);
+    if (!build_ok) { free(nj); nj = NULL; free(nm); nm = NULL; }
+
+    xSemaphoreTake(s_mtx, portMAX_DELAY);
+    s_building = false;
+    if (!snap_ok) {
+        s_have = false;
+        xSemaphoreGive(s_mtx);
+        return false;
+    }
+    if (!build_ok) {
+        ESP_LOGE(TAG, "JSON build failed");
+        bool have = s_have;
+        xSemaphoreGive(s_mtx);
+        return have;
+    }
+    if (s_readers > 0 && s_have && s_json && s_meta) {
+        // Читатели ещё держат ТЕКУЩИЙ s_sp/s_json/s_meta (PAYLOAD_BINS шлёт
+        // s_sp->bins напрямую) — свежесобранное в этот раз не применяем.
+        xSemaphoreGive(s_mtx);
+        free(nj);
+        free(nm);
+        return true;
+    }
+    free(s_json);
+    free(s_meta);
+    // Pointer-swap s_sp<->s_sp_build (без 32КБ memcpy под мьютексом).
+    spectrum_data_t *tmp = s_sp;
+    s_sp = s_sp_build;
+    s_sp_build = tmp;
+    s_json = nj;
+    s_json_len = njl;
+    s_meta = nm;
+    s_meta_len = nml;
+    s_built_us = now;
+    s_have = true;
+    s_render_count++;
+    xSemaphoreGive(s_mtx);
+    return true;
 }
 
 bool spectrum_http_cache_ensure(void)
@@ -173,41 +254,15 @@ bool spectrum_http_cache_ensure(void)
         xSemaphoreGive(s_mtx);
         return true;
     }
-    if (s_readers > 0 && s_have && s_json && s_meta) {
-        // Кэш протух, но его прямо сейчас отправляют. Пересборка освободила бы
-        // буферы под ногами у отправки, поэтому отдаём чуть устаревший снапшот:
-        // TTL здесь 2 с, а отправка длится доли секунды.
+    if (s_building) {
+        // Кто-то уже пересобирает (single-flight) — отдать что есть, не ждать.
+        bool have = s_have;
         xSemaphoreGive(s_mtx);
-        return true;
+        return have;
     }
-
-    if (!spectrum_get_snapshot(s_sp)) {
-        s_have = false;
-        xSemaphoreGive(s_mtx);
-        return false;
-    }
-
-    char *nj = NULL, *nm = NULL;
-    size_t njl = 0, nml = 0;
-    if (!build_json_full(s_sp, &nj, &njl) || !build_json_meta(s_sp, &nm, &nml)) {
-        free(nj);
-        free(nm);
-        xSemaphoreGive(s_mtx);
-        ESP_LOGE(TAG, "JSON build failed");
-        return false;
-    }
-
-    free(s_json);
-    free(s_meta);
-    s_json = nj;
-    s_json_len = njl;
-    s_meta = nm;
-    s_meta_len = nml;
-    s_built_us = now;
-    s_have = true;
-    s_render_count++;
+    s_building = true;
     xSemaphoreGive(s_mtx);
-    return true;
+    return spectrum_http_cache_finish_build(now);
 }
 
 const spectrum_data_t *spectrum_http_cache_data(void)

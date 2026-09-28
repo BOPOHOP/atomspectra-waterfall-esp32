@@ -105,3 +105,19 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # identical atomspectra_gw.bin (raw SHA256 comparable without normalization).
 # Forces CONFIG_APP_COMPILE_TIME_DATE=n via Kconfig depends.
 CONFIG_APP_REPRODUCIBLE_BUILD=y
+
+# AWF-4: Wi-Fi OTA (ota_0/ota_1, partitions.csv) — при неуспешном старте
+# нового образа (краш/watchdog до esp_ota_mark_app_valid_cancel_rollback()
+# в main.c) бутлоадер сам откатывает на предыдущий рабочий раздел.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# AWF-5: GitHub OTA скачивает образ (~1.6 МБ) по HTTPS -- mbedTLS-буферы
+# (I/O + RX/TX record buffers на TLS-сессию, обычно десятки КБ) держим на
+# PSRAM, не на internal-heap: приём спектра/водопада не должен голодать по
+# памяти на время скачивания. #AH-1: точный размер экономии не измерялся
+# (нет живой платы в этой сессии) -- решение по документации Kconfig
+# (esp-tls "Use SPIRAM for mbedTLS buffers" в MENUCONFIG.in).
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+
+# AWF-5 (2026-09-27): 3584 мало, если включён журнал платы (перехватчик кладёт 512 Б на стек каждой задачи)
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192

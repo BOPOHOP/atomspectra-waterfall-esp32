@@ -186,8 +186,11 @@ static bool task_is_stack_tight(void)
     // stops and the overflow can return. Prefer uxTaskGetStackHighWaterMark if IDF
     // exposes a stable alternative; until then keep names tied to the pinned IDF.
     const char *name = pcTaskGetName(NULL);
-    if (!name) return false;
-    return strcmp(name, "sys_evt") == 0 || strcmp(name, "wifi") == 0;
+    if (name && (strcmp(name, "sys_evt") == 0 || strcmp(name, "wifi") == 0)) return true;
+    // AWF-5 (2026-09-27): список имён не покрыл "main" (стек 3584) -- включённый
+    // в NVS журнал ронял плату по кругу на старте. Общая защита: мало свободного
+    // стека у ЛЮБОЙ задачи -> без кадра MAX_LINE (порог = MAX_LINE + запас на vsnprintf).
+    return uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t) < (MAX_LINE + 1024);
 }
 
 static int hooked_vprintf(const char *fmt, va_list args)

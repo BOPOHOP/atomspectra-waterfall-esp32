@@ -3,7 +3,21 @@
 # подтипа "littlefs". Раздел "storage" монтируется как LittleFS по метке
 # partition_label="storage" (см. esp_vfs_littlefs_register в spectrum.c),
 # а не по подтипу. Подтип лишь резервирует область под файловую систему.
+# AWF-4 (Wi-Fi OTA, оператор 2026-09-27): factory -> ota_0/ota_1 + otadata.
+# 16 МБ флеша (CONFIG_ESPTOOLPY_FLASHSIZE=16MB, sdkconfig:529), сумма разделов
+# ниже = 0x1000000 РОВНО (nvs 0x6000 + phy_init 0x1000 + otadata 0x2000 +
+# ota_0 0x200000 + ota_1 0x200000 + storage 0xBE0000). ota_0/ota_1 по 2 МБ —
+# итоговый bin (с кодом OTA-приёмника) 1 607 088 Б (0x1885b0, idf.py build
+# 27.09), запас (2097152-1607088)/1607088 = 30.5% >= 30% (idf.py вывод:
+# "0x77a50 bytes (23%) free" — та же величина, другая база расчёта).
+# storage (LittleFS) уменьшился с
+# 0xCF0000 (~13.53 МБ) до 0xBE0000 (~12.44 МБ) — существующие накопленные
+# данные на нём переживают переход НЕ по смещению (offset сдвинулся) и
+# требуют переразметки, см. main/spectrum.c:166-182 (explicit-format-on-
+# mount-failure, AWF-1 — уже громко форматирует при несовпадении, не тихо).
 nvs,       data, nvs,     0x9000,   0x6000,
 phy_init,  data, phy,     0xf000,   0x1000,
-factory,   app,  factory, 0x10000,  0x300000,
-storage,   data, spiffs,  0x310000, 0xCF0000,
+otadata,   data, ota,     0x10000,  0x2000,
+ota_0,     app,  ota_0,   0x20000,  0x200000,
+ota_1,     app,  ota_1,   0x220000, 0x200000,
+storage,   data, spiffs,  0x420000, 0xBE0000,
