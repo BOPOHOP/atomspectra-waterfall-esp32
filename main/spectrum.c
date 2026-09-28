@@ -1,4 +1,5 @@
 ﻿#include "atomspectra.h"
+#include "calib_autoread.h"  // #AWF-12: calib_is_missing/calib_read_is_success
 #include "spectrum_t1.h"
 #include "hist_drop_diag.h"
 #include "flash_quiet.h"
@@ -502,20 +503,31 @@ void spectrum_process_info_response(const char *text)
         cc ^= 0xFFFFFFFF;
         uint32_t ce = (uint32_t)strtoul(lbuf[10], NULL, 16);
         if (cc == ce) {
+            double coeffs[CALIB_COEFFS] = {0};
             for (int c = 0; c < CALIB_COEFFS && (c*2+1) < 10; c++) {
                 char pair[128];
                 snprintf(pair, sizeof(pair), "%s%s", lbuf[c*2], lbuf[c*2+1]);
                 uint64_t raw = strtoull(pair, NULL, 16);
                 double val;
                 memcpy(&val, &raw, sizeof(val));
-                s_spectrum.calibration[c] = val;
+                coeffs[c] = val;
             }
-            int order = CALIB_COEFFS - 1;
-            while (order > 0 && s_spectrum.calibration[order] == 0.0) order--;
-            s_spectrum.calib_order = order;
-            s_spectrum.calib_valid = true;
-            s_calib_dirty = true;   // #WF-1: запись сделает main loop вне SPEC_LOCK
-            ESP_LOGI(TAG, "Calibration OK: order=%d", s_spectrum.calib_order);
+            // #AWF-12: «считалась успешно» = CRC ok И не все коэффициенты
+            // нулевые (calib_read_is_success, main/calib_autoread.h). CRC-
+            // валидный, но нулевой дамп — оператор приравнял нулевую
+            // калибровку к «не задана»: НЕ перезаписываем текущую калибровку
+            // платы (это касается и ручного «Считать» — желаемо по ТЗ).
+            if (calib_read_is_success(true, coeffs, CALIB_COEFFS)) {
+                memcpy(s_spectrum.calibration, coeffs, sizeof(coeffs));
+                int order = CALIB_COEFFS - 1;
+                while (order > 0 && s_spectrum.calibration[order] == 0.0) order--;
+                s_spectrum.calib_order = order;
+                s_spectrum.calib_valid = true;
+                s_calib_dirty = true;   // #WF-1: запись сделает main loop вне SPEC_LOCK
+                ESP_LOGI(TAG, "Calibration OK: order=%d", s_spectrum.calib_order);
+            } else {
+                ESP_LOGW(TAG, "Calibration CRC OK but all-zero dump - ignored (treated as not set)");
+            }
         } else {
             // #FW-13: LOGD — для -inf mismatch штатен (CRC-формат только у -cal),
             // WARN здесь печатался каждые 30 с в CDC-таске (см. комментарий выше).
@@ -1121,6 +1133,20 @@ void spectrum_load_calibration(void)
         strncpy(s_spectrum.serial_number, st.serial, sizeof(s_spectrum.serial_number) - 1);
     SPEC_UNLOCK();
     ESP_LOGI(TAG, "Calibration loaded: order=%d serial='%s'", st.calib_order, st.serial);
+}
+
+// #AWF-12: снимок под SPEC_LOCK для чистого предиката calib_is_missing()
+// (main/calib_autoread.h) — точка входа гейта авто-считывания -cal перед
+// -sta (main/usb_host_cdc.c: usb_host_send_text_command).
+bool spectrum_calibration_is_missing(void)
+{
+    double coeffs[CALIB_COEFFS];
+    bool valid;
+    SPEC_LOCK();
+    memcpy(coeffs, s_spectrum.calibration, sizeof(coeffs));
+    valid = s_spectrum.calib_valid;
+    SPEC_UNLOCK();
+    return calib_is_missing(coeffs, CALIB_COEFFS, valid);
 }
 
 /* #FW-8 residual F1a: sliced LittleFS autosave across post-commit quiet windows. */

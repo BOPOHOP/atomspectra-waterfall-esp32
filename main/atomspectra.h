@@ -291,6 +291,9 @@ uint32_t spectrum_backup_max_session(void);
 void spectrum_set_calibration(const double *coeffs, int order);
 void spectrum_save_calibration(void);
 void spectrum_load_calibration(void);
+// #AWF-12: «калибровка не задана» = невалидна ИЛИ все коэффициенты — точный
+// 0.0 (main/calib_autoread.h: calib_is_missing). Снимок читается под SPEC_LOCK.
+bool spectrum_calibration_is_missing(void);
 void spectrum_autosave(void);
 /** #FW-8 F1a: begin sliced quiet-window autosave (tmp file). false = nothing to do.
  *  Also resumes a yielded mid-write (reopens tmp for append). */

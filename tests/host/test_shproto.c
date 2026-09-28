@@ -54,6 +54,8 @@ void gh_parse_suite(void);
 void ota_busy_suite(void);
 void ota_gh_decision_suite(void);
 void ota_gh_redirect_suite(void);
+// #AWF-12: предикаты авто-считывания калибровки (main/calib_autoread.h).
+void calib_autoread_suite(void);
 
 // Тестовая команда. CMD_HISTOGRAM (0x01) объявлена в main/atomspectra.h, но она
 // вне include-path host-сборки; shproto трактует cmd как обычный uint8_t.
@@ -234,6 +236,7 @@ int main(void)
     ota_busy_suite();
     ota_gh_decision_suite();
     ota_gh_redirect_suite();
+    calib_autoread_suite();
 
     if (g_failures) {
         printf("\n%d CHECK(S) FAILED\n", g_failures);

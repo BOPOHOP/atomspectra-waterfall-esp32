@@ -34,7 +34,8 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_ota_github_parse.c \
        test_ota_busy.c \
        test_ota_github_decision.c \
-       test_ota_github_redirect.c
+       test_ota_github_redirect.c \
+       test_calib_autoread.c
 
 test: $(SRCS) test_util.h
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm

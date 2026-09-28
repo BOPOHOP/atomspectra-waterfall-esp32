@@ -13,6 +13,7 @@
 #include "esp_timer.h"       /* #FW-22: timestamp для last_* полей */
 #include "acq_watch.h"       /* сторож набора после перезагрузки прибора */
 #include "acq_intent.h"      /* намерение набора по текстовой команде */
+#include "calib_autoread.h"  /* #AWF-12: авто-считывание -cal перед -sta */
 #include <string.h>
 
 static const char *TAG = "usb_cdc";
@@ -25,6 +26,10 @@ static SemaphoreHandle_t s_diag_mutex = NULL;
 #define DIAG_UNLOCK() do { if (s_diag_mutex) xSemaphoreGive(s_diag_mutex); } while (0)
 
 static inline uint32_t diag_now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
+
+// #AWF-12: штамп последнего авто-запроса -cal (гейт calib_autoread_should_request,
+// main/calib_autoread.h) — под DIAG_LOCK, тот же мьютекс, что и s_diag.acq_intent.
+static uint32_t s_calib_autoread_last_ms;
 
 #define FTDI_SIO_RESET          0
 #define FTDI_SIO_SET_MODEM_CTRL 1
@@ -883,9 +888,12 @@ void usb_host_cdc_devlog_json(uint32_t since, char *out, size_t outsz)
     snprintf(out + pos, outsz - pos, "],\"next\":%" PRIu32 "}", next);
 }
 
-int usb_host_send_text_command(const char *cmd)
+// #AWF-12: TX-путь БЕЗ гейта авто-считывания калибровки — используется самим
+// usb_host_send_text_command (после гейта) и авто-запросом "-cal", чтобы не
+// рекурсировать в собственный гейт. Тело — прежний usb_host_send_text_command
+// один-в-один (TX SHPROTO-пакета + diag/acq_intent/device_reset учёт).
+static int send_text_command_raw(const char *cmd)
 {
-    if (!cmd) return -1;
     const char *cmd0 = cmd;  // #FW-43: do not advance cmd before strncpy label
     // pkt_buf[512] on stack; shproto_packet_add_data silently truncates when full
     // (add_escaped checks buf_size) — reject oversize input instead of sending a
@@ -912,6 +920,36 @@ int usb_host_send_text_command(const char *cmd)
         if (cmd_is_device_reset(cmd0)) spectrum_reset();
     }
     return rc;
+}
+
+// #AWF-12: перед КАЖДЫМ стартом набора ("-sta", с параметрами или без —
+// cmd_is_acq_start, main/calib_autoread.h) — если калибровка на плате не
+// задана (spectrum_calibration_is_missing), принудительно запросить "-cal"
+// у прибора. Ответ парсит spectrum_process_info_response() АСИНХРОННО (RX
+// callback вне этого таска) — здесь НЕ ждём ответа блокирующе, только пауза
+// ~100 мс между TX (тот же приём, что между "-rst" и "-sta" выше по файлу).
+// Гейт против спама (двойной барьер) — calib_autoread_should_request().
+// Это единая точка входа для ВСЕХ "-sta" (usb_connect_task reconnect/boot
+// autostart/acq-watch resend, web_waterfall.c запись, web_server.c ручная
+// команда и /api-настройки) — маршрут через неё один на всю прошивку.
+int usb_host_send_text_command(const char *cmd)
+{
+    if (!cmd) return -1;
+    if (cmd_is_acq_start(cmd)) {
+        DIAG_LOCK();
+        bool prev_was_run = (s_diag.acq_intent == ACQ_INTENT_RUN);
+        uint32_t now = diag_now_ms();
+        uint32_t last_req = s_calib_autoread_last_ms;
+        DIAG_UNLOCK();
+        if (calib_autoread_should_request(prev_was_run, now, last_req) &&
+            spectrum_calibration_is_missing()) {
+            DIAG_LOCK(); s_calib_autoread_last_ms = now; DIAG_UNLOCK();
+            ESP_LOGI(TAG, "calibration not set -> requesting -cal before -sta");
+            send_text_command_raw("-cal");
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+    }
+    return send_text_command_raw(cmd);
 }
 
 // #FW-43: UI «Повторить связь» — request teardown on usb_conn task (NOT httpd).
