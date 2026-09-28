@@ -56,7 +56,12 @@ static inline void wf_pin_pull_release(wf_pull_pin_t *p, uint32_t idx) {
     }
 }
 
-/* false: idx==NONE, или pull-held, или уже unlinking (нет второго слота), или нет свободных слотов */
+/* О1 (release-gate-firmware-v1.2.28-code.md): комментарий поправлен —
+ * старая редакция обещала false "если уже unlinking", код (:63) отдаёт true
+ * (повторный вызов для ТОГО ЖЕ idx — не ошибка, второй удаляющий не должен
+ * получать отказ на уже помеченном к удалению файле; закреплено тестом
+ * test_sweepA_small.c:151). false: idx==NONE, ИЛИ pull-held, ИЛИ нет
+ * свободных слотов unlinking для НОВОГО idx. */
 static inline bool wf_pin_unlink_begin(wf_pull_pin_t *p, uint32_t idx) {
     if (idx == WF_PIN_NONE) return false;
     if (wf_pin_pull_held(p, idx)) return false;
