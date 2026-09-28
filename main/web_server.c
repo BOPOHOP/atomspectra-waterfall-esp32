@@ -2148,7 +2148,10 @@ static void settings_snapshot_write_file(const char *info_line,
 static esp_err_t settings_snapshot_send(httpd_req_t *req, const char *info_line,
     const char *tcpot_line, struct tm *tmv, const char *stamp)
 {
-    char dl_base[40], dl_name[64], dl_disp[100];
+    // #AWF-12c-style: буферы с запасом под -Werror=format-truncation —
+    // gcc консервативно считает %d по ширине int (до 11 симв.), не по
+    // факту (tm_* реально 2-4 цифры), иначе сборка падает предупреждением.
+    char dl_base[96], dl_name[160], dl_disp[192];
     snprintf(dl_base, sizeof(dl_base), "dsp_snapshot_%04d%02d%02d_%02d%02d%02d.txt",
              tmv->tm_year + 1900, tmv->tm_mon + 1, tmv->tm_mday,
              tmv->tm_hour, tmv->tm_min, tmv->tm_sec);

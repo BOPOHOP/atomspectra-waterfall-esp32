@@ -790,7 +790,11 @@ async function refreshDevice(){
   // страницы); запасной вариант для старой прошивки без поля — хотя бы один
   // коэффициент != 0 (нулевая калибровка приравнена к "не задана").
   var calOk=typeof r.calib_set==="boolean"?r.calib_set:!!(r.calibration&&r.calibration.some(function(c){return c!==0;}));
-  document.getElementById("dev-cal").textContent=calOk?tfmt("cal.set",r.calibration.length,(r.calib_order||(r.calibration.length-1))):t("cal.unset");
+  // #AWF-12b R4 (release-gate-1.2.28-code-rc2.md): calib_set:true БЕЗ массива
+  // на прошивке закрыто, но страница не должна падать, если такое всё же
+  // придёт (старая/чужая прошивка) — r.calibration.length под защитой.
+  var calArrOk=calOk&&r.calibration;
+  document.getElementById("dev-cal").textContent=calArrOk?tfmt("cal.set",r.calibration.length,(r.calib_order||(r.calibration.length-1))):t("cal.unset");
   var scw=document.getElementById("sum-cal-warn");
   if(scw){scw.style.display=calOk?"none":"";scw.textContent=t("sum.calWarn");}
  }catch(e){}
