@@ -305,12 +305,24 @@ static void install_fail(esp_ota_handle_t ota, const char *reason)
 // P3 №7 (verify-awf5-github-ota-2026-09-27.md:260, sweep-B задача 5): вызывается
 // из install_task() при esp_http_client_read() < 0 (обрыв/таймаут). Решение --
 // ota_gh_dl_decide() (host-тест test_ota_github_download_retry.c). Возвращает
-// true, если чтение можно продолжать (cl уже переоткрыт и позиционирован).
+// true, если чтение можно продолжать (cl уже переоткрыт и позиционирован),
+// *out_done=true — образ уже принят целиком (М4 сценарий 2, как штатный EOF).
 static bool ota_gh_download_retry(esp_http_client_handle_t cl, const esp_partition_t *update,
                                    esp_ota_handle_t *ota, ota_image_walker_t *walker,
                                    mbedtls_sha256_context *sha, bool *header_checked,
-                                   uint32_t *received, int *dl_attempt, int64_t *clen)
+                                   uint32_t *received, int *dl_attempt, int64_t *clen,
+                                   bool *out_done)
 {
+    *out_done = false;
+    // М4 сценарий 2 (release-gate-firmware-v1.2.28-code.md): обрыв ровно на
+    // конце образа — Range: bytes=received- на этой границе законно вернёт 416
+    // и раньше уходило в GIVE_UP, теряя уже полностью принятый и верный образ.
+    if (ota_gh_dl_is_already_complete(*received, *clen)) {
+        ESP_LOGI(TAG, "AWF-5 P3#7 M4: read error at exact EOF (%" PRIu32 "/%" PRId64
+                 " bytes) - treating as complete, not retrying", *received, *clen);
+        *out_done = true;
+        return true;
+    }
     esp_http_client_close(cl);
     (*dl_attempt)++;
     char range_hdr[32];
@@ -419,10 +431,12 @@ static void install_task(void *arg)
     for (;;) {
         int rd = esp_http_client_read(cl, (char *)buf, 4096);
         if (rd < 0) {
+            bool done = false;
             if (!ota_gh_download_retry(cl, update, &ota, &walker, &sha,
-                                        &header_checked, &received, &dl_attempt, &clen)) {
+                                        &header_checked, &received, &dl_attempt, &clen, &done)) {
                 image_ok = false; break;
             }
+            if (done) break;   // М4 сценарий 2: как штатный EOF (rd==0)
             continue;
         }
         if (rd == 0) break;
