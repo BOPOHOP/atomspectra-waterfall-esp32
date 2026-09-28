@@ -425,8 +425,10 @@ void round2_wiring_sites_suite(void)
     w_site("../../main/ota_github_client.c", "http_open_with_redirects_st", "*out_fail_status = status", NULL);
     /* М4 сц.2 выход по EOF */
     w_site("../../main/ota_github_client.c", "install_task", "if (done) break;", NULL);
-    /* Н7 тихое окно до лока */
-    w_site("../../main/web_server.c", "settings_snapshot_write_file", "flash_quiet_can_start_slice()", "flash_quiet_writer_lock(");
+    /* Н7 тихое окно до лока; У3/У4 раунда 3: окно до и после лока, запись tmp + rename */
+    w_site("../../main/web_server.c", "settings_snapshot_write_file", "flash_quiet_writer_lock_in_window(", "snapshot_file_write_atomic(");
+    w_site("../../main/flash_quiet.c", "flash_quiet_writer_lock_in_window", "flash_quiet_lock_in_window(&ops", NULL);
+    w_site("../../main/web_server.c", "handle_settings_snapshot_get", "ferror(f)", "httpd_resp_send_chunk(req, NULL, 0)");
     /* М7 заголовок */
     w_site("../../main/web_server.c", "handle_settings_snapshot", "X-Dsp-Snapshot-Saved", NULL);
     /* М5 поколение кэша */

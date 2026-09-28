@@ -45,6 +45,7 @@
 #include "ota_github_client.h"    // AWF-5: обновление с GitHub
 #include "ota_busy.h"              // AWF-5 P1-фикс: общий замок с GitHub-install
 #include "ota_timeout_budget.h"    // D4 (sweep-B задача 1): host-тест границы
+#include "snapshot_file.h"         // У4 (раунд 3): слепок DSP — tmp + rename (host-тест)
 #include <dirent.h>
 
 static const char *TAG = "web";
@@ -2137,6 +2138,7 @@ static esp_err_t handle_settings_backup(httpd_req_t *req)
 
 // #FW-42-style: одна крайняя копия слепка на LittleFS, перезаписывается.
 #define DSP_SNAPSHOT_PATH STORAGE_PATH "/dsp_snapshot.txt"
+#define DSP_SNAPSHOT_TMP_PATH STORAGE_PATH "/dsp_snapshot.tmp"   // У4: запись до rename
 
 // BUG-AS-08 (KNOWN_ISSUES.md:77): пишет снимок на flash. Вынесена из
 // handle_settings_snapshot ниже — держит его < 25 строк (delegation guard).
@@ -2149,18 +2151,14 @@ static esp_err_t handle_settings_backup(httpd_req_t *req)
 static bool settings_snapshot_write_file(const char *info_line,
                                           const char *tcpot_line, const char *stamp)
 {
-    // Н7 (раунд 2): лок лишь сериализует писателей — тихое окно после пакета
-    // гистограммы ждём отдельно, как запись калибровки (spectrum.c), не
-    // дольше ~1.25 с (окно открывается раз в секунду); не дождались — пишем.
-    for (int i = 0; i < 25 && usb_host_cdc_is_connected() && !flash_quiet_can_start_slice(); i++)
-        vTaskDelay(pdMS_TO_TICKS(50));
-    if (!flash_quiet_writer_lock(flash_quiet_writer_lock_ticks())) return false;
-    FILE *f = fopen(DSP_SNAPSHOT_PATH, "w");
-    bool ok = f != NULL;
-    if (ok) ok = fprintf(f, "# AtomSpectra DSP snapshot %s\r\n", stamp) > 0;
-    if (ok) ok = fputs(info_line, f) >= 0 && fputs("\r\n", f) >= 0;
-    if (ok) ok = fputs(tcpot_line, f) >= 0 && fputs("\r\n", f) >= 0;
-    if (f) ok = (fclose(f) == 0) && ok;
+    // Н7 (раунд 2) + У3 (раунд 3): тихое окно после пакета гистограммы ждём ДО
+    // лока и перепроверяем ПОСЛЕ (лок мог освободиться уже за окном), не дольше
+    // 25 опросов по 50 мс; не дождались — пишем, как 1.2.27.
+    if (!flash_quiet_writer_lock_in_window(25)) return false;
+    // У4 (раунд 3): временный файл + rename — сбой записи не уничтожает прежний
+    // слепок, GET не может отдать обрезанный файл как успех.
+    bool ok = snapshot_file_write_atomic(DSP_SNAPSHOT_TMP_PATH, DSP_SNAPSHOT_PATH,
+                                         stamp, info_line, tcpot_line);
     flash_quiet_writer_unlock();
     return ok;
 }
@@ -2230,8 +2228,12 @@ static esp_err_t handle_settings_snapshot_get(httpd_req_t *req)
     char buf[512]; size_t n;
     while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
         httpd_resp_send_chunk(req, buf, n);
-    httpd_resp_send_chunk(req, NULL, 0);
+    // У4 (раунд 3): ошибка чтения посреди файла — ответ без завершающего чанка
+    // (соединение рвётся), браузер не получит обрезанный слепок как успех.
+    bool read_err = ferror(f) != 0;
     fclose(f);
+    if (read_err) return ESP_FAIL;
+    httpd_resp_send_chunk(req, NULL, 0);
     return ESP_OK;
 }
 

@@ -3,6 +3,8 @@
 #include "atomspectra.h"
 #include "esp_timer.h"
 #include "freertos/portmacro.h"
+#include "freertos/task.h"
+#include "flash_quiet_lock_plan.h"
 
 static int64_t s_commit_us;
 static portMUX_TYPE s_commit_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -62,4 +64,17 @@ bool flash_quiet_writer_lock(TickType_t wait_ticks)
 void flash_quiet_writer_unlock(void)
 {
     if (s_writer) xSemaphoreGive(s_writer);
+}
+
+/* У3 (раунд 3): ввод-вывод для flash_quiet_lock_in_window() (flash_quiet_lock_plan.h, host-тест) */
+static bool fq_usb_live(void *c) { (void)c; return usb_host_cdc_is_connected(); }
+static bool fq_can_start(void *c) { (void)c; return flash_quiet_can_start_slice(); }
+static bool fq_lock(void *c) { (void)c; return flash_quiet_writer_lock(flash_quiet_writer_lock_ticks()); }
+static void fq_unlock(void *c) { (void)c; flash_quiet_writer_unlock(); }
+static void fq_sleep(void *c) { (void)c; vTaskDelay(pdMS_TO_TICKS(50)); }
+
+bool flash_quiet_writer_lock_in_window(int max_polls)
+{
+    static const flash_quiet_lock_ops_t ops = { fq_usb_live, fq_can_start, fq_lock, fq_unlock, fq_sleep };
+    return flash_quiet_lock_in_window(&ops, NULL, max_polls);
 }
