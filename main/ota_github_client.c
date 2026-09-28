@@ -106,8 +106,13 @@ static void set_progress(ota_gh_state_t st, uint32_t bytes, uint32_t total, cons
 // простой повтор recv() в уже открытом соединении, как у D4/ручной заливки),
 // поэтому меньше, чем 30 у D4: 5 попыток разумны для одиночного клиента.
 #define OTA_GH_DOWNLOAD_MAX_RETRIES 5
-static esp_err_t http_open_with_redirects(esp_http_client_handle_t cl, int64_t *out_clen)
+// Н4 (раунд 2): *out_fail_status (если не NULL) — HTTP-код ответа, на котором
+// открытие остановилось с ESP_FAIL (4xx/5xx, лимит редиректов); 0 — ответа не
+// было (сбой сети/TLS). Нужен решателю докачки: ошибка сервера != обрыв сети.
+static esp_err_t http_open_with_redirects_st(esp_http_client_handle_t cl, int64_t *out_clen,
+                                             int *out_fail_status)
 {
+    if (out_fail_status) *out_fail_status = 0;
     for (int hop = 0; ; hop++) {
         esp_err_t err = esp_http_client_open(cl, 0);
         if (err != ESP_OK) {
@@ -122,12 +127,18 @@ static esp_err_t http_open_with_redirects(esp_http_client_handle_t cl, int64_t *
         esp_http_client_close(cl);
         if (act == OTA_HTTP_REDIRECT_STOP_FAIL) {
             ESP_LOGW(TAG, "diag: redirect stop_fail hop=%d status=%d", hop, status);
+            if (out_fail_status) *out_fail_status = status;
             return ESP_FAIL;
         }
         // CONTINUE: Location уже распарсен esp-idf при fetch_headers() -- set_redirection
         // переставляет URL клиента на него, дальше открываем заново.
         if (esp_http_client_set_redirection(cl) != ESP_OK) return ESP_FAIL;
     }
+}
+
+static esp_err_t http_open_with_redirects(esp_http_client_handle_t cl, int64_t *out_clen)
+{
+    return http_open_with_redirects_st(cl, out_clen, NULL);
 }
 
 // Скачивает url целиком в буфер PSRAM (heap_caps_malloc/realloc,
@@ -302,6 +313,33 @@ static void install_fail(esp_ota_handle_t ota, const char *reason)
     set_progress(OTA_GH_ST_ERROR, 0, 0, reason);
 }
 
+/* Н4 (раунд 2): reopen/wait для ota_gh_dl_reopen_until_decided() (ota_github_download_retry.h,
+   host-тест) — здесь только ввод-вывод, решения там. */
+typedef struct { esp_http_client_handle_t cl; uint32_t received; int64_t clen2; int status; } ota_gh_reopen_ctx_t;
+
+static int ota_gh_dl_reopen_cb(void *p)
+{
+    ota_gh_reopen_ctx_t *c = (ota_gh_reopen_ctx_t *)p;
+    esp_http_client_close(c->cl); /* идемпотентно, IDF закрывает только при state > INIT */
+    char range_hdr[32];
+    snprintf(range_hdr, sizeof(range_hdr), "bytes=%" PRIu32 "-", c->received);
+    esp_http_client_set_header(c->cl, "Range", range_hdr);
+    int fail_status = 0;
+    c->clen2 = 0;
+    esp_err_t err = http_open_with_redirects_st(c->cl, &c->clen2, &fail_status);
+    c->status = ota_gh_dl_reopen_status(err == ESP_OK, err == ESP_OK ? esp_http_client_get_status_code(c->cl) : 0, fail_status);
+    return c->status;
+}
+
+static void ota_gh_dl_wait_cb(void *p, int attempt)
+{
+    (void)p;
+    for (int i = 0; i < 60 && !wifi_is_connected(); ++i) {
+        vTaskDelay(pdMS_TO_TICKS(500)); /* до 30 с ждать Wi-Fi */
+    }
+    vTaskDelay(pdMS_TO_TICKS(ota_gh_dl_backoff_ms(attempt)));
+}
+
 // P3 №7 (verify-awf5-github-ota-2026-09-27.md:260, sweep-B задача 5): вызывается
 // из install_task() при esp_http_client_read() < 0 (обрыв/таймаут). Решение --
 // ota_gh_dl_decide() (host-тест test_ota_github_download_retry.c). Возвращает
@@ -323,18 +361,15 @@ static bool ota_gh_download_retry(esp_http_client_handle_t cl, const esp_partiti
         *out_done = true;
         return true;
     }
-    esp_http_client_close(cl);
-    (*dl_attempt)++;
-    char range_hdr[32];
-    snprintf(range_hdr, sizeof(range_hdr), "bytes=%" PRIu32 "-", *received);
-    esp_http_client_set_header(cl, "Range", range_hdr);
-    int64_t clen2 = 0;
-    esp_err_t rerr = http_open_with_redirects(cl, &clen2);
-    int status = (rerr == ESP_OK) ? esp_http_client_get_status_code(cl) : -1;
-    ota_gh_dl_retry_action_t act =
-        ota_gh_dl_decide(status, *dl_attempt, OTA_GH_DOWNLOAD_MAX_RETRIES);
+    // Н4 (раунд 2): переоткрытие до решения — на сбое сети (-1) ждём и
+    // переоткрываем ЗДЕСЬ, чтение на закрытом соединении не продолжается;
+    // 4xx/5xx доходят своим кодом и дают GIVE_UP сразу (как в 1.2.27).
+    ota_gh_reopen_ctx_t rc = { .cl = cl, .received = *received, .clen2 = 0, .status = -1 };
+    ota_gh_dl_retry_action_t act = ota_gh_dl_reopen_until_decided(
+        ota_gh_dl_reopen_cb, ota_gh_dl_wait_cb, &rc, dl_attempt, OTA_GH_DOWNLOAD_MAX_RETRIES);
+    int64_t clen2 = rc.clen2;
     ESP_LOGW(TAG, "AWF-5 P3#7: download interrupted at %" PRIu32 " bytes, attempt=%d, "
-             "reopen_status=%d -> action=%d", *received, *dl_attempt, status, (int)act);
+             "reopen_status=%d -> action=%d", *received, *dl_attempt, rc.status, (int)act);
     if (act == OTA_GH_DL_GIVE_UP) return false;
     if (act == OTA_GH_DL_RESTART_ZERO) {
         if (clen2 > 0 && (size_t)clen2 > update->size) return false;   // как исходная проверка до цикла

@@ -9,6 +9,7 @@ typedef enum {
     OTA_GH_DL_RESUME_RANGE = 0,  // reopen вернул 206 -- сервер поддержал Range
     OTA_GH_DL_RESTART_ZERO,      // reopen вернул 200 -- Range не поддержан
     OTA_GH_DL_GIVE_UP,           // лимит попыток исчерпан либо иной статус
+    OTA_GH_DL_REOPEN_LATER,      // сбой сети (-1): подождать и переоткрыть, чтение не продолжать
 } ota_gh_dl_retry_action_t;
 
 // attempt -- номер уже сделанной попытки возобновления (1-based, ПОСЛЕ
@@ -20,11 +21,9 @@ static inline ota_gh_dl_retry_action_t ota_gh_dl_decide(int reopen_status, int a
     if (attempt > max_attempts) return OTA_GH_DL_GIVE_UP;
     if (reopen_status == 206) return OTA_GH_DL_RESUME_RANGE;
     if (reopen_status == 200) return OTA_GH_DL_RESTART_ZERO;
-    // М4 сценарий 1: reopen_status==-1 — сам esp_http_client_open() не удался
-    // (обрыв сети), самый частый случай на практике. Раньше это безусловно
-    // давало GIVE_UP на 1-й попытке, бюджет в 5 попыток не работал для него
-    // вовсе. Подтверждённая ошибка сервера (404/500…) — сдаёмся сразу как раньше.
-    if (reopen_status == -1) return OTA_GH_DL_RESUME_RANGE;
+    // -1 — только сбой открытия (сеть); соединение закрыто, продолжать чтение нельзя;
+    // ответ сервера (4xx/5xx) приходит сюда своим кодом (ota_gh_dl_reopen_status) и даёт GIVE_UP.
+    if (reopen_status == -1) return OTA_GH_DL_REOPEN_LATER;
     return OTA_GH_DL_GIVE_UP;
 }
 
@@ -35,3 +34,41 @@ static inline bool ota_gh_dl_is_already_complete(uint32_t received, int64_t clen
 {
     return clen > 0 && (int64_t)received >= clen;
 }
+
+// fail_status — HTTP-код ответа, на котором открытие остановилось (4xx/5xx),
+// 0 — ответа не было (сеть).
+static inline int ota_gh_dl_reopen_status(bool open_ok, int status_code, int fail_status)
+{
+    if (open_ok) return status_code;
+    return fail_status > 0 ? fail_status : -1;
+}
+
+// Экспоненциальная задержка с ограничением.
+static inline uint32_t ota_gh_dl_backoff_ms(int attempt)
+{
+    if (attempt < 1) return 2000;
+    if (attempt > 5) return 30000;
+    uint32_t delay = 2000U << (attempt - 1);
+    return delay > 30000 ? 30000 : delay;
+}
+
+typedef int (*ota_gh_dl_reopen_fn)(void *ctx);
+typedef void (*ota_gh_dl_wait_fn)(void *ctx, int attempt);
+
+// проводка решения после переоткрытия — чистая, reopen/wait подставляет прошивка
+// (ota_github_client.c) и host-тест; никогда не возвращает REOPEN_LATER;
+// attempt — общий бюджет всей загрузки.
+static inline ota_gh_dl_retry_action_t ota_gh_dl_reopen_until_decided(
+    ota_gh_dl_reopen_fn reopen, ota_gh_dl_wait_fn wait, void *ctx,
+    int *attempt, int max_attempts)
+{
+    for (;;) {
+        (*attempt)++;
+        if (*attempt > max_attempts) return OTA_GH_DL_GIVE_UP;
+        ota_gh_dl_retry_action_t act = ota_gh_dl_decide(reopen(ctx), *attempt, max_attempts);
+        if (act != OTA_GH_DL_REOPEN_LATER) return act;
+        if (*attempt >= max_attempts) return OTA_GH_DL_GIVE_UP;
+        wait(ctx, *attempt);
+    }
+}
+
