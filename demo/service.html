@@ -175,6 +175,7 @@ var DICT={
   "backup.snapOk":"Слепок сохранён на плате и скачан",
   "backup.snapDlOnly":"Слепок скачан, но НЕ сохранён на плате (ошибка записи flash)",
   "backup.noSnapYet":"Слепок ещё не сохранялся (нажмите «Сохранить слепок»)",
+  "backup.loadingSnap":"Загрузка последнего слепка...","backup.snapGetOk":"Последний сохранённый слепок скачан","backup.snapGetErr":"Ошибка чтения слепка с платы",
   "backup.err":"Ошибка: прибор не отвечает / не подключён",
   "param.title":"Параметры прибора",
   "param.hint":"Слева — что прибор отдал прямо сейчас (-inf + -tc_pot?). Если справа появилась колонка «Из бэкапа» — загружен файл в панели восстановления, расхождения подсвечены красным.",
@@ -253,6 +254,7 @@ var DICT={
   "backup.snapOk":"Snapshot saved on the board and downloaded",
   "backup.snapDlOnly":"Snapshot downloaded, but NOT saved on the board (flash write failed)",
   "backup.noSnapYet":"No snapshot saved yet (click \"Save DSP snapshot\")",
+  "backup.loadingSnap":"Loading last snapshot...","backup.snapGetOk":"Last saved snapshot downloaded","backup.snapGetErr":"Error reading snapshot from the board",
   "backup.err":"Error: device not responding / not connected",
   "param.title":"Device parameters",
   "param.hint":"Left — what the device returned just now (-inf + -tc_pot?). If a \"From backup\" column appears on the right, a file is loaded in the restore panel; mismatches are highlighted in red.",
@@ -453,11 +455,11 @@ async function doDspSnapshot(){
 // М8: см. web/service.html — fetch вместо навигации <a href>.
 async function doDspSnapshotGet(){
  var s=document.getElementById("backup-status");
- s.style.color="var(--dim)"; s.textContent=t("backup.savingSnap");
+ s.style.color="var(--dim)"; s.textContent=t("backup.loadingSnap");
  try{
   var r=await fetch("/api/settings/snapshot");
   if(!r.ok){
-   s.textContent = r.status===404 ? t("backup.noSnapYet") : t("backup.err");
+   s.textContent = r.status===404 ? t("backup.noSnapYet") : t("backup.snapGetErr")+" (HTTP "+r.status+")";
    s.style.color="#ff8a82"; return;
   }
   var cd=r.headers.get("Content-Disposition")||"";
@@ -468,8 +470,8 @@ async function doDspSnapshotGet(){
   a.href=url; a.download=m?m[1]:"dsp_snapshot.txt";
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(function(){URL.revokeObjectURL(url);},2000);
-  s.textContent=t("backup.snapOk"); s.style.color="var(--accent)";
- }catch(e){ s.textContent=t("backup.err"); s.style.color="#ff8a82"; }
+  s.textContent=t("backup.snapGetOk"); s.style.color="var(--accent)";
+ }catch(e){ s.textContent=t("backup.snapGetErr"); s.style.color="#ff8a82"; }
 }
 
 function isKvBoundary(c){ return c===undefined||c===" "||c==="\t"||c==="\r"||c==="\n"; }
