@@ -26,25 +26,29 @@
 #include "ota_github_version.h"
 
 // Находит следующее вхождение literal-подстроки key начиная с pos, но только
-// ВНЕ строковых литералов JSON. Возвращает указатель на начало найденного key
-// или NULL. end -- конец разрешённой области поиска (не включая).
+// ВНЕ строковых литералов JSON И НА ГЛУБИНЕ 0 (непосредственно в объекте
+// [pos,end)) -- P3 №5 (verify-awf5-github-ota-2026-09-27.md, sweep-B задача 3):
+// без учёта глубины ключ во вложенном объекте/массиве (например "name" внутри
+// "assets":[{...}]) мог замаскировать одноимённое поле ВЕРХНЕГО уровня той же
+// записи. Возвращает указатель на key или NULL. end -- конец области поиска.
 static inline const char *ota_gh__find_key(const char *pos, const char *end, const char *key)
 {
     bool in_str = false;
+    int depth = 0;
     size_t klen = strlen(key);
-    for (const char *p = pos; p + klen <= end; p++) {
+    const char *p = pos;
+    if (p < end && *p == '{') p++;   // '{' самого объекта в depth не считаем
+    for (; p + klen <= end; p++) {
         if (in_str) {
             if (*p == '\\') { p++; continue; }
             if (*p == '"') in_str = false;
             continue;
         }
-        // Матч проверяем ДО переключения in_str: key сам начинается с '"'
-        // (например "tag_name"), и без этого его открывающая кавычка сразу
-        // переводила бы сканер в режим "внутри строки", так и не дав
-        // сравнить memcmp() в этой позиции -- ни один ключ никогда бы не
-        // нашёлся (баг найден host-тестом на реальной выгрузке GitHub).
-        if (memcmp(p, key, klen) == 0) return p;
+        // Матч на depth==0 ДО переключения in_str/{}/[] в этой позиции.
+        if (depth == 0 && memcmp(p, key, klen) == 0) return p;
         if (*p == '"') { in_str = true; continue; }
+        if (*p == '{' || *p == '[') { depth++; continue; }
+        if (*p == '}' || *p == ']') { depth--; continue; }
     }
     return NULL;
 }
