@@ -1733,6 +1733,9 @@ static esp_err_t handle_device(httpd_req_t *req)
     // без "calibration"). have_sp==false — тоже "не задана".
     cJSON_AddBoolToObject(root, "calib_set",
         have_sp && !calib_is_missing(sp->calibration, CALIB_COEFFS, sp->calib_valid));
+    // F12/RO1 (release-gate-1.2.28-code-fixes.md:128): счётчик отвергнутых
+    // -cal (CRC ok, нули/NaN) — web/service.html "Считать" сверяет "до"/"после".
+    cJSON_AddNumberToObject(root, "calib_reject_seq", spectrum_get_calib_reject_seq());
     char *json = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, json);

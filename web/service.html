@@ -159,6 +159,7 @@ var DICT={
   "btn.info":"Инфо","btn.log":"Лог","btn.send":"Send",
   "ph.cmd":"команда, напр. -inf",
   "log.info":"Info requested","log.sent":"Sent: %1",
+  "cal.readEmpty":"Прибор вернул пустую калибровку (нули/NaN) — калибровка платы не изменена",
   "backup.title":"Бэкап настроек прибора",
   "backup.hint":"Считывает текущие настройки прибора (-inf + -tc_pot?) и сохраняет их в текстовый файл — тот же формат, что использует MCA.exe. Не изменяет состояние прибора.",
   "backup.read":"Считать",
@@ -230,6 +231,7 @@ var DICT={
   "btn.info":"Info","btn.log":"Log","btn.send":"Send",
   "ph.cmd":"command, e.g. -inf",
   "log.info":"Info requested","log.sent":"Sent: %1",
+  "cal.readEmpty":"Device returned an empty calibration (zeros/NaN) — board calibration unchanged",
   "backup.title":"Device settings backup",
   "backup.hint":"Reads the device's current settings (-inf + -tc_pot?) and saves them to a text file — the same format used by MCA.exe. Does not change device state.",
   "backup.read":"Read",
@@ -322,7 +324,16 @@ var logEl=document.getElementById("cmd-log");
 var devSeq=0;
 function lg(m){if(!logEl)return;logEl.textContent+=m+"\n";logEl.scrollTop=logEl.scrollHeight}
 async function pollDevLog(){try{var r=await(await fetch("/api/devlog?since="+devSeq)).json();if(r.lines&&r.lines.length){r.lines.forEach(function(e){var tt=(e.text||"").replace(/\n+$/,"");lg("← "+tt)})}if(typeof r.next==="number")devSeq=r.next}catch(e){}}
-async function requestInfo(){await post("/api/command",{body:"-inf"});await post("/api/command",{body:"-cal"});lg(t("log.info"));setTimeout(pollDevLog,600);setTimeout(pollDevLog,1500)}
+// F12/RO1: считываем calib_reject_seq ДО запроса и сверяем ПОСЛЕ — рост
+// счётчика = прибор ответил валидным CRC, но нулями/NaN, калибровка платы
+// осталась прежней; без явного сообщения кнопка молчала при пустом дампе.
+async function requestInfo(){
+ var before=0; try{before=(await(await fetch("/api/device")).json()).calib_reject_seq||0}catch(e){}
+ await post("/api/command",{body:"-inf"});await post("/api/command",{body:"-cal"});lg(t("log.info"));
+ setTimeout(async function(){try{var after=(await(await fetch("/api/device")).json()).calib_reject_seq||0;
+  if(after!==before)lg(t("cal.readEmpty"))}catch(e){}},900);
+ setTimeout(pollDevLog,600);setTimeout(pollDevLog,1500)
+}
 async function sendCmd(){var c=document.getElementById("cmd").value;if(!c)return;await post("/api/command",{body:c});lg(tfmt("log.sent",c));setTimeout(pollDevLog,600);setTimeout(pollDevLog,1500)}
 function toggleLogPanel(){logEl.style.display=logEl.style.display==="none"?"block":"none"}
 document.getElementById("cmd").addEventListener("keydown",function(e){if(e.key==="Enter")sendCmd()});

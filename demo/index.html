@@ -223,6 +223,7 @@ var DICT={
   "log.start":"Start sent","log.stop":"Stop sent","log.reset":"Reset sent","log.info":"Info requested",
   "log.ovlOk":"Overlay loaded: #%1","log.ovlErr":"Overlay error: %1","log.ovlClear":"Overlay cleared",
   "ovl.noTime":" (время не задано — показан счёт, не CPS)",
+  "cal.readEmpty":"Прибор вернул пустую калибровку (нули/NaN) — калибровка платы не изменена",
   "log.del":"Deleted #%1","log.rebootDev":"Reboot device sent",
   "log.exportOk":"Выгружено: %1","log.exportErr":"Экспорт не удался: %1",
   "log.cal":"Calibration: [%1]","log.calErr":"Calibration error: %1","log.calClear":"Calibration cleared",
@@ -271,6 +272,7 @@ var DICT={
   "log.start":"Start sent","log.stop":"Stop sent","log.reset":"Reset sent","log.info":"Info requested",
   "log.sent":"Sent: %1","log.ovlOk":"Overlay loaded: #%1","log.ovlErr":"Overlay error: %1","log.ovlClear":"Overlay cleared",
   "ovl.noTime":" (time unknown — showing counts, not CPS)",
+  "cal.readEmpty":"Device returned an empty calibration (zeros/NaN) — board calibration unchanged",
   "log.del":"Deleted #%1","log.rebootDev":"Reboot device sent",
   "log.exportOk":"Exported: %1","log.exportErr":"Export failed: %1",
   "log.cal":"Calibration: [%1]","log.calErr":"Calibration error: %1","log.calClear":"Calibration cleared",
@@ -632,7 +634,15 @@ async function saveSpectrum(){var r=await(await post("/api/save")).json();
 function exportSpectrum(url){
  window.heavyDownload(url).then(function(name){lg(tfmt("log.exportOk",name));})
   .catch(function(e){lg(tfmt("log.exportErr",String(e && e.message||e)));});}
-async function requestInfo(){calibEditing=false;await post("/api/command",{body:"-inf"});await post("/api/command",{body:"-cal"});lg(tr("log.info"));setTimeout(update,800);setTimeout(pollDevLog,600);setTimeout(pollDevLog,1500)}  /* #UI-1: быстро подхватить ответы -inf/-cal */
+// F12/RO1: см. web/index.html — тот же приём "до"/"после" по calib_reject_seq.
+async function requestInfo(){
+ calibEditing=false;
+ var before=0; try{before=(await(await fetch("/api/device")).json()).calib_reject_seq||0}catch(e){}
+ await post("/api/command",{body:"-inf"});await post("/api/command",{body:"-cal"});lg(tr("log.info"));
+ setTimeout(async function(){try{var after=(await(await fetch("/api/device")).json()).calib_reject_seq||0;
+  if(after!==before)lg(tr("cal.readEmpty"))}catch(e){}},900);
+ setTimeout(update,800);setTimeout(pollDevLog,600);setTimeout(pollDevLog,1500)   /* #UI-1: быстро подхватить ответы -inf/-cal */
+}
 async function rebootDevice(){if(!confirm(tr("confirm.rebootDev")))return;await post("/api/reboot-device");lg(tr("log.rebootDev"))}
 async function rebootEsp(){if(!confirm(tr("confirm.rebootEsp")))return;await post("/api/reboot-esp");document.getElementById("status").textContent=tr("status.rebooting")}
 async function resetWifi(){if(!confirm(tr("confirm.wifiReset")))return;await post("/api/wifi/reset");document.getElementById("status").textContent=tr("status.wifiSetup")}
