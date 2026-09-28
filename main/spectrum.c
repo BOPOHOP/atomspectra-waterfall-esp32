@@ -82,6 +82,13 @@ static SemaphoreHandle_t s_spec_lock;
 // (main loop) — flash-запись больше не выполняется под SPEC_LOCK в CDC/httpd.
 static volatile bool s_calib_dirty;
 
+// F12/RO1 (release-gate-1.2.28-code-fixes.md:128): бампается КАЖДЫЙ раз, когда
+// -cal дал ВАЛИДНЫЙ CRC, но calib_read_is_success() всё равно false (все нули
+// или NaN/Inf) — прибор ответил, но откалиброваться нечем, текущая калибровка
+// платы НЕ тронута. Монотонный счётчик, не bool: UI (web/service "Считать")
+// сверяет значение ДО и ПОСЛЕ своего запроса, а не ловит фронт эдж-кейсом.
+static volatile uint32_t s_calib_reject_seq;
+
 // #FW-8: staging-сборка секундного свипа гистограммы. Прибор на 600000 бод шлёт
 // ВЕСЬ спектр раз в секунду цепочкой chunk-ов: offset==0 — старт свипа, каждый
 // следующий строго продолжает предыдущий, покрытие до 8192 каналов — свип полный
@@ -538,6 +545,7 @@ void spectrum_process_info_response(const char *text)
             // WARN здесь печатался каждые 30 с в CDC-таске (см. комментарий выше).
             ESP_LOGD(TAG, "Calibration CRC mismatch: computed=%08x expected=%08x", (unsigned)cc, (unsigned)ce);
         } else {
+            s_calib_reject_seq++;   // F12/RO1: под SPEC_LOCK, как весь этот блок
             ESP_LOGW(TAG, "Calibration CRC OK but all-zero/non-finite dump - ignored (treated as not set)");
         }
     }
@@ -1180,6 +1188,18 @@ bool spectrum_calibration_is_missing(void)
     valid = s_spectrum.calib_valid;
     SPEC_UNLOCK();
     return calib_is_missing(coeffs, CALIB_COEFFS, valid);
+}
+
+// F12/RO1: монотонный счётчик отвергнутых -cal дампов (CRC ok, но нули/NaN) —
+// см. s_calib_reject_seq выше. /api/device отдаёт его как есть, страница
+// сравнивает "до" и "после" своего запроса, а не полагается на фронт.
+uint32_t spectrum_get_calib_reject_seq(void)
+{
+    uint32_t v;
+    SPEC_LOCK();
+    v = s_calib_reject_seq;
+    SPEC_UNLOCK();
+    return v;
 }
 
 /* #FW-8 residual F1a: sliced LittleFS autosave across post-commit quiet windows. */

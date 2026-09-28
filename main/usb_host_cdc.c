@@ -141,10 +141,17 @@ static bool s_boot_once_done      = false;
 static void usb_host_cdc_apply_text_accum_result(text_accum_result_t tar)
 {
     switch (tar) {
-    case TEXT_ACCUM_CAL:
-        spectrum_process_info_response(s_text_accum);
+    case TEXT_ACCUM_CAL: {
+        // R2 (release-gate-1.2.28-code-rc2.md §2.1): дамп может начинаться
+        // не с позиции 0 (S10 однострочный hex-ответ перед дампом, S07
+        // обрывок <9 байт, S22 "-ok"+дамп одним кадром) — найти CRC-валидное
+        // окно text_accum_find_cal_window (main/text_accum.h); не найдено —
+        // старое поведение (позиция 0), не хуже прежнего.
+        int off = text_accum_find_cal_window(s_text_accum, s_text_accum_len);
+        spectrum_process_info_response(s_text_accum + (off >= 0 ? off : 0));
         s_text_accum_len = 0;
         break;
+    }
     case TEXT_ACCUM_INF:
         // #AWF-12b R1 (release-gate-1.2.28-code-rc2.md): указатель С ПОЗИЦИИ
         // "VERSION ", не s_text_accum — посторонний мусор перед -inf (короткий

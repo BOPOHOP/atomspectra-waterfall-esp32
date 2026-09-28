@@ -7,6 +7,16 @@
 #include "test_util.h"
 #include <string.h>
 
+// R2/R3 (release-gate-1.2.28-code-rc2.md §2.1, sweep-C группа D): реальные
+// 10 строк коэффициентов + строка CRC боевого дампа (.logs/cal_capture.txt,
+// atomspectra-waterfall, seq 581487) — L[10]="DF786A7E" подтверждена ПРОВЕРКОЙ
+// расчёта (zlib.crc32 = стандартный алгоритм spectrum.c #CMD-1) как настоящий
+// CRC32 конкатенации L[0..9], не выдумана. 110 байт — ровно минимум
+// text_accum_find_cal_window (10 строк + строка CRC).
+#define REAL_DUMP_110 \
+    "BFF9A132\r\nC1ADF2A0\r\n3FD9122C\r\n8C25CFDF\r\n3EED426C\r\n" \
+    "1F771B10\r\nBE15ECCE\r\n34854003\r\n00000000\r\n00000000\r\nDF786A7E\r\n"
+
 // Строит N строк "AAAAAAAA\r\n" (боевой формат дампа -cal: 8 hex + \r\n,
 // содержимое конкретных hex для роутера не важно, важны длина/формат) в buf,
 // возвращает длину. cap должен вмещать n*10 байт.
@@ -190,4 +200,69 @@ void text_accum_overflow_suite(void)
     CHECK(r == TEXT_ACCUM_OVERFLOW);
     CHECK(rounds > 1);   // действительно копилось несколько кусков, не с первого
     CHECK(len == 0);
+}
+
+// S10 (release-gate-1.2.28-code-rc2.md §2.1, R2): однострочный ПОСТОРОННИЙ
+// hex-ответ перед дампом. Сам по себе форматно валиден — старый
+// is_complete_cal срабатывает НА ПОЗИЦИИ 0 (причина бага: CRC там не
+// сходится, калибровка не применяется). КРАСНЕЕТ на коде до этого приёма:
+// text_accum_find_cal_window до fix'а не существовала вовсе (не компилируется
+// без него) — после fix'а обязана вернуть смещение 10, а не 0/-1.
+void text_accum_r2_offset_dump_suite(void)
+{
+    char accum[256];
+    memcpy(accum, "AABBCCDD\r\n" REAL_DUMP_110, 10 + 110);
+    int off = text_accum_find_cal_window(accum, 10 + 110);
+    CHECK(off == 10);            // не 0 (постороннюю строку пропустили)
+    CHECK(off != -1);            // окно вообще найдено
+}
+
+// S07 (R2): первый кадр дампа короче 9 байт (5/8 hex), мусор перед ним НЕ
+// кратен 10 байтам ("-er\r\n" — 5 байт). ДО fix'а is_complete_cal требует
+// hex-анкор на позиции 0, "-er" его не даёт — NONE всегда, дамп теряется.
+void text_accum_r2_fragment_before_dump_suite(void)
+{
+    char accum[512]; int len = 0;
+    text_accum_result_t r1 = text_accum_feed(accum, &len, sizeof accum, "-er\r\n", 5);
+    CHECK(r1 == TEXT_ACCUM_NONE);
+    text_accum_result_t r2 = text_accum_feed(accum, &len, sizeof accum, REAL_DUMP_110, 5);
+    CHECK(r2 == TEXT_ACCUM_NONE);   // первый кадр < 9 байт
+    text_accum_result_t r3 = text_accum_feed(accum, &len, sizeof accum,
+                                              REAL_DUMP_110 + 5, 110 - 5);
+    CHECK(r3 == TEXT_ACCUM_CAL);    // R2-fix: окно найдено CRC-сканом
+    CHECK(text_accum_find_cal_window(accum, len) == 5);  // = длина "-er\r\n"
+}
+
+// S22 (R2): "-ok"+дамп ОДНИМ кадром (одним вызовом text_accum_feed). ДО
+// fix'а: не подходит ни под SHORT_ACK (есть хвост), ни под CAL (позиция 0 —
+// "-ok", не hex) — NONE, дамп потерян целиком за один кадр.
+void text_accum_r2_ok_plus_dump_one_frame_suite(void)
+{
+    char pkt[256];
+    memcpy(pkt, "-ok\r\n", 5);
+    memcpy(pkt + 5, REAL_DUMP_110, 110);
+    char accum[256]; int len = 0;
+    text_accum_result_t r = text_accum_feed(accum, &len, sizeof accum, pkt, 5 + 110);
+    CHECK(r == TEXT_ACCUM_CAL);     // R2-fix: найдено окно на позиции 5
+    CHECK(text_accum_find_cal_window(accum, len) == 5);
+}
+
+// R3 (S17-класс): \0 ВНУТРИ пакета в ОДНОМ кадре с последующим валидным
+// -inf. ДО fix'а memcpy сохраняет байты, но strstr/is_complete_inf читают
+// accum как C-строку и обрываются на \0 — "PileUpThr "/"VERSION " после
+// него невидимы, результат NONE. После fix'а \0 заменяется на пробел при
+// копировании — -inf распознаётся тем же кадром.
+void text_accum_r3_null_byte_suite(void)
+{
+    char pkt[64]; int n = 0;
+    pkt[n++] = 'A'; pkt[n++] = 'B'; pkt[n++] = '\0';   // мусор с \0 внутри
+    const char *inf = "VERSION 23 rise=1 fall=2 PileUpThr 10\r\n";
+    memcpy(pkt + n, inf, strlen(inf)); n += (int)strlen(inf);
+    // 4096 = прод. cap (usb_host_cdc.c s_text_accum) — cap=128 давал
+    // cap-128=0, порог OVERFLOW срабатывал раньше, чем успевал проверяться
+    // INF (нашлось при RED-прогоне диагностики этого теста, не в проде).
+    char accum[4096]; int len = 0;
+    text_accum_result_t r = text_accum_feed(accum, &len, sizeof accum, pkt, n);
+    CHECK(r == TEXT_ACCUM_INF);         // R3-fix: -inf распознан несмотря на \0
+    CHECK(accum[2] == ' ');             // \0 заменён пробелом, не потерян
 }

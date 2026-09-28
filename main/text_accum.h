@@ -1,6 +1,7 @@
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* #AWF-12b (release-gate-1.2.28-code.md, F1): чистая логика накопителя
@@ -43,16 +44,73 @@ static inline bool text_accum_is_clean_cal_prefix(const char *s, int len)
     return true;
 }
 
-/* Дамп накоплен целиком: начинается как дамп (позиция 0) И содержит >=39
- * переводов строки (39-я строка — серийник, spectrum.c). Перенесена из
- * usb_host_cdc.c (была is_complete_cal) без изменения семантики. */
+/* Строка формата дампа: 8 hex + \r\n (10 байт). Тот же формат несёт и
+ * строка CRC следом за 10 строками коэффициентов — подтверждено боевым
+ * логом (.logs/cal_capture.txt): L[10] "DF786A7E" — та же форма, что
+ * L[0..9]. strtoul стоит на первом не-hex байте (\r), 9/10-й байт можно
+ * не копировать. */
+static inline bool text_accum_hex_line(const char *s, int len, uint32_t *out)
+{
+    if (len < 10) return false;
+    for (int i = 0; i < 8; i++)
+        if (!text_is_hex_digit(s[i])) return false;
+    if (s[8] != '\r' || s[9] != '\n') return false;
+    if (out) *out = (uint32_t)strtoul(s, NULL, 16);
+    return true;
+}
+
+/* Стандартный CRC32 (init 0xFFFFFFFF, полином 0xEDB88320 рефлексирован,
+ * финальный XOR 0xFFFFFFFF) над ASCII-конкатенацией n hex-строк (n*8 байт,
+ * без \r\n) — тот же алгоритм, что main/spectrum.c #CMD-1. Проверено на
+ * боевом дампе: CRC32(конкатенация L[0..9]) = DF786A7E = L[10]. */
+static inline uint32_t text_accum_crc32_lines(const char *s, int nlines)
+{
+    uint32_t cc = 0xFFFFFFFF;
+    for (int i = 0; i < nlines; i++) {
+        const char *line = s + i * 10;
+        for (int k = 0; k < 8; k++) {
+            cc ^= (uint8_t)line[k];
+            for (int j = 0; j < 8; j++)
+                cc = (cc & 1) ? (cc >> 1) ^ 0xEDB88320 : (cc >> 1);
+        }
+    }
+    return cc ^ 0xFFFFFFFF;
+}
+
+/* R2 (release-gate-1.2.28-code-rc2.md §2.1): окно дампа -cal ПО ФОРМАТУ И
+ * CRC, не только с позиции 0 — закрывает S10 (однострочный hex-ответ
+ * перед дампом), S07 (первый кадр дампа <9 байт), S22 ("-ok"+дамп одним
+ * кадром). Скан байт-за-байтом (не только кратно 10) — мусор перед
+ * дампом не обязан быть кратен строке. -1, если валидного окна нет. */
+static inline int text_accum_find_cal_window(const char *s, int len)
+{
+    for (int off = 0; off + 110 <= len; off++) {
+        bool ok = true;
+        for (int i = 0; i <= 10 && ok; i++)
+            if (!text_accum_hex_line(s + off + i * 10, len - off - i * 10, NULL)) ok = false;
+        if (!ok) continue;
+        uint32_t ce = 0;
+        text_accum_hex_line(s + off + 100, len - off - 100, &ce);
+        if (text_accum_crc32_lines(s + off, 10) == ce) return off;
+    }
+    return -1;
+}
+
+/* Дамп накоплен целиком: ЛИБО начинается как дамп с позиции 0 И содержит
+ * >=39 переводов строки (старый дешёвый триггер, короткое замыкание —
+ * не меняет поведение существующих тестов на позиционных данных без
+ * настоящего CRC), ЛИБО (R2) где-то в буфере нашлось CRC-валидное окно
+ * дампа не с позиции 0. Старая ветка — перенесена из usb_host_cdc.c
+ * (была is_complete_cal) без изменения семантики. */
 static inline bool text_accum_is_complete_cal(const char *s, int len)
 {
-    if (!text_looks_like_cal_dump_start(s, len)) return false;
-    int nl = 0;
-    for (const char *q = s; *q; q++)
-        if (*q == '\n') nl++;
-    return nl >= 39;
+    if (text_looks_like_cal_dump_start(s, len)) {
+        int nl = 0;
+        for (const char *q = s; *q; q++)
+            if (*q == '\n') nl++;
+        if (nl >= 39) return true;
+    }
+    return text_accum_find_cal_window(s, len) >= 0;
 }
 
 /* -inf: один Text(404) с параметрами прибора (VERSION..PileUpThr). Подстрока,
@@ -124,7 +182,15 @@ static inline text_accum_result_t text_accum_feed(char *accum, int *accum_len, i
     int sp = cap - *accum_len - 1;
     if (sp < 0) sp = 0;
     int cp = pkt_len < sp ? pkt_len : sp;
-    if (cp > 0) memcpy(accum + *accum_len, pkt, (size_t)cp);
+    /* R3 (release-gate-1.2.28-code-rc2.md §2.1): \0 внутри пакета прибора
+     * копируется как есть, но strstr/strlen ниже читают accum как C-строку
+     * и останавливаются на первом \0 — всё, что после него в ЭТОМ ЖЕ
+     * пакете, становится невидимым триггерам (-inf/Tcpot/-ok). Заменяем
+     * \0 на пробел на копировании — байты и их порядок целы. */
+    for (int i = 0; i < cp; i++) {
+        char c = pkt[i];
+        accum[*accum_len + i] = (c == '\0') ? ' ' : c;
+    }
     *accum_len += cp;
     accum[*accum_len] = '\0';
 
