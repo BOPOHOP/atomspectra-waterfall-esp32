@@ -1706,6 +1706,17 @@ static esp_err_t handle_device(httpd_req_t *req)
         cJSON_AddItemToObject(root, "calibration", cal);
         cJSON_AddNumberToObject(root, "calib_order", sp->calib_order);
     }
+    // #AWF-12b F2 (release-gate-1.2.28-code.md): ОДИН признак "калибровка
+    // задана" для прошивки и всех страниц — тот же предикат, что гейт
+    // авто-считывания (usb_host_cdc.c). Раньше страницы решали каждая по-
+    // своему (наличие поля "calibration" ИЛИ хотя бы один коэффициент != 0);
+    // прошивка отдаёт "calibration" уже при calib_valid, ДАЖЕ если все
+    // коэффициенты нулевые (старый calib.bin с v1.2.27, POST /api/calibration
+    // с нулями) — index.html/waterfall.html читали "Задана", system.html
+    // "не задана" одновременно. Поле — ВСЕГДА (не только при calib_valid),
+    // чтобы страницы могли отличить "прошивка новая, калибровки нет" от
+    // "прошивка старая, поля нет вовсе" без домысливания.
+    cJSON_AddBoolToObject(root, "calib_set", !spectrum_calibration_is_missing());
     char *json = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, json);

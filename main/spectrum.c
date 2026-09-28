@@ -502,36 +502,37 @@ void spectrum_process_info_response(const char *text)
         }
         cc ^= 0xFFFFFFFF;
         uint32_t ce = (uint32_t)strtoul(lbuf[10], NULL, 16);
-        if (cc == ce) {
-            double coeffs[CALIB_COEFFS] = {0};
-            for (int c = 0; c < CALIB_COEFFS && (c*2+1) < 10; c++) {
-                char pair[128];
-                snprintf(pair, sizeof(pair), "%s%s", lbuf[c*2], lbuf[c*2+1]);
-                uint64_t raw = strtoull(pair, NULL, 16);
-                double val;
-                memcpy(&val, &raw, sizeof(val));
-                coeffs[c] = val;
-            }
-            // #AWF-12: «считалась успешно» = CRC ok И не все коэффициенты
-            // нулевые (calib_read_is_success, main/calib_autoread.h). CRC-
-            // валидный, но нулевой дамп — оператор приравнял нулевую
-            // калибровку к «не задана»: НЕ перезаписываем текущую калибровку
-            // платы (это касается и ручного «Считать» — желаемо по ТЗ).
-            if (calib_read_is_success(true, coeffs, CALIB_COEFFS)) {
-                memcpy(s_spectrum.calibration, coeffs, sizeof(coeffs));
-                int order = CALIB_COEFFS - 1;
-                while (order > 0 && s_spectrum.calibration[order] == 0.0) order--;
-                s_spectrum.calib_order = order;
-                s_spectrum.calib_valid = true;
-                s_calib_dirty = true;   // #WF-1: запись сделает main loop вне SPEC_LOCK
-                ESP_LOGI(TAG, "Calibration OK: order=%d", s_spectrum.calib_order);
-            } else {
-                ESP_LOGW(TAG, "Calibration CRC OK but all-zero dump - ignored (treated as not set)");
-            }
-        } else {
+        double coeffs[CALIB_COEFFS] = {0};
+        for (int c = 0; c < CALIB_COEFFS && (c*2+1) < 10; c++) {
+            char pair[128];
+            snprintf(pair, sizeof(pair), "%s%s", lbuf[c*2], lbuf[c*2+1]);
+            uint64_t raw = strtoull(pair, NULL, 16);
+            double val;
+            memcpy(&val, &raw, sizeof(val));
+            coeffs[c] = val;
+        }
+        // #AWF-12: «считалась успешно» = CRC ok И не все коэффициенты нулевые
+        // И конечные (calib_read_is_success, main/calib_autoread.h; F6 —
+        // NaN/Inf тоже "не успех"). CRC-валидный, но нулевой/нечисловой дамп —
+        // НЕ перезаписывает текущую калибровку платы (ручное «Считать» тоже).
+        // #AWF-12b O2 (release-gate-1.2.28-code.md): CRC передаётся ПАРАМЕТРОМ
+        // (cc==ce), а не оборачивающим `if` снаружи — раньше предикат звался
+        // ТОЛЬКО с литералом true, ветка crc_ok=false в прошивке не жила, её
+        // проверяли одни лишь тесты (мёртвый параметр).
+        if (calib_read_is_success(cc == ce, coeffs, CALIB_COEFFS)) {
+            memcpy(s_spectrum.calibration, coeffs, sizeof(coeffs));
+            int order = CALIB_COEFFS - 1;
+            while (order > 0 && s_spectrum.calibration[order] == 0.0) order--;
+            s_spectrum.calib_order = order;
+            s_spectrum.calib_valid = true;
+            s_calib_dirty = true;   // #WF-1: запись сделает main loop вне SPEC_LOCK
+            ESP_LOGI(TAG, "Calibration OK: order=%d", s_spectrum.calib_order);
+        } else if (cc != ce) {
             // #FW-13: LOGD — для -inf mismatch штатен (CRC-формат только у -cal),
             // WARN здесь печатался каждые 30 с в CDC-таске (см. комментарий выше).
             ESP_LOGD(TAG, "Calibration CRC mismatch: computed=%08x expected=%08x", (unsigned)cc, (unsigned)ce);
+        } else {
+            ESP_LOGW(TAG, "Calibration CRC OK but all-zero/non-finite dump - ignored (treated as not set)");
         }
     }
 
@@ -1125,6 +1126,17 @@ void spectrum_load_calibration(void)
     size_t rd = fread(&st, 1, sizeof(st), f);
     fclose(f);
     if (rd != sizeof(st) || !st.valid) return;
+    // #AWF-12b F13 (release-gate-1.2.28-code.md, вне диффа #AWF-12, но питает
+    // тот же предикат): calib_order с флеша не проверялся — потребители
+    // (JSON/N42/CSV экспорт, web_server.c/spectrum_http_cache.c/spectrogram.c)
+    // ходят по calibration[i] до calib_order включительно без своей проверки
+    // границы. Повреждённый calib.bin с calib_order вне [0,CALIB_COEFFS)
+    // давал бы чтение за массивом. Тот же приём, что sanitize_loaded()
+    // (spectrum.c) — для пути восстановления спектра.
+    if (st.calib_order < 0 || st.calib_order >= CALIB_COEFFS) {
+        ESP_LOGW(TAG, "Calibration file: calib_order=%d out of range, dropped", st.calib_order);
+        return;
+    }
     SPEC_LOCK();
     memcpy(s_spectrum.calibration, st.calibration, sizeof(st.calibration));
     s_spectrum.calib_order = st.calib_order;

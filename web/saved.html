@@ -184,6 +184,14 @@ function setLang(l){
 }
 
 var csrfToken="", spectra=[], currentIdx=-1, currentData=null, calib=null, currentMeta=null;
+/* #AWF-12b F2 (release-gate-1.2.28-code.md): здесь калибровка — СОХРАНЁННОГО
+   файла (d.calib на спектре), а не платы — по файлу прошивка признак
+   calib_set не хранит (снят на момент сохранения, история назад не
+   переписывается), поэтому запасной вариант (ненулевой коэффициент) — не
+   fallback, а единственный путь для d.calib; calib_set используется, только
+   если проверяем ЖИВОЕ состояние платы (calib, из /api/device). */
+function calibArraySet(c){return !!(c&&c.length&&c.some(function(v){return v!==0}))}
+function calibIsSet(dev){if(!dev)return false;if(typeof dev.calib_set==="boolean")return dev.calib_set;return calibArraySet(dev.calibration||dev.calib)}
 /* issue #52: автоснимки адресуются именем ("bk_3_2"), а не индексом, поэтому
    выбранный элемент описывается парой (вид, ключ), а не одним currentIdx. */
 var backups=[], curKind="spec", curName="";
@@ -212,7 +220,7 @@ async function loadFlashInfo(){
 
 async function loadCalib(){
  try{var r=await(await fetch("/api/device")).json();
- if(r.calibration&&r.calibration.length)calib=r.calibration;
+ if(calibIsSet(r))calib=r.calibration;
  if(r.serial)document.getElementById("device-chip").textContent=r.serial;}catch(e){}
 }
 
@@ -267,7 +275,7 @@ function refreshMeta(){
  document.getElementById("m-saved").textContent=meta?fmtDate(meta.saved_at):"—";
  document.getElementById("m-ch").textContent=d&&d.bins?d.bins.length:"—";
  var cal=d&&d.calib&&d.calib.length?d.calib:calib;
- document.getElementById("m-cal").textContent=cal?tfmt("cal.set",cal.length):t("cal.unset");
+ document.getElementById("m-cal").textContent=calibArraySet(cal)?tfmt("cal.set",cal.length):t("cal.unset");
  document.getElementById("dt-when").textContent=meta?fmtDate(meta.saved_at):"";
 }
 
@@ -325,7 +333,7 @@ function drawChart(d){
  var mx=0; for(var i=0;i<N;i++)if(bins[i]>mx)mx=bins[i];
  if(mx<=0)mx=1;
  var cal=d.calib&&d.calib.length?d.calib:calib;
- var hasKev=!!cal;
+ var hasKev=calibArraySet(cal);
  var maxExp=Math.ceil(Math.log10(mx));if(maxExp<1)maxExp=1;
  var minExp=Math.max(maxExp-6,0);
  function yMap(v){if(v<=0)return PB;var lv=Math.log10(v);if(lv<minExp)return PB;return PB-((lv-minExp)/(maxExp-minExp))*PH;}

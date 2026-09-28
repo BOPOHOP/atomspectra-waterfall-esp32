@@ -1,4 +1,5 @@
 #include "atomspectra.h"
+#include "calib_autoread.h"  // #AWF-12b F2: calib_is_missing — единый признак "задана"
 #include "spectrogram.h"
 #include "web_waterfall.h"
 #include "web_util.h"
@@ -135,6 +136,11 @@ static int append_calib_json(char *buf, int off, int cap)
             off += snprintf(buf + off, cap - off, "%s%.15g", i ? "," : "", sp->calibration[i]);
         off += snprintf(buf + off, cap - off, "]");
     }
+    // #AWF-12b F2 (release-gate-1.2.28-code.md): тот же признак, что
+    // web_server.c /api/device и spectrum_http_cache.c — waterfall.html
+    // решает по нему, рисовать ли ось в кэВ (drawAxis).
+    off += snprintf(buf + off, cap - off, ",\"calib_set\":%s",
+        calib_is_missing(sp->calibration, CALIB_COEFFS, sp->calib_valid) ? "false" : "true");
     free(sp);
     return off;
 }

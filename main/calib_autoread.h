@@ -2,6 +2,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include <math.h>       /* #AWF-12b F6: isfinite() — NaN/Inf в дампе прибора */
+#include "acq_watch.h"  /* #AWF-12b O4: ACQ_WATCH_MS для _Static_assert ниже */
 
 // #AWF-12 (оператор, дословно): «Если калибровка не задана (все нули), при
 // старте набора, как вручную, так и автоматического, принудительно считывать
@@ -21,9 +23,22 @@ static inline bool calib_coeffs_all_zero(const double *coeffs, int n)
     return true;
 }
 
+// #AWF-12b F6 (release-gate-1.2.28-code.md): NaN/Inf в коэффициенте — тоже
+// "не задана"/"не успех". Достижимо только NaN с согласованным CRC в дампе
+// прибора (не наблюдалось живьём) либо файлом calib.bin, записанным до этой
+// проверки; cJSON отдаёт NaN как null (cJSON.c), JS видит null!==0 → «задана»
+// при нечитаемой энергии — без этой проверки предикаты того не замечают.
+static inline bool calib_coeffs_any_nonfinite(const double *coeffs, int n)
+{
+    for (int i = 0; i < n; i++)
+        if (!isfinite(coeffs[i])) return true;
+    return false;
+}
+
 static inline bool calib_is_missing(const double *coeffs, int n, bool calib_valid)
 {
     if (!calib_valid) return true;
+    if (calib_coeffs_any_nonfinite(coeffs, n)) return true;
     return calib_coeffs_all_zero(coeffs, n);
 }
 
@@ -34,7 +49,9 @@ static inline bool calib_is_missing(const double *coeffs, int n, bool calib_vali
 // «Считать» — тоже, это желаемое изменение поведения, не только авто-путь).
 static inline bool calib_read_is_success(bool crc_ok, const double *coeffs, int n)
 {
-    return crc_ok && !calib_coeffs_all_zero(coeffs, n);
+    if (!crc_ok) return false;
+    if (calib_coeffs_any_nonfinite(coeffs, n)) return false;  // F6
+    return !calib_coeffs_all_zero(coeffs, n);
 }
 
 // Команда — старт набора «-sta», с параметрами или без (PROTOCOL.md:39-40:
@@ -73,6 +90,11 @@ static inline bool cmd_is_acq_start(const char *cmd)
 // кулдауна целиком, даже если бы барьер (1) почему-то не сработал (двойная
 // защита, не полагается на один механизм).
 #define CALIB_AUTOREAD_COOLDOWN_MS 30000u
+// #AWF-12b O4 (release-gate-1.2.28-code.md): закрепляет довод (б) выше
+// компилятором, а не только комментарием — правка одного порога без другого
+// молча ломает предположение "один цикл сторожа укладывается в кулдаун".
+_Static_assert(CALIB_AUTOREAD_COOLDOWN_MS > ACQ_WATCH_MS,
+               "calib autoread cooldown must exceed one acq-watch cycle");
 
 static inline bool calib_autoread_should_request(bool prev_was_run, uint32_t now_ms,
                                                    uint32_t last_request_ms)

@@ -812,9 +812,11 @@ async function refreshDevice(){
    document.getElementById("dev-t").textContent="—";
   }
   document.getElementById("dev-serial").textContent=r.serial||"—";
-  // #AWF-12: калибровка "задана" - поле есть И хотя бы один коэффициент != 0
-  // (нулевая калибровка приравнена к "не задана", как в прошивке).
-  var calOk=!!(r.calibration&&r.calibration.some(function(c){return c!==0;}));
+  // #AWF-12b F2 (release-gate-1.2.28-code.md): предпочитаем булево поле
+  // calib_set прошивки (тот же предикат, что гейт авто-считывания и другие
+  // страницы); запасной вариант для старой прошивки без поля — хотя бы один
+  // коэффициент != 0 (нулевая калибровка приравнена к "не задана").
+  var calOk=typeof r.calib_set==="boolean"?r.calib_set:!!(r.calibration&&r.calibration.some(function(c){return c!==0;}));
   document.getElementById("dev-cal").textContent=calOk?tfmt("cal.set",r.calibration.length,(r.calib_order||(r.calibration.length-1))):t("cal.unset");
   var scw=document.getElementById("sum-cal-warn");
   if(scw){scw.style.display=calOk?"none":"";scw.textContent=t("sum.calWarn");}

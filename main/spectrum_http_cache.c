@@ -1,5 +1,6 @@
 #include "spectrum_http_cache.h"
 #include "atomspectra.h"
+#include "calib_autoread.h"       // #AWF-12b F2: calib_is_missing — единый признак "задана"
 #include "json_uint_fmt.h"        // UI-P1: быстрый forматтер bins[] (не vsnprintf)
 #include "spectrum_t1.h"
 #include "esp_heap_caps.h"
@@ -128,6 +129,12 @@ static bool build_json_full(const spectrum_data_t *sp, char **out, size_t *out_l
         }
         if (!append_fmt(&buf, &len, &cap, "]")) goto fail;
     }
+    // #AWF-12b F2 (release-gate-1.2.28-code.md): тот же признак, что
+    // usb_host_cdc.c-гейт и /api/device (web_server.c) — index.html читает
+    // именно этот эндпоинт (/api/spectrum/meta.json) на каждом кадре и
+    // включает кнопку идентификации нуклидов по нему (nucBtnEnable).
+    if (!append_fmt(&buf, &len, &cap, ",\"calib_set\":%s",
+        calib_is_missing(sp->calibration, CALIB_COEFFS, sp->calib_valid) ? "false" : "true")) goto fail;
     if (!append_fmt(&buf, &len, &cap, "}")) goto fail;
     *out = buf;
     *out_len = len;
@@ -170,6 +177,9 @@ static bool build_json_meta(const spectrum_data_t *sp, char **out, size_t *out_l
         }
         if (!append_fmt(&buf, &len, &cap, "]")) goto fail;
     }
+    // #AWF-12b F2: тот же признак, что build_json_full выше и /api/device.
+    if (!append_fmt(&buf, &len, &cap, ",\"calib_set\":%s",
+        calib_is_missing(sp->calibration, CALIB_COEFFS, sp->calib_valid) ? "false" : "true")) goto fail;
     if (!append_fmt(&buf, &len, &cap, "}")) goto fail;
     *out = buf;
     *out_len = len;

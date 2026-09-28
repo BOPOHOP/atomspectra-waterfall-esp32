@@ -14,6 +14,12 @@ void acq_intent_suite(void)
         {"-stt",     ACQ_INTENT_RUN,     ACQ_INTENT_RUN},     // статус — не команда набора
         {"-inf",     ACQ_INTENT_STOP,    ACQ_INTENT_STOP},    // запрос параметров
         {"-stax",    ACQ_INTENT_RUN,     ACQ_INTENT_RUN},     // не -sta
+        // #AWF-12b F10 (release-gate-1.2.28-code.md): разделитель после
+        // "-sta"/"-sto" — любой пробельный (таб тоже), не только ' '.
+        // "-sta\t60" раньше падал в `return cur` вместо UNKNOWN — сторож мог
+        // принять ограниченный по времени набор за постоянный RUN.
+        {"-sta\t60", ACQ_INTENT_STOP,    ACQ_INTENT_UNKNOWN}, // таб — тоже разделитель параметров
+        {"-sto\t",   ACQ_INTENT_RUN,     ACQ_INTENT_STOP},    // и у -sto тоже
     };
     for (unsigned i = 0; i < sizeof c / sizeof c[0]; i++) {
         uint8_t got = acq_intent_for_cmd(c[i].cmd, c[i].cur);
