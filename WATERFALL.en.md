@@ -17,7 +17,8 @@ You can:
 - **pull finished `.aswf` segments over HTTP** (`/api/waterfall/segments` →
   `/api/waterfall/segment?name=…`) and stitch them on the PC / in the browser;
 - **export it with the "⬇ Export .n42" button** right from the Web UI — the board
-  builds **ANSI N42.42** from the PSRAM ring (works even without flash persistence);
+  builds **ANSI N42.42** of the whole history: flash segments + rows from the PSRAM ring
+  that are not on flash yet (works even without flash persistence — ring only then);
 - convert to **ANSI N42.42** with the scripts shipped in this repo;
 - open it as a 2D waterfall in the offline viewer shipped in this repo.
 
@@ -124,12 +125,14 @@ engages).
 > `seg_dropped`, every `SEG_ROLLOVER` clean (see the #WF-1 fix in
 > [`KNOWN_ISSUES.en.md`](KNOWN_ISSUES.en.md)). Full report: [`docs/stab2_report.md`](docs/stab2_report.md).
 >
-> **⚠ #FW-19:** the n42 export only returns the last **256 rows** (~4.25 h at a ~60 s
-> cadence) — a separate limit from the `ring_capacity` field (`/api/waterfall/status`),
-> smaller than the ~763-row partition-capacity estimate above. For recordings longer than
-> ~4.25 h, pull segments periodically via `/api/waterfall/segment` (see below) instead of
-> waiting until the end of the recording. Details: [`docs/stab2_report.md`](docs/stab2_report.md)
-> §6, [`KNOWN_ISSUES.en.md`](KNOWN_ISSUES.en.md) (#FW-19).
+> **#FW-19 (since 1.2.28):** the n42 export returns **the whole history on flash** (all
+> finalized segments, by ascending index) plus rows that are not on flash yet (the open
+> segment, rows recorded with persist off) from the PSRAM ring; no row is emitted twice.
+> Previously the export was limited to the ring — the last **256 rows** (`ring_capacity`).
+> The old behaviour: `GET /api/waterfall/export.n42?ring=1`. The export is streamed; with a
+> full flash (~760 rows) it takes tens of seconds and the web UI responds slowly meanwhile
+> (httpd is single-task). The calibration in the file is the device's current calibration.
+> Details: [`docs/stab2_report.md`](docs/stab2_report.md) §6, [`KNOWN_ISSUES.en.md`](KNOWN_ISSUES.en.md) (#FW-19).
 
 > Serving a segment (`/api/waterfall/segment?name=…`) is **strictly read-only**: the
 > board never deletes the file. Deletion is only by the keep-last ring (or the future
@@ -150,7 +153,7 @@ engages).
 | `/api/waterfall/segments` | GET | **List of flash segments** (JSON array, see below). No CSRF needed |
 | `/api/waterfall/segment?name=seg_NNNNN.aswf` | GET | **Raw segment file** (`application/octet-stream`, read-only). Strict name validation (anti-traversal): `seg_`+digits+`.aswf`. `400 bad name` / `404 not found` |
 | `/api/waterfall/segment/delete?name=seg_NNNNN.aswf` | POST | Delete a segment from flash **after** confirmed receipt on the PC (`wf_pull_client.py`, #REC-12). `{"ok":true}` / `{"ok":false,"err":"not-deletable"}` — segment still being written or pinned |
-| `/api/waterfall/export.n42` | GET | **Export to ANSI N42.42** from the PSRAM ring (one `<RadMeasurement>` per row, `CountedZeroes`, calibration in `<EnergyCalibration>`). The "⬇ Export .n42" button in the Web UI. Does not require flash persistence |
+| `/api/waterfall/export.n42` | GET | **Export to ANSI N42.42** of the whole history: flash segments + missing rows from the PSRAM ring (one `<RadMeasurement>` per row, `CountedZeroes`, calibration in `<EnergyCalibration>` only when set: an all-zero calibration = no calibration). `?ring=1` — ring only (up to 256 rows), as before 1.2.28. The "⬇ Export .n42" button in the Web UI. Does not require flash persistence |
 | `/api/waterfall/offload` | GET | Push-offload config + stats (#REC-11-A2): `{"enabled","url","user","has_pass","sent_ok","failed","last_status","last_ok_at","busy"}`. The password is never returned |
 | `/api/waterfall/offload` | POST | Set push-offload config: `{"enabled":bool,"url":"http://…","user":"…","pass":"…"}` (omit `pass` to keep the current one). A `url` with host `narodmon` is rejected (`err:"narodmon-blocked"`) |
 | `/ws/waterfall` | WS | Text header on connect, then one binary frame (16384 B) per new row |
