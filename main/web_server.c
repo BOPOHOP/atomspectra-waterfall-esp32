@@ -2191,6 +2191,26 @@ static esp_err_t handle_settings_snapshot(httpd_req_t *req)
     return settings_snapshot_send(req, info_line, tcpot_line, &tmv, stamp);
 }
 
+// GET /api/settings/snapshot — отдаёт ПОСЛЕДНИЙ слепок БЕЗ обращения к
+// прибору: POST выше перезапишет файл свежим чтением, а если DSP-настройка
+// сломалась ПРЯМО СЕЙЧАС, свежий POST затрёт хороший слепок битым.
+static esp_err_t handle_settings_snapshot_get(httpd_req_t *req)
+{
+    FILE *f = fopen(DSP_SNAPSHOT_PATH, "rb");
+    if (!f) {
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "No snapshot saved yet");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"dsp_snapshot.txt\"");
+    char buf[512]; size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+        httpd_resp_send_chunk(req, buf, n);
+    httpd_resp_send_chunk(req, NULL, 0);
+    fclose(f);
+    return ESP_OK;
+}
+
 static void send_cmd_delayed(const char *cmd)
 {
     usb_host_send_text_command(cmd);
@@ -2690,6 +2710,7 @@ void web_server_init(void)
         {"/api/calibration",             HTTP_POST, handle_set_calibration,  NULL},
         {"/api/settings/backup",         HTTP_GET,  handle_settings_backup,  NULL},
         {"/api/settings/snapshot",       HTTP_POST, handle_settings_snapshot, NULL},  // BUG-AS-08
+        {"/api/settings/snapshot",       HTTP_GET,  handle_settings_snapshot_get, NULL},  // BUG-AS-08: без чтения прибора
         {"/api/settings/restore",        HTTP_POST, handle_settings_restore, NULL},
         // #FIELD-5/7: установка времени от браузера + смена пароля полевого AP
         {"/api/time",                    HTTP_POST, handle_time_set,         NULL},

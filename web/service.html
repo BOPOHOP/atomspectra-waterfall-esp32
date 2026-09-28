@@ -86,6 +86,7 @@ pre.preview{ margin-top:12px; font-size:11px; line-height:1.5; color:#9aa496; ba
 <button class="btn green" id="btn-read" onclick="doRead()" data-i18n="backup.read">Считать</button>
 <button class="btn" id="btn-backup" onclick="doBackup()" data-i18n="backup.download">Скачать бэкап</button>
 <button class="btn" id="btn-dsp-snap" onclick="doDspSnapshot()" data-i18n="backup.dspSnap" title="BUG-AS-08">Сохранить слепок настройки прибора</button>
+<a class="btn" href="/api/settings/snapshot" data-i18n="backup.dspSnapGet" title="BUG-AS-08: не обращается к прибору, отдаёт последний сохранённый">Скачать последний слепок</a>
 <div class="mut" id="backup-status" style="font-size:11px;margin-top:9px;text-align:center;min-height:14px"></div>
 </section>
 
@@ -168,6 +169,7 @@ var DICT={
   "backup.readOk":"Считано",
   "backup.download":"Скачать бэкап",
   "backup.dspSnap":"Сохранить слепок настройки прибора",
+  "backup.dspSnapGet":"Скачать последний слепок",
   "backup.savingSnap":"Сохранение слепка...",
   "backup.snapOk":"Слепок сохранён на плате и скачан",
   "backup.err":"Ошибка: прибор не отвечает / не подключён",
@@ -243,6 +245,7 @@ var DICT={
   "backup.readOk":"Read OK",
   "backup.download":"Download backup",
   "backup.dspSnap":"Save device DSP setting snapshot",
+  "backup.dspSnapGet":"Download last snapshot",
   "backup.savingSnap":"Saving snapshot...",
   "backup.snapOk":"Snapshot saved on the board and downloaded",
   "backup.err":"Error: device not responding / not connected",
