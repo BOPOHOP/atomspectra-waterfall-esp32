@@ -19,7 +19,13 @@ void acq_intent_suite(void)
         // "-sta\t60" раньше падал в `return cur` вместо UNKNOWN — сторож мог
         // принять ограниченный по времени набор за постоянный RUN.
         {"-sta\t60", ACQ_INTENT_STOP,    ACQ_INTENT_UNKNOWN}, // таб — тоже разделитель параметров
-        {"-sto\t",   ACQ_INTENT_RUN,     ACQ_INTENT_STOP},    // и у -sto тоже
+        {"-sto\t",   ACQ_INTENT_RUN,     ACQ_INTENT_STOP},    // и у -sto тоже (хвост пуст, таб обрезается — n==4 ветка)
+        // RT1 (release-gate-1.2.28-code-rc2.md): хвостовые пробельные обрезаются
+        // ДО сравнения (acq_intent_for_cmd:13-14) — у "-sto\t" сам таб trim'ится,
+        // n==4, и cmd[4]=='\t' ветка (строка 23) вообще не исполняется (мутант
+        // X15, таб после -sto снят, тест не ловил). Непустой хвост после табa —
+        // единственный способ реально дойти до этой ветки.
+        {"-sto\t1",  ACQ_INTENT_RUN,     ACQ_INTENT_STOP},    // таб перед непустым хвостом — тоже разделитель
     };
     for (unsigned i = 0; i < sizeof c / sizeof c[0]; i++) {
         uint8_t got = acq_intent_for_cmd(c[i].cmd, c[i].cur);

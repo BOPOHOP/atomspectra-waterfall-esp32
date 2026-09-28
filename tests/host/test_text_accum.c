@@ -37,6 +37,10 @@ void text_accum_predicates_suite(void)
     CHECK(text_accum_is_clean_cal_prefix("", 0) == true);                  // пусто — тривиальный префикс
     CHECK(text_accum_is_clean_cal_prefix("-ok\r\n", 5) == false);          // не кратно 10 / не hex-формат
     CHECK(text_accum_is_clean_cal_prefix("AAAAAAAAXX", 10) == false);      // 10 байт, но не \r\n в конце
+    // RT2 (release-gate-1.2.28-code-rc2.md, выжившие X8/X13): отрицательные
+    // проверки на CR (не только LF) и на все 8, а не 7, hex-позиций якоря.
+    CHECK(text_accum_is_clean_cal_prefix("AAAAAAAA\n\n", 10) == false);    // LF есть, а CR (8-й байт) — нет
+    CHECK(text_looks_like_cal_dump_start("AAAAAAA-\r", 9) == false);       // 8-й символ не hex
 }
 
 void text_accum_triggers_suite(void)
@@ -56,6 +60,12 @@ void text_accum_triggers_suite(void)
     dump40[n40] = '\0';
     CHECK(text_accum_is_complete_cal(dump40, n40) == true);    // 40 строк — обычный случай
 
+    // RT2 (выживший X11): 40 '\n' есть, но текст НЕ начинается с hex-строки
+    // (якорь на позицию 0 обязателен, одного счётчика '\n' недостаточно).
+    char notdump[400]; int ndn = 0;
+    for (int i = 0; i < 40; i++) { memcpy(notdump + ndn, "-ok\r\n", 5); ndn += 5; }
+    CHECK(text_accum_is_complete_cal(notdump, ndn) == false);
+
     CHECK(text_accum_is_complete_short_ack("-ok\r\n", 5) == true);
     CHECK(text_accum_is_complete_short_ack("-ok\n", 4) == true);
     CHECK(text_accum_is_complete_short_ack("-okX\r\n", 6) == false);   // не то слово
@@ -66,6 +76,21 @@ void text_accum_triggers_suite(void)
 
     CHECK(text_accum_is_complete_tcpot(" Tcpot [1,2,3]", 14) == true);  // ведущий пробел — боевой формат
     CHECK(text_accum_is_complete_tcpot(" Tcpot [1,2,3", 13) == false);  // нет закрывающей ]
+
+    // RT2 (выживший X6): "PileUpThr" без "VERSION " — не -inf целиком.
+    CHECK(text_accum_is_complete_inf("PileUpThr 10\r\n") == false);
+}
+
+// RT2 (выживший X10): точная граница переполнения — cap-128, не cap-1. cap=200
+// (не 4096) для точности границы без гигантских буферов теста.
+void text_accum_overflow_boundary_suite(void)
+{
+    char accum[200]; int len = 0;
+    char g1[71]; memset(g1, 'z', sizeof g1);
+    CHECK(text_accum_feed(accum, &len, sizeof accum, g1, sizeof g1) == TEXT_ACCUM_NONE);
+    CHECK(len == 71);   // cap-128 = 72, ещё не достигли
+    char g2[1] = {'z'};
+    CHECK(text_accum_feed(accum, &len, sizeof accum, g2, 1) == TEXT_ACCUM_OVERFLOW);  // len=72=cap-128
 }
 
 // Симулирует usb_host_cdc.c::usb_host_cdc_apply_text_accum_result — сброс
@@ -85,9 +110,12 @@ static text_accum_result_t feed_and_apply(char *accum, int *len, int cap,
 void text_accum_f1_regression_suite(void)
 {
     char accum[4096]; int len = 0;
-    text_accum_result_t r1 = feed_and_apply(accum, &len, sizeof accum, "-ok\r\n", 5);
+    // RT3 (release-gate-1.2.28-code-rc2.md): text_accum_feed НАПРЯМУЮ, не
+    // feed_and_apply — сброс на SHORT_ACK теперь часть контракта роутера
+    // (RO3), проверяем прошивочный код, а не тестовую копию правила.
+    text_accum_result_t r1 = text_accum_feed(accum, &len, sizeof accum, "-ok\r\n", 5);
     CHECK(r1 == TEXT_ACCUM_SHORT_ACK);
-    CHECK(len == 0);   // аккумулятор пуст для следующего ответа
+    CHECK(len == 0);   // аккумулятор пуст для следующего ответа — сбросила сама text_accum_feed
 
     char dump[400]; int dn = build_cal_lines(dump, 40, sizeof dump);
     text_accum_result_t r2 = feed_and_apply(accum, &len, sizeof accum, dump, dn);
@@ -153,8 +181,10 @@ void text_accum_overflow_suite(void)
     memset(garbage, 'z', sizeof garbage);   // 'z' не hex — ни один триггер не сработает
     text_accum_result_t r = TEXT_ACCUM_NONE;
     int rounds = 0;
+    // RT3: text_accum_feed напрямую — сброс на OVERFLOW тоже часть контракта
+    // роутера (RO3) теперь, не тестовой обёртки.
     while (r == TEXT_ACCUM_NONE && rounds < 10) {
-        r = feed_and_apply(accum, &len, sizeof accum, garbage, sizeof garbage);
+        r = text_accum_feed(accum, &len, sizeof accum, garbage, sizeof garbage);
         rounds++;
     }
     CHECK(r == TEXT_ACCUM_OVERFLOW);

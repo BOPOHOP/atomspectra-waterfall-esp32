@@ -142,8 +142,17 @@ static void usb_host_cdc_apply_text_accum_result(text_accum_result_t tar)
 {
     switch (tar) {
     case TEXT_ACCUM_CAL:
-    case TEXT_ACCUM_INF:
         spectrum_process_info_response(s_text_accum);
+        s_text_accum_len = 0;
+        break;
+    case TEXT_ACCUM_INF:
+        // #AWF-12b R1 (release-gate-1.2.28-code-rc2.md): указатель С ПОЗИЦИИ
+        // "VERSION ", не s_text_accum — посторонний мусор перед -inf (короткий
+        // ответ прибора, не распознанный как "-ok", напр. "-ok collecting…")
+        // иначе уходит в s_info_raw (spectrum.c store_raw_trimmed) и дальше в
+        // файл бэкапа (GET /api/settings/backup). text_accum_is_complete_inf
+        // гарантирует, что "VERSION " в буфере есть.
+        spectrum_process_info_response(strstr(s_text_accum, "VERSION "));
         s_text_accum_len = 0;
         break;
     case TEXT_ACCUM_TCPOT:
@@ -152,13 +161,14 @@ static void usb_host_cdc_apply_text_accum_result(text_accum_result_t tar)
         s_text_accum_len = 0;
         break;
     case TEXT_ACCUM_SHORT_ACK:
-        // #AWF-12b F1: короткий -ok — подтверждение без данных калибровки,
-        // сбрасываем сразу, не дожидаясь -inf (иначе мусор живёт до 30 мин).
-        s_text_accum_len = 0;
+        // #AWF-12b F1: короткий -ok — подтверждение без данных калибровки.
+        // #AWF-12b RO3 (release-gate-1.2.28-code-rc2.md): сброс s_text_accum_len
+        // делает сама text_accum_feed (main/text_accum.h) — здесь его нет,
+        // чтобы правило было одно и тестировалось на хосте, а не копией.
         break;
     case TEXT_ACCUM_OVERFLOW:
+        // RO3: сброс — см. комментарий у SHORT_ACK выше.
         ESP_LOGW(TAG, "text accum overflow without trigger, reset");
-        s_text_accum_len = 0;
         break;
     case TEXT_ACCUM_NONE:
     default:

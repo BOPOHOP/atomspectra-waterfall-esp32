@@ -109,9 +109,12 @@ typedef enum {
  * usb_host_cdc.c, без побочных эффектов (без USB/ESP-IDF/логов). accum —
  * буфер (станет null-terminated), *accum_len — длина на входе/выходе; cap —
  * размер accum (с местом под '\0'). pkt/pkt_len — новый пакет (не обязан
- * быть null-terminated). НЕ сбрасывает *accum_len на результат != NONE —
- * буфер ещё нужен вызывающему (spectrum_process_info_response читает accum),
- * сброс делает вызывающий сам после того, как прочитал результат. */
+ * быть null-terminated). НЕ сбрасывает *accum_len на CAL/INF/TCPOT — буфер
+ * ещё нужен вызывающему (spectrum_process_info_response читает accum), сброс
+ * делает вызывающий сам после того, как прочитал результат. На SHORT_ACK/
+ * OVERFLOW буфер вызывающему не нужен — сбрасывает сам роутер (RO3/RT3,
+ * release-gate-1.2.28-code-rc2.md): это часть контракта, покрытого хост-
+ * тестом, а не отдельная копия правила на стороне вызывающего кода. */
 static inline text_accum_result_t text_accum_feed(char *accum, int *accum_len, int cap,
                                                     const char *pkt, int pkt_len)
 {
@@ -128,7 +131,7 @@ static inline text_accum_result_t text_accum_feed(char *accum, int *accum_len, i
     if (text_accum_is_complete_cal(accum, *accum_len))       return TEXT_ACCUM_CAL;
     if (text_accum_is_complete_inf(accum))                   return TEXT_ACCUM_INF;
     if (text_accum_is_complete_tcpot(accum, *accum_len))     return TEXT_ACCUM_TCPOT;
-    if (text_accum_is_complete_short_ack(accum, *accum_len)) return TEXT_ACCUM_SHORT_ACK;
-    if (*accum_len >= cap - 128)                             return TEXT_ACCUM_OVERFLOW;
+    if (text_accum_is_complete_short_ack(accum, *accum_len)) { *accum_len = 0; return TEXT_ACCUM_SHORT_ACK; }
+    if (*accum_len >= cap - 128)                             { *accum_len = 0; return TEXT_ACCUM_OVERFLOW; }
     return TEXT_ACCUM_NONE;
 }

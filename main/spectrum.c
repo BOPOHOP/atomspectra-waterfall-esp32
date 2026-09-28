@@ -1,5 +1,6 @@
 ﻿#include "atomspectra.h"
 #include "calib_autoread.h"  // #AWF-12: calib_is_missing/calib_read_is_success
+#include "spectrum_http_cache.h"  // #AWF-12b R5: spectrum_http_cache_invalidate
 #include "spectrum_t1.h"
 #include "hist_drop_diag.h"
 #include "flash_quiet.h"
@@ -456,6 +457,9 @@ static void store_raw_trimmed(const char *text, char *buf, size_t bufsz, int *ou
 
 void spectrum_process_info_response(const char *text)
 {
+    // #AWF-12b R5: инвалидировать HTTP-кэш ТОЛЬКО если калибровка реально
+    // применилась ниже (calib_read_is_success) — не на каждый -inf/-cal.
+    bool calib_updated = false;
     SPEC_LOCK();
     // #BRIDGE-3: этот вход обслуживает ДВА разных ответа прибора — роутер
     // (usb_host_cdc.c) шлёт сюда и -inf (параметры+температура), и -cal (дамп
@@ -526,6 +530,7 @@ void spectrum_process_info_response(const char *text)
             s_spectrum.calib_order = order;
             s_spectrum.calib_valid = true;
             s_calib_dirty = true;   // #WF-1: запись сделает main loop вне SPEC_LOCK
+            calib_updated = true;   // #AWF-12b R5: инвалидация кэша после SPEC_UNLOCK
             ESP_LOGI(TAG, "Calibration OK: order=%d", s_spectrum.calib_order);
         } else if (cc != ce) {
             // #FW-13: LOGD — для -inf mismatch штатен (CRC-формат только у -cal),
@@ -560,6 +565,7 @@ void spectrum_process_info_response(const char *text)
             }
         }
         SPEC_UNLOCK();
+        if (calib_updated) spectrum_http_cache_invalidate();  // #AWF-12b R5
         return;
     }
 
@@ -610,6 +616,7 @@ void spectrum_process_info_response(const char *text)
     s_spectrum.temperature[1] = d->t2;
     s_spectrum.temperature[2] = d->t3;
     SPEC_UNLOCK();
+    if (calib_updated) spectrum_http_cache_invalidate();  // #AWF-12b R5
 }
 
 void spectrum_t1_on_cdc_open(uint32_t now_ms)
@@ -1116,6 +1123,7 @@ void spectrum_set_calibration(const double *coeffs, int order)
              s_spectrum.calibration[0], s_spectrum.calibration[1]);
     s_calib_dirty = true;   // #WF-1: запись сделает main loop вне SPEC_LOCK
     SPEC_UNLOCK();
+    spectrum_http_cache_invalidate();  // #AWF-12b R5: POST /api/calibration
 }
 
 void spectrum_load_calibration(void)
@@ -1126,6 +1134,10 @@ void spectrum_load_calibration(void)
     size_t rd = fread(&st, 1, sizeof(st), f);
     fclose(f);
     if (rd != sizeof(st) || !st.valid) return;
+    // #AWF-12b R6 (release-gate-1.2.28-code-rc2.md): st.serial — сырые байты
+    // файла, терминатор не гарантирован; ниже идёт strncpy И "%s" — обрезаем
+    // ДО первого использования (иначе на битом файле чтение за буфером).
+    st.serial[sizeof(st.serial) - 1] = 0;
     // #AWF-12b F13 (release-gate-1.2.28-code.md, вне диффа #AWF-12, но питает
     // тот же предикат): calib_order с флеша не проверялся — потребители
     // (JSON/N42/CSV экспорт, web_server.c/spectrum_http_cache.c/spectrogram.c)
@@ -1137,6 +1149,13 @@ void spectrum_load_calibration(void)
         ESP_LOGW(TAG, "Calibration file: calib_order=%d out of range, dropped", st.calib_order);
         return;
     }
+    // #AWF-12b R6: NaN/Inf в файле (дамп до F6, либо порча) — тем же
+    // предикатом, что автосчитывание с прибора (calib_autoread.h). Держим
+    // прежнюю калибровку платы, а не битую; JSON иначе печатает "nan"/"inf".
+    if (calib_coeffs_any_nonfinite(st.calibration, CALIB_COEFFS)) {
+        ESP_LOGW(TAG, "Calibration file: non-finite coefficient, dropped");
+        return;
+    }
     SPEC_LOCK();
     memcpy(s_spectrum.calibration, st.calibration, sizeof(st.calibration));
     s_spectrum.calib_order = st.calib_order;
@@ -1144,6 +1163,7 @@ void spectrum_load_calibration(void)
     if (st.serial[0] && !s_spectrum.serial_number[0])
         strncpy(s_spectrum.serial_number, st.serial, sizeof(s_spectrum.serial_number) - 1);
     SPEC_UNLOCK();
+    spectrum_http_cache_invalidate();  // #AWF-12b R5: загрузка calib.bin при старте
     ESP_LOGI(TAG, "Calibration loaded: order=%d serial='%s'", st.calib_order, st.serial);
 }
 

@@ -1,4 +1,5 @@
 #include "atomspectra.h"
+#include "calib_autoread.h"  // #AWF-12b R4: calib_is_missing — тот же снимок, что "calibration"
 #include "spectrum_t1.h"
 #include "shproto.h"
 #include "web_waterfall.h"
@@ -254,6 +255,15 @@ static esp_err_t render_spectrum_json(httpd_req_t *req, const spectrum_data_t *s
             p += snprintf(buf + p, 4096 - p, "%s%.15g", i ? "," : "", sp->calibration[i]);
         snprintf(buf + p, 4096 - p, "]");
         httpd_resp_sendstr_chunk(req, buf);
+    }
+    // #AWF-12b R7 (release-gate-1.2.28-code-rc2.md): тот же предикат, что
+    // /api/device и /api/spectrum*.json — эта функция отдаёт сохранённые
+    // спектры и автоснимки (/api/saved/<i>/spectrum.json, /api/backup/<name>/
+    // spectrum.json), раньше только "calib" без "calib_set".
+    {
+        int q = snprintf(buf, 4096, ",\"calib_set\":%s",
+            calib_is_missing(sp->calibration, CALIB_COEFFS, sp->calib_valid) ? "false" : "true");
+        httpd_resp_send_chunk(req, buf, q);
     }
     httpd_resp_sendstr_chunk(req, "}");
     httpd_resp_send_chunk(req, NULL, 0);
@@ -1716,7 +1726,13 @@ static esp_err_t handle_device(httpd_req_t *req)
     // "не задана" одновременно. Поле — ВСЕГДА (не только при calib_valid),
     // чтобы страницы могли отличить "прошивка новая, калибровки нет" от
     // "прошивка старая, поля нет вовсе" без домысливания.
-    cJSON_AddBoolToObject(root, "calib_set", !spectrum_calibration_is_missing());
+    // #AWF-12b R4 (release-gate-1.2.28-code-rc2.md): признак — ТЕМ ЖЕ снимком
+    // sp, что и массив "calibration" выше (было отдельным вызовом
+    // spectrum_calibration_is_missing() под своим SPEC_LOCK — окно между двумя
+    // локами, куда мог встать разбор дампа usb_rxw, давало "calib_set":true
+    // без "calibration"). have_sp==false — тоже "не задана".
+    cJSON_AddBoolToObject(root, "calib_set",
+        have_sp && !calib_is_missing(sp->calibration, CALIB_COEFFS, sp->calib_valid));
     char *json = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, json);

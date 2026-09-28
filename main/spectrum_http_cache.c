@@ -275,6 +275,17 @@ bool spectrum_http_cache_ensure(void)
     return spectrum_http_cache_finish_build(now);
 }
 
+// #AWF-12b R5: s_have=false под s_mtx — следующий ensure() увидит "нет
+// кэша" и пересоберёт, не дожидаясь TTL. До init() (s_mtx ещё NULL) —
+// нечего инвалидировать, ensure() при первом вызове соберёт сам.
+void spectrum_http_cache_invalidate(void)
+{
+    if (!s_mtx) return;
+    xSemaphoreTake(s_mtx, portMAX_DELAY);
+    s_have = false;
+    xSemaphoreGive(s_mtx);
+}
+
 const spectrum_data_t *spectrum_http_cache_data(void)
 {
     return (s_have && s_sp) ? s_sp : NULL;

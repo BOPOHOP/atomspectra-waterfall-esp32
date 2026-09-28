@@ -212,6 +212,43 @@ seconds of the new session — the count in that narrow window may double once; 
 saves race each other, the flash can briefly hold a version older than the one in memory (it is
 overwritten by the next save). Neither case loses data permanently or affects normal operation.
 
+### #AWF-12b: "Read" no longer applies a zero or NaN calibration dump (F12)
+
+**Status:** limitation by design (v1.2.28).
+
+As of `v1.2.28` a `-cal` dump with CRC-valid but zero or non-finite (NaN/Inf) coefficients is
+treated as "calibration not set", same as a CRC-invalid dump — it no longer overwrites the
+board's current calibration. This applies to both the manual "Read" button and the auto-read
+before starting acquisition. The Web UI indicator still just reflects the instrument's reply;
+telling "a dump arrived but was ignored" apart from "no dump arrived" requires `/api/device`
+(`calib_set`) and the command log.
+
+### #AWF-12b: the TCP bridge does not request calibration before `-sta` (F3)
+
+**Status:** limitation by design (v1.2.24+).
+
+The calibration auto-read before starting acquisition (when none is set) only fires for `-sta`
+sent by the gateway itself (the "Start" button, auto-resume after reconnect/reboot, watchdog
+resend). An `-sta` coming from a TCP client (AtomSpectra/BecqMoni via the bridge, port 8234)
+goes to the instrument on the raw pass-through path, bypassing this entry point — deliberately:
+an external application drives the bridge, and injecting a gateway command into its stream would
+corrupt the PC app's protocol.
+
+### #AWF-12b: theoretical instrument-response packet sequences (never observed)
+
+**Status:** deferred, hypothetical.
+
+Parsing the instrument's text replies (`main/text_accum.h`) assumes each reply arrives as a
+single USB packet, and that a split reply only rejoins on a row boundary. Across all gateway
+logs, that holds for every format actually seen (`-ok`, the `-cal` dump, `-inf`, `Tcpot`). Three
+theoretical sequences have never shown up in the logs: a one-line hex reply right before a dump,
+and a dump shorter than 9 bytes as its first frame (both would misalign the dump parse — the CRC
+would fail to match and calibration would not apply), and `-ok`+dump in a single frame (the dump
+would be lost). Separately: a text packet containing a `\0` byte masks every later text reply
+until the accumulator overflows (~4 KB, roughly 2 hours at a 30-minute `-inf` poll) — the
+accumulator itself is not corrupted, it just goes silent for a while. None of these have
+reproduced on real hardware.
+
 ---
 
 ## Fixed
