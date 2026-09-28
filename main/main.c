@@ -203,7 +203,13 @@ void app_main(void)
                  * unbounded deferral.
                  * http_io_gate is taken only around fopen/fwrite/rename inside
                  * begin/pump/one-shot — not across commit waits (AUD-ASW126 #6). */
-                if (!usb_host_cdc_is_connected() || spectrum_autosave_fail_streak() >= 5) {
+                if (ota_busy_is_busy()) {
+                    // М6 (release-gate-firmware-v1.2.28-code.md): OTA держит
+                    // ota_busy весь приём — begin()/autosave() ниже и так
+                    // молча откажут. Раньше это шло в note_fail() и раздувало
+                    // fail_streak чужой причиной. Тик пропущен — не отказ.
+                    ESP_LOGI(TAG, "LittleFS autosave tick skipped: OTA in progress");
+                } else if (!usb_host_cdc_is_connected() || spectrum_autosave_fail_streak() >= 5) {
                     if (spectrum_autosave_in_progress())
                         spectrum_autosave_abort();
                     spectrum_autosave_consume_abort();
