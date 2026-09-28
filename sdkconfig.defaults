@@ -53,6 +53,15 @@ CONFIG_LWIP_TCP_WND_DEFAULT=65535
 # Wi-Fi не мог выделить буфер крупного кадра -> UI вис, сам не восстанавливался.
 # Замер 29.09 (4 клиента, 75 с): без опции 0/56 ответов, с опцией 2224/2224.
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# Опция выше меняет умолчания Kconfig (RX 10->16, BA 6->16, OOSEQ 4->0, TX dynamic->
+# static). Замер шёл со значениями ниже — закрепляем, иначе чистая сборка (CI, INSTALL)
+# получает непроверенный набор.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
+CONFIG_ESP_WIFI_RX_BA_WIN=6
+CONFIG_LWIP_TCP_OOSEQ_MAX_PBUFS=4
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER=y
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=32
 
 # WebSocket support для /ws/waterfall (live-стрим строк спектрограммы)
 CONFIG_HTTPD_WS_SUPPORT=y
