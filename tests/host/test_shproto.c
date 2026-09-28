@@ -64,6 +64,12 @@ void text_accum_ok_then_inf_suite(void);
 void text_accum_generic_garbage_before_dump_suite(void);
 void text_accum_overflow_suite(void);
 void text_accum_overflow_boundary_suite(void);  // RT2
+// R2/R3 (release-gate-1.2.28-code-rc2.md §2.1, sweep-C группа D): S10/S07/S22
+// (дамп теряется/сдвигается), S17-класс (\0 внутри пакета маскирует -inf).
+void text_accum_r2_offset_dump_suite(void);
+void text_accum_r2_fragment_before_dump_suite(void);
+void text_accum_r2_ok_plus_dump_one_frame_suite(void);
+void text_accum_r3_null_byte_suite(void);
 
 // Тестовая команда. CMD_HISTOGRAM (0x01) объявлена в main/atomspectra.h, но она
 // вне include-path host-сборки; shproto трактует cmd как обычный uint8_t.
@@ -253,6 +259,10 @@ int main(void)
     text_accum_generic_garbage_before_dump_suite();
     text_accum_overflow_suite();
     text_accum_overflow_boundary_suite();  // RT2
+    text_accum_r2_offset_dump_suite();
+    text_accum_r2_fragment_before_dump_suite();
+    text_accum_r2_ok_plus_dump_one_frame_suite();
+    text_accum_r3_null_byte_suite();
 
     if (g_failures) {
         printf("\n%d CHECK(S) FAILED\n", g_failures);
