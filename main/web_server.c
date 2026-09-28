@@ -1,4 +1,7 @@
 #include "atomspectra.h"
+#include "calib_autoread.h"  // #AWF-12b R4: calib_is_missing — тот же снимок, что "calibration"
+#include "calib_export.h"    // R7 (sweep-A): признак «калибровка есть» в экспорте XML/N42/SPE
+#include "http_gate_budget.h" // P-009 (sweep-A): единый бюджет ожидания HEAVY-слота
 #include "spectrum_t1.h"
 #include "shproto.h"
 #include "web_waterfall.h"
@@ -10,6 +13,7 @@
 #include "monitor.h"        // #MON-1: серия CPS-мониторинга (/api/monitor/series)
 #include "spectrum_http_cache.h"  // #PERF-1: 2s snapshot cache + meta/binary
 #include "http_io_gate.h"         // #PERF-2: HEAVY lane gate
+#include "flash_quiet.h"          // М7: координация записи слепка DSP с autosave (#FW-8)
 #include "backup_plan.h"          // issue #52: разбор имени снимка в /api/backup/*
 #include "debug_log_ring.h"
 #include "esp_heap_caps.h"  // #MON-1: PSRAM-буфер чанка серии
@@ -40,6 +44,8 @@
 #include "ota_image_check.h"      // AWF-4: проверка заголовка образа (host-тест)
 #include "ota_github_client.h"    // AWF-5: обновление с GitHub
 #include "ota_busy.h"              // AWF-5 P1-фикс: общий замок с GitHub-install
+#include "ota_timeout_budget.h"    // D4 (sweep-B задача 1): host-тест границы
+#include "snapshot_file.h"         // У4 (раунд 3): слепок DSP — tmp + rename (host-тест)
 #include <dirent.h>
 
 static const char *TAG = "web";
@@ -51,11 +57,12 @@ static const char *TAG = "web";
 #define WF_TIME_SYNCED_EPOCH 1700000000L   // 2023-11-14 UTC
 static inline bool time_is_synced(time_t t) { return t >= WF_TIME_SYNCED_EPOCH; }
 
-// #3/Codeaudit P1: короткое ожидание HEAVY-слота для сохранённых-спектров
-// эндпоинтов (спектры/save/list/export/delete на Flash) — тот же принцип и
-// то же значение, что WF_SEGMENT_GATE_WAIT_MS в web_waterfall.c: пользователь
-// ждёт клик, мгновенный 503 на пустяковой задержке слота — плохой UX.
-#define SAVED_FLASH_GATE_WAIT_MS 250
+// #3/Codeaudit P1: ожидание HEAVY-слота для сохранённых-спектров эндпоинтов
+// (спектры/save/list/export/delete на Flash): пользователь ждёт клик, мгновенный 503
+// на задержке слота — плохой UX. P-009 (sweep-A): 250 мс было короче одного удержания
+// фоновым автосейвом/бэкапом (~0,6–0,7 с) — теперь общий бюджет с web_waterfall.c,
+// значение и обоснование в http_gate_budget.h (2000 мс).
+#define SAVED_FLASH_GATE_WAIT_MS HTTP_GATE_WAIT_MS
 
 static void json_add_temp(cJSON *o, const char *key, float t)
 {
@@ -254,6 +261,15 @@ static esp_err_t render_spectrum_json(httpd_req_t *req, const spectrum_data_t *s
             p += snprintf(buf + p, 4096 - p, "%s%.15g", i ? "," : "", sp->calibration[i]);
         snprintf(buf + p, 4096 - p, "]");
         httpd_resp_sendstr_chunk(req, buf);
+    }
+    // #AWF-12b R7 (release-gate-1.2.28-code-rc2.md): тот же предикат, что
+    // /api/device и /api/spectrum*.json — эта функция отдаёт сохранённые
+    // спектры и автоснимки (/api/saved/<i>/spectrum.json, /api/backup/<name>/
+    // spectrum.json), раньше только "calib" без "calib_set".
+    {
+        int q = snprintf(buf, 4096, ",\"calib_set\":%s",
+            calib_is_missing(sp->calibration, CALIB_COEFFS, sp->calib_valid) ? "false" : "true");
+        httpd_resp_send_chunk(req, buf, q);
     }
     httpd_resp_sendstr_chunk(req, "}");
     httpd_resp_send_chunk(req, NULL, 0);
@@ -577,10 +593,11 @@ static esp_err_t handle_ota_gh_channel_set(httpd_req_t *req)
 // D5) — медленный клиент, вечно попадающий в HTTPD_SOCK_ERR_TIMEOUT, держал
 // бы его неограниченно, блокируя ВСЕ остальные HTTP-запросы. Порог — число
 // ПОДРЯД идущих таймаутов (сброс на каждый успешный recv), не время: точное
-// значение recv-таймаута — дефолт esp_http_server (не переопределён этим
-// проектом), поэтому абсолютное время не гарантируем (#AH-1 — не измеряем
-// то, что берём из чужого дефолта); 30 подряд отказов приёма — явно не
-// "штатная сеть подождала", а зависший/враждебный клиент.
+// значение recv-таймаута — О9 (release-gate-firmware-v1.2.28-code.md):
+// ПЕРЕОПРЕДЕЛЁН этим проектом, `config.recv_wait_timeout = 3` (ниже,
+// web_server_init) — 3 с, не дефолт esp_http_server; бюджет простоя httpd
+// D4 = 30 × 3 с = 90 с. 30 подряд отказов приёма — явно не "штатная сеть
+// подождала", а зависший/враждебный клиент.
 #define OTA_MAX_CONSECUTIVE_TIMEOUTS 30u
 
 // P1-фикс (verify-awf5-github-ota-2026-09-27.md разд.2.4): переименована в
@@ -637,7 +654,7 @@ static esp_err_t handle_ota_locked(httpd_req_t *req)
         int to_read = remaining < (int)bufsz ? remaining : (int)bufsz;
         int rd = httpd_req_recv(req, (char *)buf, to_read);
         if (rd == HTTPD_SOCK_ERR_TIMEOUT) {
-            if (++timeout_streak > OTA_MAX_CONSECUTIVE_TIMEOUTS) {
+            if (ota_timeout_budget_exceeded(++timeout_streak, OTA_MAX_CONSECUTIVE_TIMEOUTS)) {
                 free(buf);
                 esp_ota_abort(ota);
                 httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Timeout budget exceeded");
@@ -1087,7 +1104,7 @@ static esp_err_t render_spectrum_xml(httpd_req_t *req, const spectrum_data_t *sp
         SPECTRUM_CHANNELS);
     httpd_resp_send_chunk(req, buf, n);
 
-    if (sp->calib_valid) {
+    if (calib_export_present(sp)) {          // R7 (sweep-A): нули/NaN = «не задана»
         n = snprintf(buf, 4096,
             "        <EnergyCalibration>\r\n"
             "          <PolynomialOrder>%d</PolynomialOrder>\r\n"
@@ -1239,7 +1256,8 @@ static esp_err_t render_spectrum_n42(httpd_req_t *req, const spectrum_data_t *sp
         "      <RadInstrumentComponentVersion>2026.6.15.1</RadInstrumentComponentVersion>\r\n"
         "    </RadInstrumentVersion>\r\n"
         "  </RadInstrumentInformation>\r\n");
-    if (sp->calib_valid) {
+    const bool have_cal = calib_export_present(sp);   // R7 (sweep-A): один признак на файл
+    if (have_cal) {
         httpd_resp_sendstr_chunk(req,
             "  <EnergyCalibration id=\"SpectrumCalibration-0\">\r\n"
             "    <CoefficientValues>");
@@ -1263,7 +1281,7 @@ static esp_err_t render_spectrum_n42(httpd_req_t *req, const spectrum_data_t *sp
         ts.tm_mday, ts.tm_mon + 1, ts.tm_year + 1900, ts.tm_hour, ts.tm_min, ts.tm_sec,
         sp->total_time_sec);
     httpd_resp_send_chunk(req, buf, n);
-    if (sp->calib_valid) {
+    if (have_cal) {
         httpd_resp_sendstr_chunk(req,
             "    <Spectrum id=\"SpectrumData\" radDetectorInformationReference=\"Detector\""
             " energyCalibrationReference=\"SpectrumCalibration-0\">\r\n");
@@ -1331,7 +1349,7 @@ static esp_err_t render_spectrum_spe(httpd_req_t *req, const spectrum_data_t *sp
     // #FIELD-9 (A11): near-epoch → строка COMMENT (SPE игнорирует неизвестные ключи); только при рассинхроне
     if (!time_is_synced(end_time))
         pos += snprintf(buf + pos, 4096 - pos, "COMMENT=TIME NOT SYNCHRONIZED (board clock near-epoch)\r\n");
-    if (sp->calib_valid) {
+    if (calib_export_present(sp)) {          // R7 (sweep-A): нули/NaN = «не задана»
         double emax = 0.0;
         for (int i = sp->calib_order; i >= 0; i--)
             emax = emax * (SPECTRUM_CHANNELS - 1) + sp->calibration[i];
@@ -1706,6 +1724,26 @@ static esp_err_t handle_device(httpd_req_t *req)
         cJSON_AddItemToObject(root, "calibration", cal);
         cJSON_AddNumberToObject(root, "calib_order", sp->calib_order);
     }
+    // #AWF-12b F2 (release-gate-1.2.28-code.md): ОДИН признак "калибровка
+    // задана" для прошивки и всех страниц — тот же предикат, что гейт
+    // авто-считывания (usb_host_cdc.c). Раньше страницы решали каждая по-
+    // своему (наличие поля "calibration" ИЛИ хотя бы один коэффициент != 0);
+    // прошивка отдаёт "calibration" уже при calib_valid, ДАЖЕ если все
+    // коэффициенты нулевые (старый calib.bin с v1.2.27, POST /api/calibration
+    // с нулями) — index.html/waterfall.html читали "Задана", system.html
+    // "не задана" одновременно. Поле — ВСЕГДА (не только при calib_valid),
+    // чтобы страницы могли отличить "прошивка новая, калибровки нет" от
+    // "прошивка старая, поля нет вовсе" без домысливания.
+    // #AWF-12b R4 (release-gate-1.2.28-code-rc2.md): признак — ТЕМ ЖЕ снимком
+    // sp, что и массив "calibration" выше (было отдельным вызовом
+    // spectrum_calibration_is_missing() под своим SPEC_LOCK — окно между двумя
+    // локами, куда мог встать разбор дампа usb_rxw, давало "calib_set":true
+    // без "calibration"). have_sp==false — тоже "не задана".
+    cJSON_AddBoolToObject(root, "calib_set",
+        have_sp && !calib_is_missing(sp->calibration, CALIB_COEFFS, sp->calib_valid));
+    // F12/RO1 (release-gate-1.2.28-code-fixes.md:128): счётчик отвергнутых
+    // -cal (CRC ok, нули/NaN) — web/service.html "Считать" сверяет "до"/"после".
+    cJSON_AddNumberToObject(root, "calib_reject_seq", spectrum_get_calib_reject_seq());
     char *json = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, json);
@@ -2031,10 +2069,13 @@ static int kv_get_array(const char *text, const char *key, long *out, int max)
     return n;
 }
 
-// GET /api/settings/backup — read-only относительно физического состояния
-// прибора: шлёт -inf/-tc_pot? и отдаёт сырые ответы (см. spectrum_get_info_raw/
-// spectrum_get_tcpot_raw, atomspectra.h). CSRF не требуется (не мутирует прибор).
-static esp_err_t handle_settings_backup(httpd_req_t *req)
+// Общая для /api/settings/backup И /api/settings/snapshot (BUG-AS-08,
+// KNOWN_ISSUES.md:77): read-only -inf/-tc_pot? прибору + ожидание ответа
+// (spectrum_get_info_raw/spectrum_get_tcpot_raw, atomspectra.h). Сама шлёт
+// httpd-ошибку и ESP_FAIL при неудаче.
+static esp_err_t settings_read_raw_or_err(httpd_req_t *req,
+                                           char *info_out, size_t info_cap,
+                                           char *tcpot_out, size_t tcpot_cap)
 {
     if (!usb_host_cdc_is_connected()) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Device not connected");
@@ -2055,11 +2096,7 @@ static esp_err_t handle_settings_backup(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No response to -inf (device busy/offline?)");
         return ESP_FAIL;
     }
-    // #FW-17: static + 2048Б — под полную -inf с 99-элементным PileUp[] (см.
-    // s_info_raw в spectrum.c). НЕ на стеке: httpd-воркер сериализует запросы
-    // (async off), реентранси нет; 2КБ на стеке 8192 — лишний риск.
-    static char info_line[2048];
-    spectrum_get_info_raw(info_line, sizeof(info_line), NULL);
+    spectrum_get_info_raw(info_out, info_cap, NULL);
 
     spectrum_get_tcpot_raw(line, sizeof(line), &seq_before);
     usb_host_send_text_command("-tc_pot?");
@@ -2073,10 +2110,20 @@ static esp_err_t handle_settings_backup(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No response to -tc_pot? (older firmware?)");
         return ESP_FAIL;
     }
-    char tcpot_line[700];
-    spectrum_get_tcpot_raw(tcpot_line, sizeof(tcpot_line), NULL);
+    spectrum_get_tcpot_raw(tcpot_out, tcpot_cap, NULL);
+    return ESP_OK;
+}
 
-    char bkp_name[48], bkp_disp[80];                         // #FW-42: префикс
+// GET /api/settings/backup — не изменилось для клиента: читалка выше + стрим
+// на скачивание. #FW-17: static 2048Б — не на стеке httpd-воркера.
+static esp_err_t handle_settings_backup(httpd_req_t *req)
+{
+    static char info_line[2048];
+    char tcpot_line[700];
+    if (settings_read_raw_or_err(req, info_line, sizeof(info_line),
+                                  tcpot_line, sizeof(tcpot_line)) != ESP_OK)
+        return ESP_FAIL;
+    char bkp_name[48], bkp_disp[80];
     web_build_export_name(bkp_name, sizeof(bkp_name), "atomspectra_backup.txt");
     snprintf(bkp_disp, sizeof(bkp_disp), "attachment; filename=\"%s\"", bkp_name);
     httpd_resp_set_type(req, "text/plain");
@@ -2085,6 +2132,107 @@ static esp_err_t handle_settings_backup(httpd_req_t *req)
     httpd_resp_sendstr_chunk(req, "\r\n");
     httpd_resp_sendstr_chunk(req, tcpot_line);
     httpd_resp_sendstr_chunk(req, "\r\n");
+    httpd_resp_send_chunk(req, NULL, 0);
+    return ESP_OK;
+}
+
+// #FW-42-style: одна крайняя копия слепка на LittleFS, перезаписывается.
+#define DSP_SNAPSHOT_PATH STORAGE_PATH "/dsp_snapshot.txt"
+#define DSP_SNAPSHOT_TMP_PATH STORAGE_PATH "/dsp_snapshot.tmp"   // У4: запись до rename
+
+// BUG-AS-08 (KNOWN_ISSUES.md:77): пишет снимок на flash. Вынесена из
+// handle_settings_snapshot ниже — держит его < 25 строк (delegation guard).
+// М7 (release-gate-firmware-v1.2.28-code.md): flash_quiet_writer_lock — тот же
+// лок, что берут autosave (spectrum.c) и /api/save перед своей flash-записью;
+// раньше запись шла в обход и могла совпасть с секундным пакетом гистограммы
+// (класс потерь #FW-8). Успех — по КАЖДОМУ шагу (fopen/fputs/fclose), не
+// только fopen: caller больше не отвечает "сохранён" на обрезанную/неполную
+// запись (не проверялось совсем).
+static bool settings_snapshot_write_file(const char *info_line,
+                                          const char *tcpot_line, const char *stamp)
+{
+    // Н7 (раунд 2) + У3 (раунд 3): тихое окно после пакета гистограммы ждём ДО
+    // лока и перепроверяем ПОСЛЕ (лок мог освободиться уже за окном), не дольше
+    // 25 опросов по 50 мс; не дождались — пишем, как 1.2.27.
+    if (!flash_quiet_writer_lock_in_window(25)) return false;
+    // У4 (раунд 3): временный файл + rename — сбой записи не уничтожает прежний
+    // слепок, GET не может отдать обрезанный файл как успех.
+    bool ok = snapshot_file_write_atomic(DSP_SNAPSHOT_TMP_PATH, DSP_SNAPSHOT_PATH,
+                                         stamp, info_line, tcpot_line);
+    flash_quiet_writer_unlock();
+    return ok;
+}
+
+// BUG-AS-08: стримит тот же снимок на скачивание с меткой-времени-именем.
+static esp_err_t settings_snapshot_send(httpd_req_t *req, const char *info_line,
+    const char *tcpot_line, struct tm *tmv, const char *stamp)
+{
+    // #AWF-12c-style: буферы с запасом под -Werror=format-truncation —
+    // gcc консервативно считает %d по ширине int (до 11 симв.), не по
+    // факту (tm_* реально 2-4 цифры), иначе сборка падает предупреждением.
+    char dl_base[96], dl_name[160], dl_disp[192];
+    snprintf(dl_base, sizeof(dl_base), "dsp_snapshot_%04d%02d%02d_%02d%02d%02d.txt",
+             tmv->tm_year + 1900, tmv->tm_mon + 1, tmv->tm_mday,
+             tmv->tm_hour, tmv->tm_min, tmv->tm_sec);
+    web_build_export_name(dl_name, sizeof(dl_name), dl_base);
+    snprintf(dl_disp, sizeof(dl_disp), "attachment; filename=\"%s\"", dl_name);
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_set_hdr(req, "Content-Disposition", dl_disp);
+    httpd_resp_sendstr_chunk(req, "# AtomSpectra DSP snapshot ");
+    httpd_resp_sendstr_chunk(req, stamp);
+    httpd_resp_sendstr_chunk(req, "\r\n");
+    httpd_resp_sendstr_chunk(req, info_line);
+    httpd_resp_sendstr_chunk(req, "\r\n");
+    httpd_resp_sendstr_chunk(req, tcpot_line);
+    httpd_resp_sendstr_chunk(req, "\r\n");
+    httpd_resp_send_chunk(req, NULL, 0);
+    return ESP_OK;
+}
+
+// POST /api/settings/snapshot (BUG-AS-08, KNOWN_ISSUES.md:77): "Сохранить
+// слепок настройки прибора" — читает -inf/-tc_pot? (settings_read_raw_or_err,
+// read-only), пишет на LittleFS (settings_snapshot_write_file) и отдаёт на
+// скачивание (settings_snapshot_send). CSRF обязателен — пишет flash.
+static esp_err_t handle_settings_snapshot(httpd_req_t *req)
+{
+    if (!csrf_check(req)) return ESP_FAIL;
+    static char info_line[2048];
+    char tcpot_line[700];
+    if (settings_read_raw_or_err(req, info_line, sizeof(info_line),
+                                  tcpot_line, sizeof(tcpot_line)) != ESP_OK)
+        return ESP_FAIL;
+    time_t now = time(NULL);
+    struct tm tmv;
+    localtime_r(&now, &tmv);
+    char stamp[24];
+    strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &tmv);
+    bool saved = settings_snapshot_write_file(info_line, tcpot_line, stamp);
+    // М7: заголовок читает frontend (web/service.html doDspSnapshot) — текст
+    // "сохранён на плате" не показывается на сбое записи.
+    httpd_resp_set_hdr(req, "X-Dsp-Snapshot-Saved", saved ? "1" : "0");
+    return settings_snapshot_send(req, info_line, tcpot_line, &tmv, stamp);
+}
+
+// GET /api/settings/snapshot — отдаёт ПОСЛЕДНИЙ слепок БЕЗ обращения к
+// прибору: POST выше перезапишет файл свежим чтением, а если DSP-настройка
+// сломалась ПРЯМО СЕЙЧАС, свежий POST затрёт хороший слепок битым.
+static esp_err_t handle_settings_snapshot_get(httpd_req_t *req)
+{
+    FILE *f = fopen(DSP_SNAPSHOT_PATH, "rb");
+    if (!f) {
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "No snapshot saved yet");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"dsp_snapshot.txt\"");
+    char buf[512]; size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+        httpd_resp_send_chunk(req, buf, n);
+    // У4 (раунд 3): ошибка чтения посреди файла — ответ без завершающего чанка
+    // (соединение рвётся), браузер не получит обрезанный слепок как успех.
+    bool read_err = ferror(f) != 0;
+    fclose(f);
+    if (read_err) return ESP_FAIL;
     httpd_resp_send_chunk(req, NULL, 0);
     return ESP_OK;
 }
@@ -2473,7 +2621,10 @@ static esp_err_t handle_404(httpd_req_t *req, httpd_err_code_t err)
 
 // F1: общий трамплин над uris[] (регистрация ниже, web_server_init) — индекс
 // в user_ctx выбирает исходный обработчик из простого массива функций (без
-// malloc/struct); 80 = запас max_uri_handlers (комментарий ниже, ~53 факт).
+// malloc/struct). DOC-URI-1: единственный источник истины по числу и запасу
+// max_uri_handlers — комментарий у config.max_uri_handlers=90 ниже (пересчитан
+// 2026-09-27: 79 факт, запас +11); эта строка раньше повторяла устаревшие числа
+// (80/~53) и разошлась с ними при последнем поднятии лимита.
 #define WEB_SERVER_URI_MAX 90
 static esp_err_t (*s_wrap_handlers[WEB_SERVER_URI_MAX])(httpd_req_t *);
 
@@ -2507,10 +2658,10 @@ void web_server_init(void)
     // tskNO_AFFINITY позволял httpd (prio 5) исполняться на core 0 рядом с
     // USB-приёмом — уводим целиком.
     config.core_id = 1;
-    // #WF-2/#MON-1/#FIELD-4/#FW-50/issue #52/AWF-5: пересчитано 2026-09-27 по факту
-    // (было 53+20=73, лимит 80 — AWF-5 добавила 6 /api/ota/github/* эндпоинтов).
-    // Сейчас: 59 в uris[] + 20 waterfall (web_waterfall_register: 19 reg +
-    // /ws/waterfall) = 79. С прежним лимитом 80 запас был бы всего +1 —
+    // #WF-2/#MON-1/#FIELD-4/#FW-50/issue #52/AWF-5: О9 (release-gate-firmware-
+    // v1.2.28-code.md) — пересчитано 2026-09-28 теми же командами (см. ниже):
+    // 61 в uris[] + 19 reg + 1 /ws/waterfall = 81, не 79 (комментарий отстал
+    // от кода при добавлении эндпоинтов после 2026-09-27). С лимитом 80 запас был бы всего +1 —
     // ПОСЛЕДНИЙ обработчик молча не регистрировался бы → тихий 404 (та самая
     // авария, которой лимит 45 стоил цикла reconnect). 90 даёт запас +11.
     // Добавляешь эндпоинт — пересчитай:
@@ -2587,6 +2738,8 @@ void web_server_init(void)
         {"/api/reboot-esp",              HTTP_POST, handle_reboot_esp,       NULL},
         {"/api/calibration",             HTTP_POST, handle_set_calibration,  NULL},
         {"/api/settings/backup",         HTTP_GET,  handle_settings_backup,  NULL},
+        {"/api/settings/snapshot",       HTTP_POST, handle_settings_snapshot, NULL},  // BUG-AS-08
+        {"/api/settings/snapshot",       HTTP_GET,  handle_settings_snapshot_get, NULL},  // BUG-AS-08: без чтения прибора
         {"/api/settings/restore",        HTTP_POST, handle_settings_restore, NULL},
         // #FIELD-5/7: установка времени от браузера + смена пароля полевого AP
         {"/api/time",                    HTTP_POST, handle_time_set,         NULL},
@@ -2625,7 +2778,12 @@ void web_server_init(void)
         httpd_uri_t entry = uris[i];
         entry.handler = activity_trampoline;
         entry.user_ctx = (void *)(intptr_t)i;
-        httpd_register_uri_handler(server, &entry);
+        // issue #52b (sweep-B задача 7): переполнение таблицы обработчиков
+        // раньше молча роняло ПОСЛЕДНИЙ маршрут (класс уже стоил инцидента
+        // с лимитом 45) -- теперь хотя бы громкий ESP_LOGE с именем URI.
+        esp_err_t rerr = httpd_register_uri_handler(server, &entry);
+        if (rerr != ESP_OK)
+            ESP_LOGE(TAG, "issue#52b: register '%s' failed: %s", uris[i].uri, esp_err_to_name(rerr));
     }
 
     web_waterfall_register(server);      // /waterfall, /api/waterfall/*, /ws/waterfall

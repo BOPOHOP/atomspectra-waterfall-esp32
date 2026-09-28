@@ -13,9 +13,16 @@ static inline uint8_t acq_intent_for_cmd(const char *cmd, uint8_t cur)
     while (n > 0 && (cmd[n - 1] == ' ' || cmd[n - 1] == '\t' || cmd[n - 1] == '\r' || cmd[n - 1] == '\n'))
         n--;
     if (n < 4 || strncmp(cmd, "-st", 3) != 0) return cur;
-    if (cmd[3] == 'o' && (n == 4 || cmd[4] == ' ')) return ACQ_INTENT_STOP;
+    // #AWF-12b F10 (release-gate-1.2.28-code.md): разделитель после "-sta" —
+    // ЛЮБОЙ пробельный (space/tab), не только ' '. "-sta\t60" раньше падал в
+    // `return cur` (намерение не менялось) вместо UNKNOWN — сторож (acq_watch)
+    // тогда мог принять ограниченный по времени набор за постоянный RUN и
+    // слать голый "-sta" бесконечно. cmd_is_acq_start (ниже, main/
+    // calib_autoread.h) и cmd_is_device_reset (эта же логика "-sta" выше) уже
+    // трактуют таб так же — теперь распознают одинаково (закрывает F10).
+    if (cmd[3] == 'o' && (n == 4 || cmd[4] == ' ' || cmd[4] == '\t')) return ACQ_INTENT_STOP;
     if (cmd[3] == 'a' && n == 4) return ACQ_INTENT_RUN;
-    if (cmd[3] == 'a' && cmd[4] == ' ') return ACQ_INTENT_UNKNOWN;
+    if (cmd[3] == 'a' && (cmd[4] == ' ' || cmd[4] == '\t')) return ACQ_INTENT_UNKNOWN;
     return cur;
 }
 

@@ -13,6 +13,8 @@
 #include "esp_timer.h"       /* #FW-22: timestamp для last_* полей */
 #include "acq_watch.h"       /* сторож набора после перезагрузки прибора */
 #include "acq_intent.h"      /* намерение набора по текстовой команде */
+#include "calib_autoread.h"  /* #AWF-12: авто-считывание -cal перед -sta */
+#include "text_accum.h"      /* #AWF-12b F1: чистая логика накопителя s_text_accum */
 #include <string.h>
 
 static const char *TAG = "usb_cdc";
@@ -25,6 +27,10 @@ static SemaphoreHandle_t s_diag_mutex = NULL;
 #define DIAG_UNLOCK() do { if (s_diag_mutex) xSemaphoreGive(s_diag_mutex); } while (0)
 
 static inline uint32_t diag_now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
+
+// #AWF-12: штамп последнего авто-запроса -cal (гейт calib_autoread_should_request,
+// main/calib_autoread.h) — под DIAG_LOCK, тот же мьютекс, что и s_diag.acq_intent.
+static uint32_t s_calib_autoread_last_ms;
 
 #define FTDI_SIO_RESET          0
 #define FTDI_SIO_SET_MODEM_CTRL 1
@@ -92,6 +98,12 @@ static volatile uint32_t s_usb_rx_err = 0;  // #TCP-4: FTDI line-status RX error
 
 static char s_text_accum[4096];
 static int  s_text_accum_len = 0;
+// У1 (раунд 3): начала пакетов в s_text_accum и время последнего текстового пакета —
+// отложенный дамп (хвост мог оказаться началом нового) разбирается после тишины.
+// Все три — только в usb_rx_worker, как и сам аккумулятор.
+static text_accum_marks_t s_text_marks;
+static uint32_t s_text_last_ms = 0;
+static bool     s_text_flush_armed = false;
 
 // #UI-1: кольцо последних текстовых ответов прибора для веб-лога команд (/api/devlog).
 // devlog_push() вызывается из cdc-acm data_cb (handle_rx_packet, CMD_TEXT); чтение —
@@ -125,23 +137,31 @@ static bool s_boot_autostart_wf   = false;
 static bool s_boot_clear_spectrum = false;
 static bool s_boot_once_done      = false;
 
-// #CMD-1: распознать завершённый ответ на -cal (дамп 40 регистров).
-// Формат подтверждён на реальном приборе (Text(400), один CDC-пакет):
-// строки ровно по 8 hex, разделённые \r\n; первые 12 — калибровка+CRC, 39-я — серийник.
-// Первая строка = 8 hex + перевод строки, и накоплено >=40 строк → дамп целиком.
-static bool is_complete_cal(const char *s)
+// #CMD-1/#AWF-12b: разбор дампа -cal (40 регистров, строки по 8 hex через
+// \r\n) — чистая логика в main/text_accum.h (text_accum_is_complete_cal и
+// соседи), вынесена туда F1-исправлением (release-gate-1.2.28-code.md).
+
+// Действие по результату text_accum_feed() (main/text_accum.h) — побочные
+// эффекты (вызов парсеров spectrum_*, сброс s_text_accum_len, ESP_LOG)
+// отдельно от чистой логики роутера, чтобы последнюю тестировать на хосте.
+// Н1 раунда 2: ЧТО разбирать — text_accum_result_span(), сбрасывать ли —
+// text_accum_result_consumes() (обе чистые, test_text_accum.c). CAL_COEFFS —
+// калибровка по CRC-окну без сброса; -inf — с "VERSION " (R1); SHORT_ACK и
+// OVERFLOW сбрасывает сама text_accum_feed (RO3).
+static void usb_host_cdc_text_sink(void *ctx, text_accum_result_t tar, const char *text)
 {
-    int h = 0;
-    while (h < 8) {
-        char c = s[h];
-        if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')))
-            return false;
-        h++;
-    }
-    if (s[8] != '\n' && s[8] != '\r') return false;
-    int nl = 0;
-    for (const char *q = s; *q; q++) if (*q == '\n') nl++;
-    return nl >= 39;
+    (void)ctx;
+    if (tar == TEXT_ACCUM_TCPOT) spectrum_process_tcpot_response(text);
+    else spectrum_process_info_response(text);
+}
+
+// У6 (раунд 3): отрезок, '\0' на время разбора, снятие поглощённого и разбор хвоста
+// после CAL — в text_accum_dispatch (host-тест поведения, test_text_accum_r3.c).
+static void usb_host_cdc_apply_text_accum_result(text_accum_result_t tar)
+{
+    tar = text_accum_dispatch(tar, s_text_accum, &s_text_accum_len, (int)sizeof(s_text_accum),
+                              &s_text_marks, usb_host_cdc_text_sink, NULL);
+    if (tar == TEXT_ACCUM_OVERFLOW) ESP_LOGW(TAG, "text accum overflow without trigger, reset");
 }
 
 static void handle_rx_packet(void)
@@ -171,35 +191,18 @@ static void handle_rx_packet(void)
             ESP_LOGD(TAG, "Text(%u): %.80s%s", (unsigned)s_rx_packet.len,
                      (const char*)s_rx_packet.data, s_rx_packet.len>80?"...":"");
             devlog_push(s_rx_packet.data, (int)s_rx_packet.len);  // #UI-1: в веб-лог команд
-            int sp = sizeof(s_text_accum)-s_text_accum_len-1;
-            int cp = (int)s_rx_packet.len < sp ? (int)s_rx_packet.len : sp;
-            memcpy(s_text_accum+s_text_accum_len, s_rx_packet.data, cp);
-            s_text_accum_len += cp; s_text_accum[s_text_accum_len] = '\0';
-            // #CMD-1: два РАЗНЫХ ответа прибора, каждый завершает накопление и СБРАСЫВАЕТ
-            // аккумулятор немедленно, чтобы они не склеивались (доказано на дампе: -cal,
-            // не сброшенный, прилипал к следующему -inf → 48 строк вместо 40, CRC mismatch).
-            //  • -inf  → один Text(404) с параметрами (VERSION..PileUpThr). Калибровки НЕ
-            //            содержит (прежний #PR-1 комментарий про «калибровку в -inf» был
-            //            НЕВЕРЕН — опровергнуто реальным дампом). Триггер: "PileUpThr "+"VERSION ".
-            //  • -cal  → один Text(400) с дампом 40 регистров (по 8 hex, \r\n). Калибровка
-            //            (L0..L9 = 5 double), CRC L10, серийник L39. Триггер: is_complete_cal().
-            if (is_complete_cal(s_text_accum) ||
-                (strstr(s_text_accum,"PileUpThr ") && strstr(s_text_accum,"VERSION "))) {
-                spectrum_process_info_response(s_text_accum);
-                s_text_accum_len = 0;
-            } else if (s_text_accum_len >= 6 && s_text_accum[s_text_accum_len-1] == ']' &&
-                       strstr(s_text_accum,"Tcpot ") != NULL) {
-                // #DEV-6: ответ на -tc_pot? — один Text-пакет "Tcpot [...]", завершение
-                // маркируется закрывающей скобкой (у -inf/-cal свои триггеры выше).
-                // Живой прибор шлёт ведущий пробел перед "Tcpot" (подтверждено devlog
-                // seq 18, 2026-07-01: " Tcpot [...]") — ищем подстроку, как у -inf,
-                // а не якорим strncmp на позицию 0 (иначе триггер не срабатывал никогда).
-                spectrum_process_tcpot_response(strstr(s_text_accum,"Tcpot "));
-                s_text_accum_len = 0;
-            } else if (s_text_accum_len >= (int)sizeof(s_text_accum) - 128) {
-                ESP_LOGW(TAG, "text accum overflow without trigger, reset");
-                s_text_accum_len = 0;
-            }
+            // #CMD-1/#AWF-12b F1: роутер накопителя — main/text_accum.h
+            // (text_accum_feed), чистая логика без побочных эффектов, тестируется
+            // на хосте (tests/host/test_text_accum.c). Каждый завершённый ответ
+            // сбрасывает аккумулятор, включая короткий "-ok" (F1: без этого дамп
+            // -cal, пришедший следом, дописывался после "-ok\r\n" и терялся —
+            // release-gate-1.2.28-code.md).
+            text_accum_result_t tar = text_accum_feed_m(s_text_accum, &s_text_accum_len,
+                (int)sizeof(s_text_accum), &s_text_marks,
+                (const char*)s_rx_packet.data, (int)s_rx_packet.len);
+            usb_host_cdc_apply_text_accum_result(tar);
+            s_text_last_ms = diag_now_ms();
+            s_text_flush_armed = (s_text_accum_len > 0);   // У1: что-то осталось — разобрать после тишины
         }
         break;
     case CMD_STAT:
@@ -256,7 +259,16 @@ static void usb_rx_worker(void *arg)
             s_rx_reset_req = 0;
             shproto_init(&s_rx_packet, s_rx_buf, sizeof(s_rx_buf));
             s_text_accum_len = 0;
+            s_text_marks = (text_accum_marks_t){0};
+            s_text_flush_armed = false;
             (void)xStreamBufferReset(s_rx_ring);
+        }
+        // У1 (раунд 3): TEXT_ACCUM_QUIET_MS без текстовых пакетов — отложенный дамп
+        // (конец на границе строки мог быть началом нового дампа) разбирается.
+        if (s_text_flush_armed && (diag_now_ms() - s_text_last_ms) >= TEXT_ACCUM_QUIET_MS) {
+            s_text_flush_armed = false;
+            usb_host_cdc_apply_text_accum_result(text_accum_flush(s_text_accum, &s_text_accum_len,
+                (int)sizeof(s_text_accum), &s_text_marks));
         }
         size_t n = xStreamBufferReceive(s_rx_ring, chunk, sizeof(chunk), pdMS_TO_TICKS(200));
         if (n == 0) continue;                 // таймаут, данных нет
@@ -899,9 +911,12 @@ void usb_host_cdc_devlog_json(uint32_t since, char *out, size_t outsz)
     snprintf(out + pos, outsz - pos, "],\"next\":%" PRIu32 "}", next);
 }
 
-int usb_host_send_text_command(const char *cmd)
+// #AWF-12: TX-путь БЕЗ гейта авто-считывания калибровки — используется самим
+// usb_host_send_text_command (после гейта) и авто-запросом "-cal", чтобы не
+// рекурсировать в собственный гейт. Тело — прежний usb_host_send_text_command
+// один-в-один (TX SHPROTO-пакета + diag/acq_intent/device_reset учёт).
+static int send_text_command_raw(const char *cmd)
 {
-    if (!cmd) return -1;
     const char *cmd0 = cmd;  // #FW-43: do not advance cmd before strncpy label
     // pkt_buf[512] on stack; shproto_packet_add_data silently truncates when full
     // (add_escaped checks buf_size) — reject oversize input instead of sending a
@@ -928,6 +943,61 @@ int usb_host_send_text_command(const char *cmd)
         if (cmd_is_device_reset(cmd0)) spectrum_reset();
     }
     return rc;
+}
+
+// #AWF-12: перед КАЖДЫМ стартом набора ("-sta", с параметрами или без —
+// cmd_is_acq_start, main/calib_autoread.h) — если калибровка на плате не
+// задана (spectrum_calibration_is_missing), принудительно запросить "-cal"
+// у прибора. Ответ парсит spectrum_process_info_response() АСИНХРОННО (в
+// задаче usb_rxw, см. usb_rx_worker/feed_shproto/handle_rx_packet выше по
+// файлу — НЕ callback CDC-драйвера) — здесь НЕ ждём ответа блокирующе, только
+// пауза ~100 мс между TX (тот же приём, что между "-rst" и "-sta" выше).
+// Гейт против спама (двойной барьер) — calib_autoread_should_request().
+// #AWF-12b F3 (release-gate-1.2.28-code.md): это единая точка входа для ПОЧТИ
+// всех "-sta" (usb_connect_task reconnect/boot autostart/acq-watch resend,
+// web_waterfall.c запись, web_server.c ручная команда и /api-настройки) — но
+// НЕ для TCP-моста: tcp_bridge.c::tcp_rx_task шлёт байты клиента (AtomSpectra/
+// BecqMoni) СЫРЫМ путём прямо в usb_host_cdc_send(), в обход этой функции —
+// намеренно (#TCP-1: прибором управляет внешнее приложение, гейт авто-cal
+// и сторож набора не должны туда вмешиваться). "-sta" из TCP-клиента
+// калибровку поэтому НЕ запрашивает — это ограничение области функции, а не
+// баг моста.
+// #AWF-12b F4+F5 (release-gate-1.2.28-code.md): проверка гейта И запись штампа
+// — под ОДНИМ DIAG_LOCK (F5: было в двух отдельных секциях, окно между ними
+// пускало два конкурентных "-sta" из httpd и usb_conn одновременно — оба
+// проходили гейт, уходили два "-cal"). Штамп ставится СРАЗУ при захвате гейта
+// (закрывает гонку), а не после TX; если TX не ушёл — откатывается (F4: не
+// жечь 30с кулдаун впустую на неудачной попытке). Вызывается ТОЛЬКО когда
+// cmd_is_acq_start(cmd) && spectrum_calibration_is_missing() уже истинны.
+static void usb_host_cdc_calib_autoread_gate(void)
+{
+    uint32_t now = diag_now_ms();
+    bool claimed = false;
+    DIAG_LOCK();
+    bool prev_was_run = (s_diag.acq_intent == ACQ_INTENT_RUN);
+    if (calib_autoread_should_request(prev_was_run, now, s_calib_autoread_last_ms)) {
+        s_calib_autoread_last_ms = now;
+        claimed = true;
+    }
+    DIAG_UNLOCK();
+    if (!claimed) return;
+    if (send_text_command_raw("-cal") == 0) {
+        ESP_LOGI(TAG, "calibration not set -> requesting -cal before -sta");
+        vTaskDelay(pdMS_TO_TICKS(100));
+    } else {
+        ESP_LOGW(TAG, "calibration not set -> -cal send failed, will retry sooner");
+        DIAG_LOCK();
+        if (s_calib_autoread_last_ms == now) s_calib_autoread_last_ms = 0;
+        DIAG_UNLOCK();
+    }
+}
+
+int usb_host_send_text_command(const char *cmd)
+{
+    if (!cmd) return -1;
+    if (cmd_is_acq_start(cmd) && spectrum_calibration_is_missing())
+        usb_host_cdc_calib_autoread_gate();
+    return send_text_command_raw(cmd);
 }
 
 // #FW-43: UI «Повторить связь» — request teardown on usb_conn task (NOT httpd).

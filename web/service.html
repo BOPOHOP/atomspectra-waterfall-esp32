@@ -85,6 +85,8 @@ pre.preview{ margin-top:12px; font-size:11px; line-height:1.5; color:#9aa496; ba
 <div class="mut" style="font-size:11.5px;line-height:1.6" data-i18n="backup.hint">Считывает текущие настройки прибора (-inf + -tc_pot?) и сохраняет их в текстовый файл — тот же формат, что использует MCA.exe. Не изменяет состояние прибора.</div>
 <button class="btn green" id="btn-read" onclick="doRead()" data-i18n="backup.read">Считать</button>
 <button class="btn" id="btn-backup" onclick="doBackup()" data-i18n="backup.download">Скачать бэкап</button>
+<button class="btn" id="btn-dsp-snap" onclick="doDspSnapshot()" data-i18n="backup.dspSnap" title="BUG-AS-08">Сохранить слепок настройки прибора</button>
+<button class="btn" id="btn-dsp-snap-get" onclick="doDspSnapshotGet()" data-i18n="backup.dspSnapGet" title="BUG-AS-08: не обращается к прибору, отдаёт последний сохранённый">Скачать последний слепок</button>
 <div class="mut" id="backup-status" style="font-size:11px;margin-top:9px;text-align:center;min-height:14px"></div>
 </section>
 
@@ -159,12 +161,20 @@ var DICT={
   "btn.info":"Инфо","btn.log":"Лог","btn.send":"Send",
   "ph.cmd":"команда, напр. -inf",
   "log.info":"Info requested","log.sent":"Sent: %1",
+  "cal.readEmpty":"Прибор вернул пустую калибровку (нули/NaN) — калибровка платы не изменена",
   "backup.title":"Бэкап настроек прибора",
   "backup.hint":"Считывает текущие настройки прибора (-inf + -tc_pot?) и сохраняет их в текстовый файл — тот же формат, что использует MCA.exe. Не изменяет состояние прибора.",
   "backup.read":"Считать",
   "backup.reading":"Считывание...",
   "backup.readOk":"Считано",
   "backup.download":"Скачать бэкап",
+  "backup.dspSnap":"Сохранить слепок настройки прибора",
+  "backup.dspSnapGet":"Скачать последний слепок",
+  "backup.savingSnap":"Сохранение слепка...",
+  "backup.snapOk":"Слепок сохранён на плате и скачан",
+  "backup.snapDlOnly":"Слепок скачан, но НЕ сохранён на плате (ошибка записи flash)",
+  "backup.noSnapYet":"Слепок ещё не сохранялся (нажмите «Сохранить слепок»)",
+  "backup.loadingSnap":"Загрузка последнего слепка...","backup.snapGetOk":"Последний сохранённый слепок скачан","backup.snapGetErr":"Ошибка чтения слепка с платы",
   "backup.err":"Ошибка: прибор не отвечает / не подключён",
   "param.title":"Параметры прибора",
   "param.hint":"Слева — что прибор отдал прямо сейчас (-inf + -tc_pot?). Если справа появилась колонка «Из бэкапа» — загружен файл в панели восстановления, расхождения подсвечены красным.",
@@ -230,12 +240,20 @@ var DICT={
   "btn.info":"Info","btn.log":"Log","btn.send":"Send",
   "ph.cmd":"command, e.g. -inf",
   "log.info":"Info requested","log.sent":"Sent: %1",
+  "cal.readEmpty":"Device returned an empty calibration (zeros/NaN) — board calibration unchanged",
   "backup.title":"Device settings backup",
   "backup.hint":"Reads the device's current settings (-inf + -tc_pot?) and saves them to a text file — the same format used by MCA.exe. Does not change device state.",
   "backup.read":"Read",
   "backup.reading":"Reading...",
   "backup.readOk":"Read OK",
   "backup.download":"Download backup",
+  "backup.dspSnap":"Save device DSP setting snapshot",
+  "backup.dspSnapGet":"Download last snapshot",
+  "backup.savingSnap":"Saving snapshot...",
+  "backup.snapOk":"Snapshot saved on the board and downloaded",
+  "backup.snapDlOnly":"Snapshot downloaded, but NOT saved on the board (flash write failed)",
+  "backup.noSnapYet":"No snapshot saved yet (click \"Save DSP snapshot\")",
+  "backup.loadingSnap":"Loading last snapshot...","backup.snapGetOk":"Last saved snapshot downloaded","backup.snapGetErr":"Error reading snapshot from the board",
   "backup.err":"Error: device not responding / not connected",
   "param.title":"Device parameters",
   "param.hint":"Left — what the device returned just now (-inf + -tc_pot?). If a \"From backup\" column appears on the right, a file is loaded in the restore panel; mismatches are highlighted in red.",
@@ -322,7 +340,16 @@ var logEl=document.getElementById("cmd-log");
 var devSeq=0;
 function lg(m){if(!logEl)return;logEl.textContent+=m+"\n";logEl.scrollTop=logEl.scrollHeight}
 async function pollDevLog(){try{var r=await(await fetch("/api/devlog?since="+devSeq)).json();if(r.lines&&r.lines.length){r.lines.forEach(function(e){var tt=(e.text||"").replace(/\n+$/,"");lg("← "+tt)})}if(typeof r.next==="number")devSeq=r.next}catch(e){}}
-async function requestInfo(){await post("/api/command",{body:"-inf"});await post("/api/command",{body:"-cal"});lg(t("log.info"));setTimeout(pollDevLog,600);setTimeout(pollDevLog,1500)}
+// F12/RO1: считываем calib_reject_seq ДО запроса и сверяем ПОСЛЕ — рост
+// счётчика = прибор ответил валидным CRC, но нулями/NaN, калибровка платы
+// осталась прежней; без явного сообщения кнопка молчала при пустом дампе.
+async function requestInfo(){
+ var before=0; try{before=(await(await fetch("/api/device")).json()).calib_reject_seq||0}catch(e){}
+ await post("/api/command",{body:"-inf"});await post("/api/command",{body:"-cal"});lg(t("log.info"));
+ setTimeout(async function(){try{var after=(await(await fetch("/api/device")).json()).calib_reject_seq||0;
+  if(after!==before)lg(t("cal.readEmpty"))}catch(e){}},900);
+ setTimeout(pollDevLog,600);setTimeout(pollDevLog,1500)
+}
 async function sendCmd(){var c=document.getElementById("cmd").value;if(!c)return;await post("/api/command",{body:c});lg(tfmt("log.sent",c));setTimeout(pollDevLog,600);setTimeout(pollDevLog,1500)}
 function toggleLogPanel(){logEl.style.display=logEl.style.display==="none"?"block":"none"}
 document.getElementById("cmd").addEventListener("keydown",function(e){if(e.key==="Enter")sendCmd()});
@@ -401,6 +428,55 @@ async function doBackup(){
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(function(){URL.revokeObjectURL(url);},2000);
  }catch(e){ s.textContent=t("backup.err"); s.style.color="#ff8a82"; }
+}
+
+// BUG-AS-08: handle_settings_snapshot (main/web_server.c) читает -inf/
+// -tc_pot?, сохраняет на LittleFS И отдаёт файл — одним POST.
+async function doDspSnapshot(){
+ var s=document.getElementById("backup-status");
+ s.style.color="var(--dim)"; s.textContent=t("backup.savingSnap");
+ try{
+  var r=await post("/api/settings/snapshot");
+  if(!r.ok){ s.textContent=t("backup.err"); s.style.color="#ff8a82"; return; }
+  var cd=r.headers.get("Content-Disposition")||"";
+  var m=/filename=\s*"?([^";]+)"?/i.exec(cd);
+  var blob=await r.blob();
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement("a");
+  a.href=url; a.download=m?m[1]:"dsp_snapshot.txt";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function(){URL.revokeObjectURL(url);},2000);
+  // М7 (release-gate-firmware-v1.2.28-code.md): заголовок отражает, лёг ли
+  // слепок на flash (main/web_server.c handle_settings_snapshot) — скачивание
+  // успешно даже при сбое записи, но текст не должен утверждать "сохранён".
+  var savedOnBoard=r.headers.get("X-Dsp-Snapshot-Saved")!=="0";
+  if(savedOnBoard){ s.textContent=t("backup.snapOk"); s.style.color="var(--accent)"; }
+  else{ s.textContent=t("backup.snapDlOnly"); s.style.color="#ffb020"; }
+ }catch(e){ s.textContent=t("backup.err"); s.style.color="#ff8a82"; }
+}
+
+// М8: раньше обычная <a href> — без сохранённого слепка браузер переходил на
+// текстовую 404-страницу, состояние (лог, загруженный бэкап) терялось.
+// fetch вместо навигации — ошибка гасится прямо на этой странице.
+async function doDspSnapshotGet(){
+ var s=document.getElementById("backup-status");
+ s.style.color="var(--dim)"; s.textContent=t("backup.loadingSnap");
+ try{
+  var r=await fetch("/api/settings/snapshot");
+  if(!r.ok){
+   s.textContent = r.status===404 ? t("backup.noSnapYet") : t("backup.snapGetErr")+" (HTTP "+r.status+")";
+   s.style.color="#ff8a82"; return;
+  }
+  var cd=r.headers.get("Content-Disposition")||"";
+  var m=/filename=\s*"?([^";]+)"?/i.exec(cd);
+  var blob=await r.blob();
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement("a");
+  a.href=url; a.download=m?m[1]:"dsp_snapshot.txt";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function(){URL.revokeObjectURL(url);},2000);
+  s.textContent=t("backup.snapGetOk"); s.style.color="var(--accent)";
+ }catch(e){ s.textContent=t("backup.snapGetErr"); s.style.color="#ff8a82"; }
 }
 
 function isKvBoundary(c){ return c===undefined||c===" "||c==="\t"||c==="\r"||c==="\n"; }

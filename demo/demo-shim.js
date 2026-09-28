@@ -100,10 +100,15 @@
     };
   }
   function deviceJSON() {
+    // М9 (release-gate-firmware-v1.2.28-code.md): поля добавлены в прошивку
+    // #AWF-12b F2/F12 (web_server.c handle_device) — без них web/index.html
+    // и web/service.html (те же файлы, что грузит demo) видят "калибровка не
+    // задана" даже когда CAL непуст, и "Считать" не может сверить reject_seq.
     return {
       valid: true, version: "demo", mode: 0, tc_on: false,
       t1: 24, t2: 25, t3: 25, serial: "",
-      calibration: CAL, calib_order: Math.max(0, CAL.length - 1)
+      calibration: CAL, calib_order: Math.max(0, CAL.length - 1),
+      calib_set: CAL.length > 0, calib_reject_seq: 0
     };
   }
   /* capture finished: recording=false, full rectime, all rows in ring */
@@ -133,6 +138,24 @@
     return new Response(b, { status: 200, headers: { "Content-Type": "application/octet-stream" } });
   }
 
+  // М9: имитация /api/settings/snapshot (BUG-AS-08) — платы/flash нет, состояние
+  // "сохранён" живёт только в этой вкладке. Раньше ЛЮБОЙ POST (route() ниже,
+  // "if (method === POST) return {ok:true}") маскировал этот эндпоинт: кнопка
+  // "Сохранить слепок" скачивала {"ok":true} и подписывала "сохранён на плате",
+  // а "Скачать последний слепок" уходила мимо shim'а (обычная <a href>, не
+  // fetch) на 404 GitHub Pages — тот же класс потери состояния, что М8.
+  var demoSnapSaved = false;
+  function snapshotResp() {
+    var stamp = new Date().toISOString().replace("T", " ").slice(0, 19);
+    var body = "# AtomSpectra DSP snapshot " + stamp + " (demo)\r\n" +
+               "VERSION demo DEV 1\r\n Tcpot [demo]\r\n";
+    return new Response(body, { status: 200, headers: {
+      "Content-Type": "text/plain",
+      "Content-Disposition": 'attachment; filename="dsp_snapshot_demo.txt"',
+      "X-Dsp-Snapshot-Saved": "1"
+    }});
+  }
+
   function route(path, init) {
     var method = (init && init.method) ? init.method.toUpperCase() : "GET";
     if (path === "/api/csrf-token") return jsonResp({ token: "demo" });
@@ -147,6 +170,11 @@
     if (path === "/api/waterfall/dose_k") return jsonResp({ dose_k: 0.0006 });
     if (path === "/api/waterfall/dose_curve") return jsonResp({ n: 0 });
     if (path === "/api/save") return jsonResp({ ok: true, index: 1 });
+    if (path === "/api/settings/snapshot" && method === "POST") { demoSnapSaved = true; return snapshotResp(); }
+    if (path === "/api/settings/snapshot") {   // GET — М8/М9: 404 пока не "сохранён"
+      if (!demoSnapSaved) return new Response("No snapshot saved yet", { status: 404 });
+      return snapshotResp();
+    }
     if (method === "POST") return jsonResp({ ok: true });
     if (/^\/api\/saved\/\d+\/spectrum\.json$/.test(path))
       return jsonResp({ bins: spectrumJSON().bins });

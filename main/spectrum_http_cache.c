@@ -1,7 +1,9 @@
 #include "spectrum_http_cache.h"
 #include "atomspectra.h"
+#include "calib_autoread.h"       // #AWF-12b F2: calib_is_missing — единый признак "задана"
 #include "json_uint_fmt.h"        // UI-P1: быстрый forматтер bins[] (не vsnprintf)
 #include "spectrum_t1.h"
+#include "spec_cache_gen.h"       // М5: чистое решение "отбросить устаревший снимок" (host-pure)
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -33,6 +35,14 @@ static int                s_readers;
 // вторую параллельную сборку с того же tick).
 static spectrum_data_t   *s_sp_build;    // PSRAM, scratch для снимка при пересборке
 static bool               s_building;
+// М5 (release-gate-firmware-v1.2.28-code.md): счётчик поколений — снимок в
+// finish_build() снимается ДО захвата s_mtx (:211), invalidate() может успеть
+// вклиниться между снимком и commit'ом и пометить его устаревшим уже ПОСЛЕ
+// того, как снимок сделан со старой калибровкой. gen меняется только в
+// invalidate(); commit сверяет gen "до" и "после" сборки и не применяет
+// результат, если он изменился, — иначе invalidate() молча перекрывался
+// более свежим (на самом деле устаревшим) commit'ом.
+static volatile uint32_t  s_gen;
 
 static float compute_live_time(const spectrum_data_t *sp)
 {
@@ -128,6 +138,12 @@ static bool build_json_full(const spectrum_data_t *sp, char **out, size_t *out_l
         }
         if (!append_fmt(&buf, &len, &cap, "]")) goto fail;
     }
+    // #AWF-12b F2 (release-gate-1.2.28-code.md): тот же признак, что
+    // usb_host_cdc.c-гейт и /api/device (web_server.c) — index.html читает
+    // именно этот эндпоинт (/api/spectrum/meta.json) на каждом кадре и
+    // включает кнопку идентификации нуклидов по нему (nucBtnEnable).
+    if (!append_fmt(&buf, &len, &cap, ",\"calib_set\":%s",
+        calib_is_missing(sp->calibration, CALIB_COEFFS, sp->calib_valid) ? "false" : "true")) goto fail;
     if (!append_fmt(&buf, &len, &cap, "}")) goto fail;
     *out = buf;
     *out_len = len;
@@ -170,6 +186,9 @@ static bool build_json_meta(const spectrum_data_t *sp, char **out, size_t *out_l
         }
         if (!append_fmt(&buf, &len, &cap, "]")) goto fail;
     }
+    // #AWF-12b F2: тот же признак, что build_json_full выше и /api/device.
+    if (!append_fmt(&buf, &len, &cap, ",\"calib_set\":%s",
+        calib_is_missing(sp->calibration, CALIB_COEFFS, sp->calib_valid) ? "false" : "true")) goto fail;
     if (!append_fmt(&buf, &len, &cap, "}")) goto fail;
     *out = buf;
     *out_len = len;
@@ -196,7 +215,7 @@ void spectrum_http_cache_init(void)
 
 // UI-P1: снимок+сборка JSON ВНЕ s_mtx, применение результата — под мьютексом,
 // вызывается уже с s_building=true и мьютексом ОТПУЩЕННЫМ.
-static bool spectrum_http_cache_finish_build(int64_t now)
+static bool spectrum_http_cache_finish_build(int64_t now, uint32_t gen_before)
 {
     bool snap_ok = s_sp_build && spectrum_get_snapshot(s_sp_build);
     char *nj = NULL, *nm = NULL;
@@ -225,6 +244,16 @@ static bool spectrum_http_cache_finish_build(int64_t now)
         free(nj);
         free(nm);
         return true;
+    }
+    if (spec_cache_gen_stale(gen_before, s_gen)) {
+        // М5: invalidate() вклинился между снимком (:219, ВНЕ s_mtx) и этим
+        // commit'ом — снимок мог быть снят СО СТАРОЙ калибровкой. Не
+        // затираем s_have=false, выставленный invalidate(), устаревшим
+        // "свежим" результатом; следующий ensure() пересоберёт заново.
+        xSemaphoreGive(s_mtx);
+        free(nj);
+        free(nm);
+        return false;
     }
     free(s_json);
     free(s_meta);
@@ -261,8 +290,21 @@ bool spectrum_http_cache_ensure(void)
         return have;
     }
     s_building = true;
+    uint32_t gen_before = s_gen;   // М5: под тем же s_mtx, что и bump в invalidate()
     xSemaphoreGive(s_mtx);
-    return spectrum_http_cache_finish_build(now);
+    return spectrum_http_cache_finish_build(now, gen_before);
+}
+
+// #AWF-12b R5: s_have=false под s_mtx — следующий ensure() увидит "нет
+// кэша" и пересоберёт, не дожидаясь TTL. До init() (s_mtx ещё NULL) —
+// нечего инвалидировать, ensure() при первом вызове соберёт сам.
+void spectrum_http_cache_invalidate(void)
+{
+    if (!s_mtx) return;
+    xSemaphoreTake(s_mtx, portMAX_DELAY);
+    s_have = false;
+    s_gen++;   // М5: сборка в полёте (если есть) сверит и не перезапишет s_have
+    xSemaphoreGive(s_mtx);
 }
 
 const spectrum_data_t *spectrum_http_cache_data(void)

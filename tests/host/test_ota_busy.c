@@ -49,6 +49,30 @@ static void busy_release_when_free_is_noop(void)
     CHECK(st == OTA_BUSY_NONE);
 }
 
+// sweep-B задача 2: предикат "занято ли КЕМ-ЛИБО" для автосейва, без
+// побочного эффекта (в отличие от acquire).
+static void busy_is_busy_false_when_free(void)
+{
+    CHECK(!ota_busy_is_busy_pure(OTA_BUSY_NONE));
+}
+
+static void busy_is_busy_true_for_either_owner(void)
+{
+    CHECK(ota_busy_is_busy_pure(OTA_BUSY_MANUAL));
+    CHECK(ota_busy_is_busy_pure(OTA_BUSY_GITHUB));
+}
+
+// автосейв обязан увидеть занятость/свободу сразу после acquire/release.
+static void busy_is_busy_reflects_acquire_release_cycle(void)
+{
+    ota_busy_owner_t st = OTA_BUSY_NONE;
+    CHECK(!ota_busy_is_busy_pure(st));
+    CHECK(ota_busy_try_acquire_pure(&st, OTA_BUSY_GITHUB));
+    CHECK(ota_busy_is_busy_pure(st));
+    ota_busy_release_pure(&st, OTA_BUSY_GITHUB);
+    CHECK(!ota_busy_is_busy_pure(st));
+}
+
 void ota_busy_suite(void)
 {
     busy_first_acquire_wins();
@@ -57,4 +81,7 @@ void ota_busy_suite(void)
     busy_release_by_owner_frees_state();
     busy_release_by_wrong_owner_is_noop();
     busy_release_when_free_is_noop();
+    busy_is_busy_false_when_free();
+    busy_is_busy_true_for_either_owner();
+    busy_is_busy_reflects_acquire_release_cycle();
 }

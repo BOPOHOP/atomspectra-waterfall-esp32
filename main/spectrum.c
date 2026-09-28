@@ -1,4 +1,6 @@
 ﻿#include "atomspectra.h"
+#include "calib_autoread.h"  // #AWF-12: calib_is_missing/calib_read_is_success
+#include "spectrum_http_cache.h"  // #AWF-12b R5: spectrum_http_cache_invalidate
 #include "spectrum_t1.h"
 #include "hist_drop_diag.h"
 #include "flash_quiet.h"
@@ -7,6 +9,7 @@
 #include "backup_plan.h"   // issue #52: разбор имени снимка и план ротации
 #include "spectrum_restore_plan.h"  // AWF-1: выбор источника восстановления
 #include "spectrum_base_plan.h"     // AWF-3: сброс прибора и слияние база+прибор
+#include "ota_busy.h"   // sweep-B задача 2: не стартовать периодический автосейв во время OTA
 #include "esp_log.h"
 #include <stddef.h>
 #include <inttypes.h>
@@ -78,6 +81,13 @@ static SemaphoreHandle_t s_spec_lock;
 // (парсер -inf/-cal, set_calibration), гасится в spectrum_save_calibration
 // (main loop) — flash-запись больше не выполняется под SPEC_LOCK в CDC/httpd.
 static volatile bool s_calib_dirty;
+
+// F12/RO1 (release-gate-1.2.28-code-fixes.md:128): бампается КАЖДЫЙ раз, когда
+// -cal дал ВАЛИДНЫЙ CRC, но calib_read_is_success() всё равно false (все нули
+// или NaN/Inf) — прибор ответил, но откалиброваться нечем, текущая калибровка
+// платы НЕ тронута. Монотонный счётчик, не bool: UI (web/service "Считать")
+// сверяет значение ДО и ПОСЛЕ своего запроса, а не ловит фронт эдж-кейсом.
+static volatile uint32_t s_calib_reject_seq;
 
 // #FW-8: staging-сборка секундного свипа гистограммы. Прибор на 600000 бод шлёт
 // ВЕСЬ спектр раз в секунду цепочкой chunk-ов: offset==0 — старт свипа, каждый
@@ -457,6 +467,10 @@ static void store_raw_trimmed(const char *text, char *buf, size_t bufsz, int *ou
 
 void spectrum_process_info_response(const char *text)
 {
+    // #AWF-12b R5: инвалидировать HTTP-кэш ТОЛЬКО если калибровка реально
+    // применилась ниже (calib_read_is_success) — не на каждый -inf/-cal.
+    bool calib_updated = false;
+    bool calib_rejected = false;   // О10: лог — ПОСЛЕ SPEC_UNLOCK (см. ниже)
     SPEC_LOCK();
     // #BRIDGE-3: этот вход обслуживает ДВА разных ответа прибора — роутер
     // (usb_host_cdc.c) шлёт сюда и -inf (параметры+температура), и -cal (дамп
@@ -503,25 +517,43 @@ void spectrum_process_info_response(const char *text)
         }
         cc ^= 0xFFFFFFFF;
         uint32_t ce = (uint32_t)strtoul(lbuf[10], NULL, 16);
-        if (cc == ce) {
-            for (int c = 0; c < CALIB_COEFFS && (c*2+1) < 10; c++) {
-                char pair[128];
-                snprintf(pair, sizeof(pair), "%s%s", lbuf[c*2], lbuf[c*2+1]);
-                uint64_t raw = strtoull(pair, NULL, 16);
-                double val;
-                memcpy(&val, &raw, sizeof(val));
-                s_spectrum.calibration[c] = val;
-            }
+        double coeffs[CALIB_COEFFS] = {0};
+        for (int c = 0; c < CALIB_COEFFS && (c*2+1) < 10; c++) {
+            char pair[128];
+            snprintf(pair, sizeof(pair), "%s%s", lbuf[c*2], lbuf[c*2+1]);
+            uint64_t raw = strtoull(pair, NULL, 16);
+            double val;
+            memcpy(&val, &raw, sizeof(val));
+            coeffs[c] = val;
+        }
+        // #AWF-12: «считалась успешно» = CRC ok И не все коэффициенты нулевые
+        // И конечные (calib_read_is_success, main/calib_autoread.h; F6 —
+        // NaN/Inf тоже "не успех"). CRC-валидный, но нулевой/нечисловой дамп —
+        // НЕ перезаписывает текущую калибровку платы (ручное «Считать» тоже).
+        // #AWF-12b O2 (release-gate-1.2.28-code.md): CRC передаётся ПАРАМЕТРОМ
+        // (cc==ce), а не оборачивающим `if` снаружи — раньше предикат звался
+        // ТОЛЬКО с литералом true, ветка crc_ok=false в прошивке не жила, её
+        // проверяли одни лишь тесты (мёртвый параметр).
+        if (calib_read_is_success(cc == ce, coeffs, CALIB_COEFFS)) {
+            memcpy(s_spectrum.calibration, coeffs, sizeof(coeffs));
             int order = CALIB_COEFFS - 1;
             while (order > 0 && s_spectrum.calibration[order] == 0.0) order--;
             s_spectrum.calib_order = order;
             s_spectrum.calib_valid = true;
             s_calib_dirty = true;   // #WF-1: запись сделает main loop вне SPEC_LOCK
+            calib_updated = true;   // #AWF-12b R5: инвалидация кэша после SPEC_UNLOCK
             ESP_LOGI(TAG, "Calibration OK: order=%d", s_spectrum.calib_order);
-        } else {
+        } else if (cc != ce) {
             // #FW-13: LOGD — для -inf mismatch штатен (CRC-формат только у -cal),
             // WARN здесь печатался каждые 30 с в CDC-таске (см. комментарий выше).
             ESP_LOGD(TAG, "Calibration CRC mismatch: computed=%08x expected=%08x", (unsigned)cc, (unsigned)ce);
+        } else {
+            s_calib_reject_seq++;   // F12/RO1: под SPEC_LOCK, как весь этот блок
+            // О10 (release-gate-firmware-v1.2.28-code.md): сам ESP_LOGW — ПОСЛЕ
+            // SPEC_UNLOCK (см. ниже), не здесь: правило :494 (эта функция — в
+            // задаче CDC, UART0 115200 блокирующая) запрещает LOGI/LOGW под
+            // локом, счётчик выше остаётся под локом как был.
+            calib_rejected = true;
         }
     }
 
@@ -549,6 +581,9 @@ void spectrum_process_info_response(const char *text)
             }
         }
         SPEC_UNLOCK();
+        if (calib_updated) spectrum_http_cache_invalidate();  // #AWF-12b R5
+        if (calib_rejected)   // О10: WARN вне SPEC_LOCK (правило :494)
+            ESP_LOGW(TAG, "Calibration CRC OK but all-zero/non-finite dump - ignored (treated as not set)");
         return;
     }
 
@@ -599,6 +634,7 @@ void spectrum_process_info_response(const char *text)
     s_spectrum.temperature[1] = d->t2;
     s_spectrum.temperature[2] = d->t3;
     SPEC_UNLOCK();
+    if (calib_updated) spectrum_http_cache_invalidate();  // #AWF-12b R5
 }
 
 void spectrum_t1_on_cdc_open(uint32_t now_ms)
@@ -1105,6 +1141,7 @@ void spectrum_set_calibration(const double *coeffs, int order)
              s_spectrum.calibration[0], s_spectrum.calibration[1]);
     s_calib_dirty = true;   // #WF-1: запись сделает main loop вне SPEC_LOCK
     SPEC_UNLOCK();
+    spectrum_http_cache_invalidate();  // #AWF-12b R5: POST /api/calibration
 }
 
 void spectrum_load_calibration(void)
@@ -1115,6 +1152,28 @@ void spectrum_load_calibration(void)
     size_t rd = fread(&st, 1, sizeof(st), f);
     fclose(f);
     if (rd != sizeof(st) || !st.valid) return;
+    // #AWF-12b R6 (release-gate-1.2.28-code-rc2.md): st.serial — сырые байты
+    // файла, терминатор не гарантирован; ниже идёт strncpy И "%s" — обрезаем
+    // ДО первого использования (иначе на битом файле чтение за буфером).
+    st.serial[sizeof(st.serial) - 1] = 0;
+    // #AWF-12b F13 (release-gate-1.2.28-code.md, вне диффа #AWF-12, но питает
+    // тот же предикат): calib_order с флеша не проверялся — потребители
+    // (JSON/N42/CSV экспорт, web_server.c/spectrum_http_cache.c/spectrogram.c)
+    // ходят по calibration[i] до calib_order включительно без своей проверки
+    // границы. Повреждённый calib.bin с calib_order вне [0,CALIB_COEFFS)
+    // давал бы чтение за массивом. Тот же приём, что sanitize_loaded()
+    // (spectrum.c) — для пути восстановления спектра.
+    if (!calib_order_in_range(st.calib_order, CALIB_COEFFS)) {
+        ESP_LOGW(TAG, "Calibration file: calib_order=%d out of range, dropped", st.calib_order);
+        return;
+    }
+    // #AWF-12b R6: NaN/Inf в файле (дамп до F6, либо порча) — тем же
+    // предикатом, что автосчитывание с прибора (calib_autoread.h). Держим
+    // прежнюю калибровку платы, а не битую; JSON иначе печатает "nan"/"inf".
+    if (calib_coeffs_any_nonfinite(st.calibration, CALIB_COEFFS)) {
+        ESP_LOGW(TAG, "Calibration file: non-finite coefficient, dropped");
+        return;
+    }
     SPEC_LOCK();
     memcpy(s_spectrum.calibration, st.calibration, sizeof(st.calibration));
     s_spectrum.calib_order = st.calib_order;
@@ -1122,7 +1181,34 @@ void spectrum_load_calibration(void)
     if (st.serial[0] && !s_spectrum.serial_number[0])
         strncpy(s_spectrum.serial_number, st.serial, sizeof(s_spectrum.serial_number) - 1);
     SPEC_UNLOCK();
+    spectrum_http_cache_invalidate();  // #AWF-12b R5: загрузка calib.bin при старте
     ESP_LOGI(TAG, "Calibration loaded: order=%d serial='%s'", st.calib_order, st.serial);
+}
+
+// #AWF-12: снимок под SPEC_LOCK для чистого предиката calib_is_missing()
+// (main/calib_autoread.h) — точка входа гейта авто-считывания -cal перед
+// -sta (main/usb_host_cdc.c: usb_host_send_text_command).
+bool spectrum_calibration_is_missing(void)
+{
+    double coeffs[CALIB_COEFFS];
+    bool valid;
+    SPEC_LOCK();
+    memcpy(coeffs, s_spectrum.calibration, sizeof(coeffs));
+    valid = s_spectrum.calib_valid;
+    SPEC_UNLOCK();
+    return calib_is_missing(coeffs, CALIB_COEFFS, valid);
+}
+
+// F12/RO1: монотонный счётчик отвергнутых -cal дампов (CRC ok, но нули/NaN) —
+// см. s_calib_reject_seq выше. /api/device отдаёт его как есть, страница
+// сравнивает "до" и "после" своего запроса, а не полагается на фронт.
+uint32_t spectrum_get_calib_reject_seq(void)
+{
+    uint32_t v;
+    SPEC_LOCK();
+    v = s_calib_reject_seq;
+    SPEC_UNLOCK();
+    return v;
 }
 
 /* #FW-8 residual F1a: sliced LittleFS autosave across post-commit quiet windows. */
@@ -1217,6 +1303,16 @@ bool spectrum_autosave_begin(void)
     ESP_LOGI(TAG, "autosave skipped (HIST_DROP_E1_NO_AUTOSAVE)");
     return false;
 #endif
+    // Доп. наблюдение (verify-awf4-2026-09-27.md:262, sweep-B задача 2): OTA
+    // (ручная ИЛИ GitHub) держит ota_busy занятым на весь приём -- не начинать
+    // НИ новый цикл (s_as_snap==NULL), НИ возобновление после yield здесь:
+    // оба пути открывают/пишут AUTOSAVE_TMP_FILE и дерутся с OTA-записью за
+    // flash/шину. Уже открытый до начала OTA цикл прерывается отдельно --
+    // spectrum_autosave_abort() из handle_ota_locked() (web_server.c:619).
+    if (ota_busy_is_busy()) {
+        ESP_LOGI(TAG, "autosave begin skipped: OTA in progress");
+        return false;
+    }
     if (s_as_abort) {
         spectrum_autosave_consume_abort();
         return false;
@@ -1383,6 +1479,13 @@ void spectrum_autosave(void)
 #endif
     if (s_as_abort)
         spectrum_autosave_consume_abort();
+    // sweep-B задача 2: тот же гейт, что и в spectrum_autosave_begin() --
+    // "force one-shot" путь (main.c:212, offline/fail_streak>=5) не должен
+    // стартовать во время OTA либо.
+    if (ota_busy_is_busy()) {
+        ESP_LOGI(TAG, "autosave (one-shot) skipped: OTA in progress");
+        return;
+    }
     /* One-shot full write — safe when USB analyzer is silent/disconnected
      * (no 1 Hz burst). Used by offline path and as I2 timing baseline. */
     spectrum_data_t *snap = malloc(sizeof(*snap));

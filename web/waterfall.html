@@ -448,6 +448,11 @@ var MAXROWS=2048;
 var rows=[];
 var baseIndex=0;
 var calib=null, serial="", intervalSec=5, startedAt=0;
+/* #AWF-12b F2 (release-gate-1.2.28-code.md): единый признак "калибровка
+   задана" — см. web/index.html (та же логика, продублирована — страницы
+   независимые статические файлы, общего JS-модуля нет). */
+function calibArraySet(c){return !!(c&&c.length&&c.some(function(v){return v!==0}))}
+function calibIsSet(dev){if(!dev)return false;if(typeof dev.calib_set==="boolean")return dev.calib_set;return calibArraySet(dev.calibration||dev.calib)}
 var viewBottom=-1;
 var chLo=0, chHi=CH;
 var gain=40, scaleMode="log", axisMode="ch";
@@ -895,7 +900,7 @@ function connectWS(){
  ws.onmessage=function(ev){
   if(typeof ev.data==="string"){
    try{var h=JSON.parse(ev.data);if(h.channels){CH=h.channels;chHiClamp();}if(h.interval_sec)intervalSec=h.interval_sec;
-    if(h.calibration&&h.calibration.length){calib=h.calibration;drawAxis();}if(h.serial){serial=h.serial;document.getElementById("device-chip").textContent=h.serial;}}catch(e){}
+    if(calibIsSet(h)){calib=h.calibration;drawAxis();}else if(h.calibration){calib=null;drawAxis();}if(h.serial){serial=h.serial;document.getElementById("device-chip").textContent=h.serial;}}catch(e){}
    return;
   }
   var u16=new Uint16Array(ev.data);
@@ -1413,7 +1418,7 @@ wf.addEventListener("wheel",function(e){
  await loadCsrf();
  loadPrefix();
  try{var sp=await(await fetch("/api/spectrum/meta.json")).json();
-  if(sp.calib&&sp.calib.length)calib=sp.calib;
+  if(calibIsSet(sp))calib=sp.calib;
   if(sp.serial){serial=sp.serial;document.getElementById("device-chip").textContent=sp.serial;}
  }catch(e){}
  await refreshStatus();
