@@ -5,6 +5,7 @@
 #include "wf_seg_delete.h"      // #FW-65: collect-then-unlink (host-pure)
 #include "wf_seg_pin.h"         // #REC-12 (sweep-A): пин чтения HTTP-слоем (host-pure)
 #include "wf_seg_seq.h"         // P-042 (sweep-A): seg_seq = max(NVS, шапки flash) (host-pure)
+#include "wf_seg_rebuild_range.h"  // М3: [g0,g1) для leftover после неудачной очистки (host-pure)
 #include "calib_export.h"       // R7 (sweep-A): единый признак «калибровка есть» в шапке
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -1760,6 +1761,30 @@ void spectrogram_prepare_reboot(void)
     FSUNLOCK();
 }
 
+// М3: применить wf_seg_rebuild_ranges() к уже наполненному реестру (idx 0..maxidx),
+// static-буферы — не стек (httpd, 8 КБ, вызывающая цепочка уже близко к пределу).
+static void seg_rebuild_apply_ranges(uint32_t maxidx)
+{
+    static uint32_t rb_idx[WF_REG_CAP], rb_rows[WF_REG_CAP];
+    static uint32_t rb_g0[WF_REG_CAP], rb_g1[WF_REG_CAP];
+    int m = 0;
+    LOCK();
+    for (uint32_t idx = 0; idx <= maxidx && m < WF_REG_CAP; idx++) {
+        int i = reg_find(idx);
+        if (i < 0 || !s_seg_reg[i].finalized) continue;
+        rb_idx[m] = idx; rb_rows[m] = s_seg_reg[i].rows; m++;
+    }
+    UNLOCK();
+    wf_seg_rebuild_ranges(rb_rows, m, rb_g0, rb_g1);
+    LOCK();
+    for (int k = 0; k < m; k++) {
+        reg_set_range(rb_idx[k], rb_g0[k]);
+        int i = reg_find(rb_idx[k]);
+        if (i >= 0) reg_update_open(rb_idx[k], s_seg_reg[i].rows, s_seg_reg[i].bytes, rb_g1[k]);
+    }
+    UNLOCK();
+}
+
 /* #FW-65: leftover after a failed clear — rebuild registry/counters/next
  * WITHOUT unlinking (no walk mutation). (под s_fs_lock) */
 static void seg_rebuild_counters_from_disk(void)
@@ -1814,6 +1839,11 @@ static void seg_rebuild_counters_from_disk(void)
     closedir(d);
     if (any)
         s_seg_next = maxidx + 1;
+    // М3 (release-gate-firmware-v1.2.28-code.md, wf_seg_rebuild_range.h):
+    // reg_add() оставляет g0=g1=0 — wf_exp_plan примет сегмент за "старый" и
+    // отдаст целиком, а кольцо (не сброшено на пути неудачной очистки)
+    // накроет те же строки — дубль. seg_rebuild_apply_ranges() ниже чинит.
+    if (any) seg_rebuild_apply_ranges(maxidx);
     LOCK();
     s_status.seg_count = completed;
     /* leftover inventory, not a session-monotonic increment */
