@@ -43,7 +43,9 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_wf_export_plan.c \
        test_wf_seg_rebuild_range.c \
        test_spec_cache_gen.c \
-       test_calib_export.c
+       test_calib_export.c \
+       test_text_accum_r3a.c \
+       test_text_accum_r3.c
 
 test: $(SRCS) test_util.h
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm

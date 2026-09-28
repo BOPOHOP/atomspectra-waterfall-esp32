@@ -406,8 +406,11 @@ static void w_absent(const char *file, const char *fn, const char *needle)
 
 void round2_wiring_sites_suite(void)
 {
-    /* Н1 разбор -cal по отрезку */
-    w_site("../../main/usb_host_cdc.c", "usb_host_cdc_apply_text_accum_result", "text_accum_result_span(", "text_accum_result_consumes(");
+    /* Н1 разбор -cal по отрезку; У6 раунда 3: отрезок/снятие/хвост — text_accum_dispatch */
+    /* (поведение — test_text_accum_r3.c), здесь только то, что прошивка идёт через неё */
+    w_site("../../main/usb_host_cdc.c", "usb_host_cdc_apply_text_accum_result", "text_accum_dispatch(", "&s_text_marks");
+    w_site("../../main/usb_host_cdc.c", "handle_rx_packet", "text_accum_feed_m(", "usb_host_cdc_apply_text_accum_result(tar)");
+    w_site("../../main/usb_host_cdc.c", "usb_rx_worker", "TEXT_ACCUM_QUIET_MS", "text_accum_flush(");
     /* Н3 снимок диапазонов до очистки */
     w_site("../../main/spectrogram.c", "seg_rebuild_counters_from_disk", "rb_prev[n_prev].g0", "reg_clear_all()");
     /* Н3 восстановление */

@@ -86,6 +86,10 @@ void wf_seg_rebuild_range_suite(void);
 void spec_cache_gen_suite(void);
 void text_accum_round2_suite(void);       // Н1/Н2 раунда 2
 void round2_wiring_sites_suite(void);     // Н12 раунда 2: проводка в прошивочных .c
+void text_accum_r3_old_api_suite(void);  // У1/У2 раунда 3: прежний API
+void text_accum_r3_u1_suite(void);       // У1 раунда 3: дробление, потеря кадра
+void text_accum_r3_u2_suite(void);       // У2 раунда 3: мусор + дробление
+void text_accum_r3_dispatch_suite(void); // У6 раунда 3: проводка разбора
 
 // Тестовая команда. CMD_HISTOGRAM (0x01) объявлена в main/atomspectra.h, но она
 // вне include-path host-сборки; shproto трактует cmd как обычный uint8_t.
@@ -293,6 +297,10 @@ int main(void)
     spec_cache_gen_suite();
     text_accum_round2_suite();
     round2_wiring_sites_suite();
+    text_accum_r3_old_api_suite();
+    text_accum_r3_u1_suite();
+    text_accum_r3_u2_suite();
+    text_accum_r3_dispatch_suite();
 
     if (g_failures) {
         printf("\n%d CHECK(S) FAILED\n", g_failures);

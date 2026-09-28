@@ -212,8 +212,15 @@ static inline bool text_accum_should_reset_before_pkt(const char *accum, int acc
                                                         const char *pkt, int pkt_len)
 {
     if (accum_len <= 0) return false;
+    if (!text_looks_like_cal_dump_start(pkt, pkt_len)) return false;
     if (text_accum_is_clean_cal_prefix(accum, accum_len)) return false;
-    return text_looks_like_cal_dump_start(pkt, pkt_len);
+    /* У2 (раунд 3): после постороннего префикса ("-ok"+дамп одним кадром) лежит CRC-окно,
+     * и строки дампа от него идут ровно до конца буфера — пакет может быть продолжением
+     * этого дампа, сброс потерял бы окно и серийник. */
+    int w = text_accum_find_last_cal_window(accum, accum_len);
+    if (w >= 0 && w + 10 * text_accum_dump_lines(accum + w, accum_len - w, 40) == accum_len)
+        return false;
+    return true;
 }
 
 typedef enum {
@@ -225,6 +232,113 @@ typedef enum {
     TEXT_ACCUM_OVERFLOW,      /* переполнение без триггера — отброшено */
     TEXT_ACCUM_CAL_COEFFS,   /* CRC-окно дампа только что появилось, дамп ещё не весь: применить калибровку, аккумулятор НЕ сбрасывать */
 } text_accum_result_t;
+
+#define TEXT_ACCUM_MARKS_CAP 16      /* начала последних пакетов в аккумуляторе */
+#define TEXT_ACCUM_QUIET_MS  1000    /* тишина без текстовых пакетов, после которой отложенный дамп разбирается */
+
+/* У1 (раунд 3): начало нового ответа прибора всегда совпадает с началом пакета; по этому
+списку отличаем продолжение дампа от нового дампа. Нулевая инициализация — пустой список. */
+typedef struct {
+    int n;                            /* сколько начал пакетов в at[] */
+    int at[TEXT_ACCUM_MARKS_CAP];     /* смещения начал пакетов, по возрастанию */
+    int lost_max;                     /* 0 — вытесненных нет; иначе наибольшее вытесненное начало: любая позиция 1..lost_max считается возможным началом */
+} text_accum_marks_t;
+
+
+static inline void text_accum_marks_trim(text_accum_marks_t *m, int len) {
+    /* аккумулятор укоротился (сброс) — начала за его концом недействительны */
+    int j = 0;
+    for (int i = 0; i < m->n; i++) {
+        if (m->at[i] < len) m->at[j++] = m->at[i];
+    }
+    m->n = j;
+    if (m->lost_max >= len) m->lost_max = 0;
+}
+
+static inline void text_accum_marks_add(text_accum_marks_t *m, int q) {
+    if (m->n > 0 && m->at[m->n - 1] == q) return;
+    if (m->n == TEXT_ACCUM_MARKS_CAP) {
+        if (m->at[0] > m->lost_max) m->lost_max = m->at[0];
+        for (int i = 0; i < m->n - 1; i++) m->at[i] = m->at[i + 1];
+        m->n--;
+    }
+    m->at[m->n++] = q;
+}
+
+static inline bool text_accum_marks_has(const text_accum_marks_t *m, int q) {
+    if (q > 0 && q <= m->lost_max) return true;
+    for (int i = 0; i < m->n; i++) {
+        if (m->at[i] == q) return true;
+    }
+    return false;
+}
+
+static inline bool text_accum_dump_prefix_shaped(const char *s, int n) {
+    int full = n / 10;
+    if (text_accum_dump_lines(s, n, full) < full) return false;
+    const char *t = s + full * 10;
+    int r = n - full * 10;
+    for (int i = 0; i < r && i < 8; i++) {
+        if (t[i] == '\r' || t[i] == '\n') return false;
+    }
+    if (r >= 9 && t[8] != '\r') return false;
+    return true;
+}
+
+/* У1: полный дамп от окна w может оказаться хвостом старого дампа, к которому приклеилось
+начало нового (прежний потерял последний кадр). Новый дамп начинается с начала пакета на границе строки;
+пока его окно не пришло целиком, серийник брать нельзя. */
+static inline bool text_accum_serial_ambiguous(const char *s, int len, int w, const text_accum_marks_t *m, bool final) {
+    for (int k = 11; k <= 39; k++) {
+        int q = w + 10 * k;
+        if (q >= len) break;
+        if (!text_accum_marks_has(m, q)) continue;
+        int nl = text_accum_dump_lines(s + q, len - q, 10);
+        if (nl >= 1 && memcmp(s + q, s + w, (size_t)(10 * nl)) == 0) return true;   /* новый дамп с тем же началом */
+        if (!final && q + 110 > len && text_accum_dump_prefix_shaped(s + q, len - q)) return true;   /* ещё может оказаться новым дампом */
+    }
+    return false;
+}
+
+/* решение по уже накопленному буферу; before — длина до последнего пакета; final — прошла тишина
+TEXT_ACCUM_QUIET_MS (новых пакетов не будет): решает только дамп. */
+static inline text_accum_result_t text_accum_eval(char *accum, int *accum_len, int cap, const text_accum_marks_t *m, int before, bool final) {
+    int len = *accum_len;
+    int woff = text_accum_find_last_cal_window(accum, len);
+    if (woff >= 0) {
+        if (text_accum_cal_dump_end(accum, len, woff) >= 0 &&
+            !text_accum_serial_ambiguous(accum, len, woff, m, final)) return TEXT_ACCUM_CAL;
+        if (woff + 110 > before) return TEXT_ACCUM_CAL_COEFFS;   /* окно впервые целиком — один раз на окно */
+    } else if (text_accum_is_complete_cal_positional(accum, len)) {
+        return TEXT_ACCUM_CAL;
+    }
+    if (final) return TEXT_ACCUM_NONE;
+    if (text_accum_is_complete_inf(accum))               return TEXT_ACCUM_INF;
+    if (text_accum_is_complete_tcpot(accum, len))        return TEXT_ACCUM_TCPOT;
+    if (text_accum_is_complete_short_ack(accum, len))    { *accum_len = 0; return TEXT_ACCUM_SHORT_ACK; }
+    if (len >= cap - 128)                                { *accum_len = 0; return TEXT_ACCUM_OVERFLOW; }
+    return TEXT_ACCUM_NONE;
+}
+
+/* роутер с учётом начал пакетов (прошивка держит m между пакетами). */
+static inline text_accum_result_t text_accum_feed_m(char *accum, int *accum_len, int cap, text_accum_marks_t *m, const char *pkt, int pkt_len) {
+    if (text_accum_should_reset_before_pkt(accum, *accum_len, pkt, pkt_len))
+        *accum_len = 0;
+    int before = *accum_len;   /* длина до этого пакета (после возможного сброса) */
+    text_accum_marks_trim(m, before);
+    int sp = cap - *accum_len - 1;
+    if (sp < 0) sp = 0;
+    int cp = pkt_len < sp ? pkt_len : sp;
+    /* \0 внутри пакета — на пробел: strstr/strlen ниже читают accum как C-строку */
+    for (int i = 0; i < cp; i++) {
+        char c = pkt[i];
+        accum[*accum_len + i] = (c == '\0') ? ' ' : c;
+    }
+    *accum_len += cp;
+    accum[*accum_len] = '\0';
+    if (cp > 0) text_accum_marks_add(m, before);
+    return text_accum_eval(accum, accum_len, cap, m, before, false);
+}
 
 /* Роутер накопителя — ВСЯ логика handle_rx_packet(CMD_TEXT) из
  * usb_host_cdc.c, без побочных эффектов (без USB/ESP-IDF/логов). accum —
@@ -239,39 +353,10 @@ typedef enum {
 static inline text_accum_result_t text_accum_feed(char *accum, int *accum_len, int cap,
                                                     const char *pkt, int pkt_len)
 {
-    if (text_accum_should_reset_before_pkt(accum, *accum_len, pkt, pkt_len))
-        *accum_len = 0;
-
-    int before = *accum_len;   /* длина до этого пакета (после возможного сброса) */
-    int sp = cap - *accum_len - 1;
-    if (sp < 0) sp = 0;
-    int cp = pkt_len < sp ? pkt_len : sp;
-    /* R3 (release-gate-1.2.28-code-rc2.md §2.1): \0 внутри пакета прибора
-     * копируется как есть, но strstr/strlen ниже читают accum как C-строку
-     * и останавливаются на первом \0 — всё, что после него в ЭТОМ ЖЕ
-     * пакете, становится невидимым триггерам (-inf/Tcpot/-ok). Заменяем
-     * \0 на пробел на копировании — байты и их порядок целы. */
-    for (int i = 0; i < cp; i++) {
-        char c = pkt[i];
-        accum[*accum_len + i] = (c == '\0') ? ' ' : c;
-    }
-    *accum_len += cp;
-    accum[*accum_len] = '\0';
-
-    /* Н1/Н2 раунда 2 — калибровка применяется, как в 1.2.27, по первому кадру с CRC-окном (событие CAL_COEFFS, без сброса), серийник — когда пришёл весь дамп (CAL); потерянный второй кадр больше не откладывает калибровку и не смешивает остаток дампа с -inf. */
-    int woff = text_accum_find_last_cal_window(accum, *accum_len);
-    if (woff >= 0) {
-        if (text_accum_cal_dump_end(accum, *accum_len, woff) >= 0) return TEXT_ACCUM_CAL;
-        if (woff + 110 > before) return TEXT_ACCUM_CAL_COEFFS;   /* окно впервые целиком — один раз на окно */
-    } else if (text_accum_is_complete_cal_positional(accum, *accum_len)) {
-        return TEXT_ACCUM_CAL;
-    }
-
-    if (text_accum_is_complete_inf(accum))                   return TEXT_ACCUM_INF;
-    if (text_accum_is_complete_tcpot(accum, *accum_len))     return TEXT_ACCUM_TCPOT;
-    if (text_accum_is_complete_short_ack(accum, *accum_len)) { *accum_len = 0; return TEXT_ACCUM_SHORT_ACK; }
-    if (*accum_len >= cap - 128)                             { *accum_len = 0; return TEXT_ACCUM_OVERFLOW; }
-    return TEXT_ACCUM_NONE;
+    /* У1 (раунд 3): без списка начал пакетов известно лишь начало ЭТОГО пакета —
+     * прошивка зовёт text_accum_feed_m со списком, который живёт между пакетами. */
+    text_accum_marks_t m = {0};
+    return text_accum_feed_m(accum, accum_len, cap, &m, pkt, pkt_len);
 }
 
 /* Что отдать разборщику ответа (spectrum_process_info_response / spectrum_process_tcpot_response): полуинтервал [*off, *end) буфера s длиной len. Возвращает false, если разбирать нечего. */
@@ -316,4 +401,58 @@ static inline bool text_accum_result_span(text_accum_result_t r, const char *s, 
 static inline bool text_accum_result_consumes(text_accum_result_t r)
 {
     return r == TEXT_ACCUM_CAL || r == TEXT_ACCUM_INF || r == TEXT_ACCUM_TCPOT;
+}
+
+/* CAL по CRC-окну — до конца дампа и его \r\n, ответ, пришедший следом, остаётся;
+остальные поглощающие — весь буфер; прочие — ничего. */
+static inline int text_accum_consume_len(text_accum_result_t r, const char *s, int len) {
+    if (r == TEXT_ACCUM_CAL) {
+        int w = text_accum_find_last_cal_window(s, len);
+        int e = w >= 0 ? text_accum_cal_dump_end(s, len, w) : -1;
+        if (e < 0) return len;                     /* позиционная ветка — весь буфер, как раньше */
+        for (int i = 0; i < 2 && e < len && (s[e] == '\r' || s[e] == '\n'); i++) e++;
+        return e;
+    }
+    return text_accum_result_consumes(r) ? len : 0;
+}
+
+static inline void text_accum_consume(char *s, int *len, text_accum_marks_t *m, int k) {
+    if (k <= 0) return;
+    if (k >= *len) { *len = 0; s[0] = '\0'; m->n = 0; m->lost_max = 0; return; }
+    memmove(s, s + k, (size_t)(*len - k));
+    *len -= k;
+    s[*len] = '\0';
+    int j = 0;
+    for (int i = 0; i < m->n; i++) {
+        int q = m->at[i] - k;
+        if (q >= 0) m->at[j++] = q;
+    }
+    m->n = j;
+    m->lost_max = m->lost_max > k ? m->lost_max - k : 0;
+}
+
+/* после тишины TEXT_ACCUM_QUIET_MS: отложенный дамп (ждал, не начало ли нового дампа в хвосте) разбирается. */
+static inline text_accum_result_t text_accum_flush(char *accum, int *accum_len, int cap, const text_accum_marks_t *m) {
+    return text_accum_eval(accum, accum_len, cap, m, *accum_len, true);
+}
+
+typedef void (*text_accum_sink_fn)(void *ctx, text_accum_result_t r, const char *text);
+
+/* проводка результата: отрезок text_accum_result_span → sink (на время вызова на конце отрезка '\0',
+байт восстанавливается), снятие поглощённого; хвост после CAL разбирается тут же. Возвращает последний результат. */
+static inline text_accum_result_t text_accum_dispatch(text_accum_result_t r, char *accum, int *accum_len, int cap, text_accum_marks_t *m, text_accum_sink_fn sink, void *ctx) {
+    for (int guard = 0; guard < 8; guard++) {
+        int off = 0, end = 0;
+        if (text_accum_result_span(r, accum, *accum_len, &off, &end)) {
+            char saved = accum[end];
+            accum[end] = '\0';
+            sink(ctx, r, accum + off);
+            accum[end] = saved;
+        }
+        text_accum_consume(accum, accum_len, m, text_accum_consume_len(r, accum, *accum_len));
+        if (r != TEXT_ACCUM_CAL || *accum_len == 0) break;
+        r = text_accum_eval(accum, accum_len, cap, m, *accum_len, false);
+        if (r == TEXT_ACCUM_NONE) break;
+    }
+    return r;
 }

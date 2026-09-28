@@ -98,6 +98,12 @@ static volatile uint32_t s_usb_rx_err = 0;  // #TCP-4: FTDI line-status RX error
 
 static char s_text_accum[4096];
 static int  s_text_accum_len = 0;
+// У1 (раунд 3): начала пакетов в s_text_accum и время последнего текстового пакета —
+// отложенный дамп (хвост мог оказаться началом нового) разбирается после тишины.
+// Все три — только в usb_rx_worker, как и сам аккумулятор.
+static text_accum_marks_t s_text_marks;
+static uint32_t s_text_last_ms = 0;
+static bool     s_text_flush_armed = false;
 
 // #UI-1: кольцо последних текстовых ответов прибора для веб-лога команд (/api/devlog).
 // devlog_push() вызывается из cdc-acm data_cb (handle_rx_packet, CMD_TEXT); чтение —
@@ -142,17 +148,19 @@ static bool s_boot_once_done      = false;
 // text_accum_result_consumes() (обе чистые, test_text_accum.c). CAL_COEFFS —
 // калибровка по CRC-окну без сброса; -inf — с "VERSION " (R1); SHORT_ACK и
 // OVERFLOW сбрасывает сама text_accum_feed (RO3).
+static void usb_host_cdc_text_sink(void *ctx, text_accum_result_t tar, const char *text)
+{
+    (void)ctx;
+    if (tar == TEXT_ACCUM_TCPOT) spectrum_process_tcpot_response(text);
+    else spectrum_process_info_response(text);
+}
+
+// У6 (раунд 3): отрезок, '\0' на время разбора, снятие поглощённого и разбор хвоста
+// после CAL — в text_accum_dispatch (host-тест поведения, test_text_accum_r3.c).
 static void usb_host_cdc_apply_text_accum_result(text_accum_result_t tar)
 {
-    int off = 0, end = 0;
-    if (text_accum_result_span(tar, s_text_accum, s_text_accum_len, &off, &end)) {
-        char saved = s_text_accum[end];   // end <= len < sizeof(s_text_accum)
-        s_text_accum[end] = '\0';         // в разбор — только отрезок [off, end)
-        if (tar == TEXT_ACCUM_TCPOT) spectrum_process_tcpot_response(s_text_accum + off);
-        else spectrum_process_info_response(s_text_accum + off);
-        s_text_accum[end] = saved;        // CAL_COEFFS: буфер копится дальше
-    }
-    if (text_accum_result_consumes(tar)) s_text_accum_len = 0;
+    tar = text_accum_dispatch(tar, s_text_accum, &s_text_accum_len, (int)sizeof(s_text_accum),
+                              &s_text_marks, usb_host_cdc_text_sink, NULL);
     if (tar == TEXT_ACCUM_OVERFLOW) ESP_LOGW(TAG, "text accum overflow without trigger, reset");
 }
 
@@ -189,9 +197,12 @@ static void handle_rx_packet(void)
             // сбрасывает аккумулятор, включая короткий "-ok" (F1: без этого дамп
             // -cal, пришедший следом, дописывался после "-ok\r\n" и терялся —
             // release-gate-1.2.28-code.md).
-            text_accum_result_t tar = text_accum_feed(s_text_accum, &s_text_accum_len,
-                (int)sizeof(s_text_accum), (const char*)s_rx_packet.data, (int)s_rx_packet.len);
+            text_accum_result_t tar = text_accum_feed_m(s_text_accum, &s_text_accum_len,
+                (int)sizeof(s_text_accum), &s_text_marks,
+                (const char*)s_rx_packet.data, (int)s_rx_packet.len);
             usb_host_cdc_apply_text_accum_result(tar);
+            s_text_last_ms = diag_now_ms();
+            s_text_flush_armed = (s_text_accum_len > 0);   // У1: что-то осталось — разобрать после тишины
         }
         break;
     case CMD_STAT:
@@ -235,7 +246,16 @@ static void usb_rx_worker(void *arg)
             s_rx_reset_req = 0;
             shproto_init(&s_rx_packet, s_rx_buf, sizeof(s_rx_buf));
             s_text_accum_len = 0;
+            s_text_marks = (text_accum_marks_t){0};
+            s_text_flush_armed = false;
             (void)xStreamBufferReset(s_rx_ring);
+        }
+        // У1 (раунд 3): TEXT_ACCUM_QUIET_MS без текстовых пакетов — отложенный дамп
+        // (конец на границе строки мог быть началом нового дампа) разбирается.
+        if (s_text_flush_armed && (diag_now_ms() - s_text_last_ms) >= TEXT_ACCUM_QUIET_MS) {
+            s_text_flush_armed = false;
+            usb_host_cdc_apply_text_accum_result(text_accum_flush(s_text_accum, &s_text_accum_len,
+                (int)sizeof(s_text_accum), &s_text_marks));
         }
         size_t n = xStreamBufferReceive(s_rx_ring, chunk, sizeof(chunk), pdMS_TO_TICKS(200));
         if (n == 0) continue;                 // таймаут, данных нет
