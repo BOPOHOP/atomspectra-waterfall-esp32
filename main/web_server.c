@@ -41,6 +41,7 @@
 #include "ota_image_check.h"      // AWF-4: проверка заголовка образа (host-тест)
 #include "ota_github_client.h"    // AWF-5: обновление с GitHub
 #include "ota_busy.h"              // AWF-5 P1-фикс: общий замок с GitHub-install
+#include "ota_timeout_budget.h"    // D4 (sweep-B задача 1): host-тест границы
 #include <dirent.h>
 
 static const char *TAG = "web";
@@ -647,7 +648,7 @@ static esp_err_t handle_ota_locked(httpd_req_t *req)
         int to_read = remaining < (int)bufsz ? remaining : (int)bufsz;
         int rd = httpd_req_recv(req, (char *)buf, to_read);
         if (rd == HTTPD_SOCK_ERR_TIMEOUT) {
-            if (++timeout_streak > OTA_MAX_CONSECUTIVE_TIMEOUTS) {
+            if (ota_timeout_budget_exceeded(++timeout_streak, OTA_MAX_CONSECUTIVE_TIMEOUTS)) {
                 free(buf);
                 esp_ota_abort(ota);
                 httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Timeout budget exceeded");
@@ -2500,7 +2501,10 @@ static esp_err_t handle_404(httpd_req_t *req, httpd_err_code_t err)
 
 // F1: общий трамплин над uris[] (регистрация ниже, web_server_init) — индекс
 // в user_ctx выбирает исходный обработчик из простого массива функций (без
-// malloc/struct); 80 = запас max_uri_handlers (комментарий ниже, ~53 факт).
+// malloc/struct). DOC-URI-1: единственный источник истины по числу и запасу
+// max_uri_handlers — комментарий у config.max_uri_handlers=90 ниже (пересчитан
+// 2026-09-27: 79 факт, запас +11); эта строка раньше повторяла устаревшие числа
+// (80/~53) и разошлась с ними при последнем поднятии лимита.
 #define WEB_SERVER_URI_MAX 90
 static esp_err_t (*s_wrap_handlers[WEB_SERVER_URI_MAX])(httpd_req_t *);
 
@@ -2652,7 +2656,12 @@ void web_server_init(void)
         httpd_uri_t entry = uris[i];
         entry.handler = activity_trampoline;
         entry.user_ctx = (void *)(intptr_t)i;
-        httpd_register_uri_handler(server, &entry);
+        // issue #52b (sweep-B задача 7): переполнение таблицы обработчиков
+        // раньше молча роняло ПОСЛЕДНИЙ маршрут (класс уже стоил инцидента
+        // с лимитом 45) -- теперь хотя бы громкий ESP_LOGE с именем URI.
+        esp_err_t rerr = httpd_register_uri_handler(server, &entry);
+        if (rerr != ESP_OK)
+            ESP_LOGE(TAG, "issue#52b: register '%s' failed: %s", uris[i].uri, esp_err_to_name(rerr));
     }
 
     web_waterfall_register(server);      // /waterfall, /api/waterfall/*, /ws/waterfall
