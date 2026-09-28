@@ -2149,6 +2149,11 @@ static esp_err_t handle_settings_backup(httpd_req_t *req)
 static bool settings_snapshot_write_file(const char *info_line,
                                           const char *tcpot_line, const char *stamp)
 {
+    // Н7 (раунд 2): лок лишь сериализует писателей — тихое окно после пакета
+    // гистограммы ждём отдельно, как запись калибровки (spectrum.c), не
+    // дольше ~1.25 с (окно открывается раз в секунду); не дождались — пишем.
+    for (int i = 0; i < 25 && usb_host_cdc_is_connected() && !flash_quiet_can_start_slice(); i++)
+        vTaskDelay(pdMS_TO_TICKS(50));
     if (!flash_quiet_writer_lock(flash_quiet_writer_lock_ticks())) return false;
     FILE *f = fopen(DSP_SNAPSHOT_PATH, "w");
     bool ok = f != NULL;
