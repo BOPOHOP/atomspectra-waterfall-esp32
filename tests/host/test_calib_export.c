@@ -182,7 +182,17 @@ static size_t body_len(const char *brace) {
                 in_char = false;
             }
         } else {
-            if (c == '"') {
+            /* Н12 (раунд 2): комментарии пропускаются целиком — апостроф в
+               русском комментарии ("commit'ом") раньше открывал символьный
+               литерал, и тело функции обрывалось. */
+            if (c == '/' && curr[1] == '/') {
+                while (curr[1] && curr[1] != '\n') curr++;
+            } else if (c == '/' && curr[1] == '*') {
+                curr += 2;
+                while (*curr && !(curr[0] == '*' && curr[1] == '/')) curr++;
+                if (!*curr) break;   /* незакрытый комментарий — не читать за '\0' */
+                curr++;
+            } else if (c == '"') {
                 in_string = true;
             } else if (c == '\'') {
                 in_char = true;
@@ -335,4 +345,89 @@ void seg_pin_sites_suite(void)
         CHECK(nret > 0 && nret == nun);
     }
     free(src);
+}
+
+/* Н12 (раунд 2) — проводка исправлений в прошивочных .c, которые host-сборка не */
+/* компилирует: тот же сканер определений; удаление вызова или перестановка порядка */
+/* красит тест. */
+
+static const char *w_in(const char *s, size_t len, const char *needle)
+{
+    size_t nlen = strlen(needle);
+    if (nlen == 0 || nlen > len) return NULL;
+    for (size_t i = 0; i + nlen <= len; ++i) {
+        if (memcmp(s + i, needle, nlen) == 0) return s + i;
+    }
+    return NULL;
+}
+
+static void w_site(const char *file, const char *fn, const char *first, const char *second)
+{
+    char *src = slurp(file);
+    CHECK(src != NULL);
+    if (!src) { printf("wiring: no file %s\n", file); return; }
+
+    const char *def = find_def(src, fn);
+    CHECK(def != NULL);
+    if (!def) { printf("wiring: no def %s in %s\n", fn, file); free(src); return; }
+
+    size_t len = body_len(def);
+    const char *p1 = w_in(def, len, first);
+    CHECK(p1 != NULL);
+    if (!p1) { printf("wiring: %s: missing '%s'\n", fn, first); free(src); return; }
+
+    if (second) {
+        const char *p2 = w_in(def, len, second);
+        CHECK(p1 && p2 && p1 < p2);
+        if (!(p1 && p2 && p1 < p2)) {
+            printf("wiring: %s: '%s' must precede '%s'\n", fn, first, second);
+        }
+    }
+    free(src);
+}
+
+static void w_absent(const char *file, const char *fn, const char *needle)
+{
+    char *src = slurp(file);
+    CHECK(src != NULL);
+    if (!src) { printf("wiring: no file %s\n", file); return; }
+
+    const char *def = find_def(src, fn);
+    CHECK(def != NULL);
+    if (!def) { printf("wiring: no def %s in %s\n", fn, file); free(src); return; }
+
+    size_t len = body_len(def);
+    CHECK(w_in(def, len, needle) == NULL);
+    if (w_in(def, len, needle)) {
+        printf("wiring: %s: must not contain '%s'\n", fn, needle);
+    }
+    free(src);
+}
+
+void round2_wiring_sites_suite(void)
+{
+    /* Н1 разбор -cal по отрезку */
+    w_site("../../main/usb_host_cdc.c", "usb_host_cdc_apply_text_accum_result", "text_accum_result_span(", "text_accum_result_consumes(");
+    /* Н3 снимок диапазонов до очистки */
+    w_site("../../main/spectrogram.c", "seg_rebuild_counters_from_disk", "rb_prev[n_prev].g0", "reg_clear_all()");
+    /* Н3 восстановление */
+    w_site("../../main/spectrogram.c", "seg_rebuild_counters_from_disk", "wf_seg_restore_range(", "reg_set_range(");
+    /* Н4 переоткрытие до решения */
+    w_site("../../main/ota_github_client.c", "ota_gh_download_retry", "ota_gh_dl_is_already_complete(", "ota_gh_dl_reopen_until_decided(");
+    /* Н4 без прямого decide */
+    w_absent("../../main/ota_github_client.c", "ota_gh_download_retry", "ota_gh_dl_decide(");
+    /* Н4 код отказа */
+    w_site("../../main/ota_github_client.c", "ota_gh_dl_reopen_cb", "http_open_with_redirects_st(", "ota_gh_dl_reopen_status(");
+    /* Н4 код отказа наружу */
+    w_site("../../main/ota_github_client.c", "http_open_with_redirects_st", "*out_fail_status = status", NULL);
+    /* М4 сц.2 выход по EOF */
+    w_site("../../main/ota_github_client.c", "install_task", "if (done) break;", NULL);
+    /* Н7 тихое окно до лока */
+    w_site("../../main/web_server.c", "settings_snapshot_write_file", "flash_quiet_can_start_slice()", "flash_quiet_writer_lock(");
+    /* М7 заголовок */
+    w_site("../../main/web_server.c", "handle_settings_snapshot", "X-Dsp-Snapshot-Saved", NULL);
+    /* М5 поколение кэша */
+    w_site("../../main/spectrum_http_cache.c", "spectrum_http_cache_finish_build", "spec_cache_gen_stale(", NULL);
+    /* М6 гейт OTA в автосохранении */
+    w_site("../../main/main.c", "app_main", "if (ota_busy_is_busy())", "spectrum_autosave_fail_streak()");
 }
