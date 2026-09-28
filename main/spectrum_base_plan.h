@@ -162,3 +162,20 @@ static inline bool spectrum_reset_stat_is_plausible_gen(uint32_t stat_time_sec,
     if (stat_stage_gen != current_reset_gen) return false;
     return spectrum_reset_stat_is_plausible(stat_time_sec, elapsed_since_reset_sec);
 }
+
+// issue #58: гейт выше — только после явного Reset в этой загрузке
+// (reset_armed), и не вечно: STAT текущего gen, неправдоподобный подряд
+// SPECTRUM_RESET_CONFIRM_TIMEOUT_S, значит прибор -rst не выполнил.
+#define SPECTRUM_RESET_CONFIRM_TIMEOUT_S 10u
+static inline bool spectrum_reset_stat_accept(bool reset_armed,
+                                              uint32_t stat_time_sec,
+                                              uint32_t elapsed_since_reset_sec,
+                                              uint32_t stat_stage_gen,
+                                              uint32_t current_reset_gen,
+                                              uint32_t rejected_for_sec)
+{
+    if (!reset_armed) return true;
+    if (stat_stage_gen != current_reset_gen) return false;
+    if (spectrum_reset_stat_is_plausible(stat_time_sec, elapsed_since_reset_sec)) return true;
+    return rejected_for_sec >= SPECTRUM_RESET_CONFIRM_TIMEOUT_S;
+}

@@ -230,6 +230,39 @@ static void test_d2_stale_stat_never_accepted_after_reset(void)
     CHECK(!spectrum_reset_stat_is_plausible_gen(2000, 6, current_gen, current_gen));
 }
 
+// Тест: загрузка без сброса принимает статистику
+static void test_issue58_boot_without_reset_accepts_stat(void) {
+    CHECK(spectrum_reset_stat_accept(false, 1667686, 3, 0, 0, 0));
+    CHECK(spectrum_reset_stat_accept(false, 1667691, 8, 0, 0, 5));
+    uint32_t base_bins[3] = {0,0,0};
+    uint32_t shown_bins[3] = {0,0,0};
+    spectrum_base_state_t st = { base_bins, 0, 0, shown_bins, 0, 0 };
+    uint32_t dev_bins[3] = {400, 300, 300};
+    CHECK(!spectrum_base_commit_should_defer(1000, st.base_counts, st.shown_counts, true));
+    bool did = spectrum_base_commit(&st, dev_bins, 1000, 3, true, 1667686);
+    CHECK(!did);
+    CHECK(st.base_counts == 0);
+    CHECK(st.shown_counts == 1000);
+    CHECK(shown_bins[0] == 400 && shown_bins[1] == 300 && shown_bins[2] == 300);
+}
+
+// Тест: неподтвержденный сброс истекает по таймауту
+static void test_issue58_unconfirmed_reset_times_out(void) {
+    CHECK(!spectrum_reset_stat_accept(true, 1667686, 3, 3, 3, 0));
+    CHECK(!spectrum_reset_stat_accept(true, 1667686, 3, 3, 3, SPECTRUM_RESET_CONFIRM_TIMEOUT_S - 1));
+    CHECK(spectrum_reset_stat_accept(true, 1667686, 3, 3, 3, SPECTRUM_RESET_CONFIRM_TIMEOUT_S));
+    CHECK(spectrum_reset_stat_accept(true, 1667700, 17, 3, 3, SPECTRUM_RESET_CONFIRM_TIMEOUT_S + 7));
+    CHECK(!spectrum_reset_stat_accept(true, 1667686, 3, 2, 3, 1000000));
+}
+
+// issue #58: гонка AWF-4 (старый STAT сразу после Reset) по-прежнему отклоняется
+static void test_issue58_awf4_race_still_rejected(void) {
+    CHECK(!spectrum_reset_stat_accept(true, 2410, 1, 1, 1, 0));
+    CHECK(!spectrum_reset_stat_accept(true, 2410, 1, 1, 1, 1));
+    CHECK(spectrum_reset_stat_accept(true, 6, 6, 1, 1, 0));
+    CHECK(spectrum_reset_stat_accept(true, 6, 6, 1, 1, 3));
+}
+
 void spectrum_base_plan_suite(void)
 {
     test_reset_detection();
@@ -244,4 +277,7 @@ void spectrum_base_plan_suite(void)
     test_r1_defer_and_two_commit_sequence();
     test_awf4_reset_stat_race();
     test_d2_stale_stat_never_accepted_after_reset();
+    test_issue58_boot_without_reset_accepts_stat();
+    test_issue58_unconfirmed_reset_times_out();
+    test_issue58_awf4_race_still_rejected();
 }

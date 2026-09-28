@@ -118,7 +118,11 @@ static uint32_t  s_stage_reset_gen;               // снимок gen на offse
 // AWF-4: момент spectrum_reset() (esp_timer, мкс) — гейт правдоподобности STAT
 // на первом коммите после Reset (spectrum_reset_stat_is_plausible).
 static int64_t   s_reset_at_us;
-static uint32_t  s_hist_commits = 0;              // опубликованных полных свипов
+// issue #58: гейт AWF-4 взводит только spectrum_reset(); старт платы без
+// current.bin — не Reset. Снимается первым опубликованным коммитом.
+static bool      s_reset_armed;
+static int64_t   s_reset_reject_since_us;         // начало серии отклонений STAT (0 = нет)
+static uint32_t  s_hist_commits = 0;             // опубликованных полных свипов
 static uint32_t  s_hist_drops = 0;                // отброшенных рваных свипов
 typedef struct {
     uint32_t total_time_sec;
@@ -360,15 +364,22 @@ void spectrum_process_histogram_chunk(const uint8_t *data, size_t len)
             // ДО того как прибор обработал -rst) не может быть правдоподобен
             // относительно реального времени, прошедшего с Reset.
             if (stat_fresh && !s_spectrum.valid) {
-                uint32_t elapsed_since_reset_s =
-                    (uint32_t)((esp_timer_get_time() - s_reset_at_us) / 1000000);
-                if (!spectrum_reset_stat_is_plausible_gen(s_stat_stage.total_time_sec,
-                                                           elapsed_since_reset_s,
-                                                           s_stat_stage.gen, s_reset_gen)) {
+                int64_t now_us = esp_timer_get_time();
+                uint32_t elapsed_since_reset_s = (uint32_t)((now_us - s_reset_at_us) / 1000000);
+                uint32_t rejected_for_s = s_reset_reject_since_us
+                    ? (uint32_t)((now_us - s_reset_reject_since_us) / 1000000) : 0;
+                if (!spectrum_reset_stat_accept(s_reset_armed, s_stat_stage.total_time_sec,
+                                                elapsed_since_reset_s, s_stat_stage.gen,
+                                                s_reset_gen, rejected_for_s)) {
                     stat_fresh = false;
+                    if (!s_reset_reject_since_us) s_reset_reject_since_us = now_us;
                     ESP_LOGW(TAG, "Reset: stale staged STAT (t=%" PRIu32 "s, elapsed=%" PRIu32
                              "s) ignored on first post-reset commit",
                              s_stat_stage.total_time_sec, elapsed_since_reset_s);
+                } else if (s_reset_reject_since_us) {
+                    ESP_LOGW(TAG, "Reset: STAT accepted after %" PRIu32 "s of rejections (t=%" PRIu32
+                             "s; t>>elapsed = device ignored -rst)",
+                             rejected_for_s, s_stat_stage.total_time_sec);
                 }
             }
             // R1 (ревью-3): двусмысленный коммит (без STAT, count не сказал
@@ -384,6 +395,8 @@ void spectrum_process_histogram_chunk(const uint8_t *data, size_t len)
             bool did_reset = commit_fold_and_merge_locked(stat_fresh, t_new_raw, total);
             commit_time_locked(stat_fresh, t_new_raw);
             s_spectrum.valid = true;
+            s_reset_armed = false;             // issue #58
+            s_reset_reject_since_us = 0;
             SPEC_UNLOCK();
             if (did_reset) spectrum_base_save();   // flash-запись, ВНЕ лока
             s_hist_commits++;
@@ -742,6 +755,8 @@ void spectrum_reset(void)
     SPEC_LOCK();
     s_reset_gen++;
     s_reset_at_us = esp_timer_get_time();   // AWF-4: t0 для гейта правдоподобности STAT
+    s_reset_armed = true;                   // issue #58
+    s_reset_reject_since_us = 0;
     memset(s_spectrum.bins, 0, sizeof(s_spectrum.bins));
     s_spectrum.total_counts = 0;
     s_spectrum.total_time_sec = 0;
