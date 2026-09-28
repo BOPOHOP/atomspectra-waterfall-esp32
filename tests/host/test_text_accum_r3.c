@@ -68,7 +68,12 @@ static void r3_sink(void *ctx, text_accum_result_t r, const char *text)
     }
 
     if (strstr(text, "VERSION ") != NULL) {
-        snprintf(dv->info, sizeof dv->info, "%s", text);
+        /* усечение намеренное (как у приёмника в прошивке); явная копия вместо
+         * snprintf — gcc 13 с -Werror=format-truncation считает её ошибкой */
+        size_t k = strlen(text);
+        if (k >= sizeof dv->info) k = sizeof dv->info - 1;
+        memcpy(dv->info, text, k);
+        dv->info[k] = '\0';
         return;
     }
 
