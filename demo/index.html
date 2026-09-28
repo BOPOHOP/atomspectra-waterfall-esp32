@@ -222,6 +222,7 @@ var DICT={
   "saved.saveErrNoData":"Нет данных спектра (прибор не подключён/не выдаёт спектр)","saved.saveErrNoSpace":"Мало места на flash — удалите старые снимки",
   "log.start":"Start sent","log.stop":"Stop sent","log.reset":"Reset sent","log.info":"Info requested",
   "log.ovlOk":"Overlay loaded: #%1","log.ovlErr":"Overlay error: %1","log.ovlClear":"Overlay cleared",
+  "ovl.noTime":" (время не задано — показан счёт, не CPS)",
   "log.del":"Deleted #%1","log.rebootDev":"Reboot device sent",
   "log.exportOk":"Выгружено: %1","log.exportErr":"Экспорт не удался: %1",
   "log.cal":"Calibration: [%1]","log.calErr":"Calibration error: %1","log.calClear":"Calibration cleared",
@@ -269,6 +270,7 @@ var DICT={
   "saved.saveErrNoData":"No spectrum data (device not connected / no spectrum)","saved.saveErrNoSpace":"Low flash space — delete old snapshots",
   "log.start":"Start sent","log.stop":"Stop sent","log.reset":"Reset sent","log.info":"Info requested",
   "log.sent":"Sent: %1","log.ovlOk":"Overlay loaded: #%1","log.ovlErr":"Overlay error: %1","log.ovlClear":"Overlay cleared",
+  "ovl.noTime":" (time unknown — showing counts, not CPS)",
   "log.del":"Deleted #%1","log.rebootDev":"Reboot device sent",
   "log.exportOk":"Exported: %1","log.exportErr":"Export failed: %1",
   "log.cal":"Calibration: [%1]","log.calErr":"Calibration error: %1","log.calClear":"Calibration cleared",
@@ -311,7 +313,7 @@ var Ccur=document.getElementById("spcur"),Xcur=Ccur.getContext("2d");
 (function(){var dpr=Math.max(2,window.devicePixelRatio||1);/* #UI-18: supersample ≥2× → в zoom-оверлее источник downscale'ится, цифры чёткие */function hidpi(c,ctx,w,h){c.width=Math.round(w*dpr);c.height=Math.round(h*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);}hidpi(C,X,1200,400);hidpi(Ccur,Xcur,1200,400);})();
 var cursorCh=-1;
 var logEl=document.getElementById("log");
-var overlayBins=null,overlayIdx=-1;
+var overlayBins=null,overlayIdx=-1,overlayTime=0;   /* #WF-CPS-1: своё время оверлея */
 var isLog=true,isCps=true,isKev=true;  /* #UI-34: дефолты тумблеров — Log / CPS / keV */
 var calib=null,lastD=null,calibEditing=false;
 /* #AWF-12b F2 (release-gate-1.2.28-code.md): единый признак "калибровка
@@ -433,7 +435,12 @@ function draw(d){
  var yV=new Array(N);
  for(var i=0;i<N;i++)yV[i]=isCps?bins[i]/tt:bins[i];
  var yO=null;
- if(overlayBins){yO=new Array(overlayBins.length);for(var i=0;i<overlayBins.length;i++)yO[i]=isCps?overlayBins[i]/tt:overlayBins[i]}
+ /* #WF-CPS-1: делим на СВОЁ время оверлея (overlayTime), не на tt живого набора —
+    было overlayBins[i]/tt, дало разбухший CPS у оверлея короче текущего набора и
+    заниженный у длиннее. overlayTime<=0 (не пришло/битые метаданные) — не делим,
+    показываем счёт как есть (пометка — см. loadOverlay). */
+ if(overlayBins){var ot=overlayTime>0?overlayTime:0;yO=new Array(overlayBins.length);
+  for(var i=0;i<overlayBins.length;i++)yO[i]=(isCps&&ot>0)?overlayBins[i]/ot:overlayBins[i]}
  var mx=0;
  for(var i=0;i<N;i++)if(yV[i]>mx)mx=yV[i];
  if(yO)for(var i=0;i<yO.length;i++)if(yO[i]>mx)mx=yO[i];
@@ -584,10 +591,12 @@ async function toggleMode(){
 }
 async function loadOverlay(idx){
  try{var r=await(await fetch("/api/saved/"+idx+"/spectrum.json")).json();overlayBins=r.bins;overlayIdx=idx;
- document.getElementById("overlay-label").textContent="Overlay: #"+idx;document.getElementById("btn-clear-ovl").style.display="";
+ overlayTime=(typeof r.time==="number"&&r.time>0)?r.time:0;   /* #WF-CPS-1 */
+ document.getElementById("overlay-label").textContent="Overlay: #"+idx+(overlayTime>0?"":tr("ovl.noTime"));
+ document.getElementById("btn-clear-ovl").style.display="";
  lg(tfmt("log.ovlOk",idx));if(lastD)draw(lastD);loadSaved();}catch(e){lg(tfmt("log.ovlErr",e))}
 }
-function clearOverlay(){overlayBins=null;overlayIdx=-1;document.getElementById("overlay-label").textContent="";document.getElementById("btn-clear-ovl").style.display="none";lg(tr("log.ovlClear"));if(lastD)draw(lastD);loadSaved();}
+function clearOverlay(){overlayBins=null;overlayIdx=-1;overlayTime=0;document.getElementById("overlay-label").textContent="";document.getElementById("btn-clear-ovl").style.display="none";lg(tr("log.ovlClear"));if(lastD)draw(lastD);loadSaved();}
 async function loadSaved(retry){
  var el=document.getElementById("saved");
  try{
