@@ -292,10 +292,292 @@ void text_accum_m1_split_real_dump_suite(void)
 
     char accum[4096]; int len = 0;
     text_accum_result_t r1 = text_accum_feed(accum, &len, sizeof accum, dump, 200);
-    CHECK(r1 == TEXT_ACCUM_NONE);   // окно уже видно, но не все 40 строк — рано
+    // Н1 раунда 2: окно видно — калибровка применяется сразу (как в 1.2.27),
+    // но аккумулятор НЕ сбрасывается (CAL_COEFFS, не CAL): серийник ещё не пришёл.
+    CHECK(r1 == TEXT_ACCUM_CAL_COEFFS);
     CHECK(len == 200);              // накопилось, не сброшено
 
     text_accum_result_t r2 = text_accum_feed(accum, &len, sizeof accum, dump + 200, 200);
     CHECK(r2 == TEXT_ACCUM_CAL);
     CHECK(len == 400);              // серийник (L39) доехал вместе с полным дампом
+}
+
+// Н1/Н2 (раунд 2 разбора 1.2.28): сценарии дробления/потери кадров дампа -cal
+// на боевом дампе через ту же пару span/consumes, что вызывает usb_host_cdc.c.
+// r2_step — модель вызывающего кода: что уходит в разборщик и сброс буфера.
+static text_accum_result_t r2_step(char *accum, int *len, const char *pkt, int pkt_len, char *span, int *span_len) {
+    text_accum_result_t r = text_accum_feed(accum, len, 4096, pkt, pkt_len);
+    int o, e;
+    if (text_accum_result_span(r, accum, *len, &o, &e)) {
+        memcpy(span, accum + o, e - o);
+        span[e - o] = '\0';
+        *span_len = e - o;
+    } else {
+        *span_len = -1;
+        span[0] = '\0';
+    }
+    if (text_accum_result_consumes(r)) {
+        *len = 0;
+    }
+    return r;
+}
+
+// Нарезка как в spectrum_process_info_response: строка считается и без
+// завершающего \r\n (серийник в конце отрезка [off, end)).
+static int r2_count_lines(const char *s) {
+    int count = 0;
+    while (*s) {
+        while (*s && *s != '\r' && *s != '\n') s++;
+        count++;
+        while (*s == '\r' || *s == '\n') s++;
+    }
+    return count;
+}
+
+static void r2_line(const char *s, int idx, char *out) {
+    int current = 0;
+    while (*s && current < idx) {
+        while (*s && *s != '\r' && *s != '\n') s++;
+        current++;
+        while (*s == '\r' || *s == '\n') s++;
+    }
+    int i = 0;
+    while (*s && *s != '\r' && *s != '\n' && i < 63) {
+        out[i++] = *s++;
+    }
+    out[i] = '\0';
+}
+
+// -inf боевой длины Text(404): одна строка, массив добит до 404 байт. Короткий
+// -inf не достигает порога "окно + 400 Б" и НЕ воспроизводит порчу s_info_raw (Н1).
+static const char *r2_inf(void)
+{
+    static char b[405];
+    strcpy(b, "VERSION 7 RISE 4 FALL 12 POT 120 POT2 80 Tco [");
+    while (strlen(b) < 404 - 15) strcat(b, "12 ");
+    b[404 - 15] = '\0';
+    strcat(b, "] PileUpThr 9\r\n");
+    return b;
+}
+#define R2_INF r2_inf()
+
+void text_accum_round2_suite(void) {
+    /* S1: потерян второй кадр, затем -inf */
+    {
+        static char accum[4096];
+        int len = 0;
+        static char span[4096];
+        int sl;
+        char dump[400];
+        build_full_cal_dump(dump);
+
+        text_accum_result_t r = r2_step(accum, &len, dump, 200, span, &sl);
+        CHECK(r == TEXT_ACCUM_CAL_COEFFS);
+        CHECK(len == 200);
+        CHECK(sl == 200);
+        CHECK(r2_count_lines(span) == 20);
+        CHECK(strstr(span, "VERSION") == NULL);
+
+        r = r2_step(accum, &len, R2_INF, (int)strlen(R2_INF), span, &sl);
+        CHECK(r == TEXT_ACCUM_INF);
+        CHECK((int)strlen(R2_INF) == 404);
+        CHECK(strncmp(span, "VERSION ", 8) == 0);
+        CHECK(len == 0);
+    }
+
+    /* S2: два кадра по 200 */
+    {
+        static char accum[4096];
+        int len = 0;
+        static char span[4096];
+        int sl;
+        char dump[400];
+        build_full_cal_dump(dump);
+
+        text_accum_result_t r = r2_step(accum, &len, dump, 200, span, &sl);
+        CHECK(r == TEXT_ACCUM_CAL_COEFFS);
+
+        r = r2_step(accum, &len, dump + 200, 200, span, &sl);
+        CHECK(r == TEXT_ACCUM_CAL);
+        CHECK(sl == 398);
+        CHECK(r2_count_lines(span) == 40);
+        char ln[64];
+        r2_line(span, 39, ln);
+        CHECK(strcmp(ln, "0012ABCD") == 0);
+        CHECK(len == 0);
+    }
+
+    /* S3: потерян первый кадр прошлого дампа, затем новый дамп двумя кадрами */
+    {
+        static char accum[4096];
+        int len = 0;
+        static char span[4096];
+        int sl;
+        char dump[400];
+        build_full_cal_dump(dump);
+
+        text_accum_result_t r = r2_step(accum, &len, dump + 200, 200, span, &sl);
+        CHECK(r == TEXT_ACCUM_NONE);
+
+        r = r2_step(accum, &len, dump, 200, span, &sl);
+        CHECK(r == TEXT_ACCUM_CAL_COEFFS);
+
+        r = r2_step(accum, &len, dump + 200, 200, span, &sl);
+        CHECK(r == TEXT_ACCUM_CAL);
+        CHECK(r2_count_lines(span) == 40);
+        char ln[64];
+        r2_line(span, 39, ln);
+        CHECK(strcmp(ln, "0012ABCD") == 0);
+    }
+
+    /* S4: дробление 395 + 5 */
+    {
+        static char accum[4096];
+        int len = 0;
+        static char span[4096];
+        int sl;
+        char dump[400];
+        build_full_cal_dump(dump);
+
+        text_accum_result_t r = r2_step(accum, &len, dump, 395, span, &sl);
+        CHECK(r == TEXT_ACCUM_CAL_COEFFS);
+
+        r = r2_step(accum, &len, dump + 395, 5, span, &sl);
+        CHECK(r == TEXT_ACCUM_CAL);
+        char ln[64];
+        r2_line(span, 39, ln);
+        CHECK(strcmp(ln, "0012ABCD") == 0);
+    }
+
+    /* S5: потерян второй кадр, затем новый полный дамп одним кадром */
+    {
+        static char accum[4096];
+        int len = 0;
+        static char span[4096];
+        int sl;
+        char dump[400];
+        build_full_cal_dump(dump);
+
+        text_accum_result_t r = r2_step(accum, &len, dump, 200, span, &sl);
+        CHECK(r == TEXT_ACCUM_CAL_COEFFS);
+
+        r = r2_step(accum, &len, dump, 400, span, &sl);
+        CHECK(r == TEXT_ACCUM_CAL);
+        CHECK(r2_count_lines(span) == 40);
+        char ln[64];
+        r2_line(span, 39, ln);
+        CHECK(strcmp(ln, "0012ABCD") == 0);
+    }
+
+    /* S6: \0 внутри тела дампа (строка 20), одним кадром */
+    {
+        static char accum[4096];
+        int len = 0;
+        static char span[4096];
+        int sl;
+        char dump[400];
+        build_full_cal_dump(dump);
+
+        char d2[400];
+        memcpy(d2, dump, 400);
+        d2[203] = '\0';
+
+        text_accum_result_t r = r2_step(accum, &len, d2, 400, span, &sl);
+        CHECK(r == TEXT_ACCUM_CAL);
+        char ln[64];
+        r2_line(span, 39, ln);
+        CHECK(strcmp(ln, "0012ABCD") == 0);
+    }
+
+    /* S7: целый пакет */
+    {
+        static char accum[4096];
+        int len = 0;
+        static char span[4096];
+        int sl;
+        char dump[400];
+        build_full_cal_dump(dump);
+
+        text_accum_result_t r = r2_step(accum, &len, dump, 400, span, &sl);
+        CHECK(r == TEXT_ACCUM_CAL);
+        CHECK(sl == 398);
+        CHECK(len == 0);
+    }
+
+    /* S8: окно применяется один раз */
+    {
+        static char accum[4096];
+        int len = 0;
+        static char span[4096];
+        int sl;
+        char dump[400];
+        build_full_cal_dump(dump);
+
+        text_accum_result_t r = r2_step(accum, &len, dump, 200, span, &sl);
+        CHECK(r == TEXT_ACCUM_CAL_COEFFS);
+
+        r = r2_step(accum, &len, "FFFFFFFF\r\n", 10, span, &sl);
+        CHECK(r == TEXT_ACCUM_NONE);
+    }
+
+    /* S9: дамп без CRC (позиционный триггер) */
+    {
+        static char accum[4096];
+        int len = 0;
+        static char span[4096];
+        int sl;
+        char a40[400];
+        memset(a40, 0, sizeof(a40));
+        for (int i = 0; i < 40; i++) {
+            memcpy(a40 + i * 10, "AAAAAAAA\r\n", 10);
+        }
+
+        text_accum_result_t r = r2_step(accum, &len, a40, 400, span, &sl);
+        CHECK(r == TEXT_ACCUM_CAL);
+        CHECK(sl == 400);
+    }
+
+    /* S10: последний серийник без \r\n */
+    {
+        static char accum[4096];
+        int len = 0;
+        static char span[4096];
+        int sl;
+        char dump[400];
+        build_full_cal_dump(dump);
+
+        text_accum_result_t r = r2_step(accum, &len, dump, 398, span, &sl);
+        CHECK(r == TEXT_ACCUM_CAL);
+        CHECK(sl == 398);
+    }
+
+    /* S12: потерян второй кадр, затем новый дамп двумя кадрами — решает ПОСЛЕДНЕЕ
+       окно: 20 строк старого + 20 нового по форме уже 40 строк, но это не дамп */
+    {
+        static char accum[4096];
+        int len = 0;
+        static char span[4096];
+        int sl;
+        char dump[400];
+        build_full_cal_dump(dump);
+        CHECK(r2_step(accum, &len, dump, 200, span, &sl) == TEXT_ACCUM_CAL_COEFFS);
+        CHECK(r2_step(accum, &len, dump, 200, span, &sl) == TEXT_ACCUM_CAL_COEFFS);
+        CHECK(r2_step(accum, &len, dump + 200, 200, span, &sl) == TEXT_ACCUM_CAL);
+        char ln[64];
+        r2_line(span, 39, ln);
+        CHECK(strcmp(ln, "0012ABCD") == 0);
+    }
+
+    /* S11: -inf поверх потерянного второго кадра не даёт CAL */
+    {
+        char x[700];   // 200 Б дампа + 404 Б -inf + нуль
+        char dump[400];
+        build_full_cal_dump(dump);
+        memcpy(x, dump, 200);
+        int n = 200 + (int)strlen(R2_INF);
+        memcpy(x + 200, R2_INF, strlen(R2_INF));
+        x[n] = '\0';
+
+        CHECK(text_accum_is_complete_cal(x, n) == false);
+    }
 }

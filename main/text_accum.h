@@ -82,48 +82,97 @@ static inline uint32_t text_accum_crc32_lines(const char *s, int nlines)
  * перед дампом), S07 (первый кадр дампа <9 байт), S22 ("-ok"+дамп одним
  * кадром). Скан байт-за-байтом (не только кратно 10) — мусор перед
  * дампом не обязан быть кратен строке. -1, если валидного окна нет. */
+
+/* true, если на смещении off начинается CRC-валидное окно */
+static inline bool text_accum_cal_window_at(const char *s, int len, int off)
+{
+    if (off < 0 || off + 110 > len) return false;
+    for (int i = 0; i <= 10; i++) {
+        if (!text_accum_hex_line(s + off + i * 10, len - off - i * 10, NULL))
+            return false;
+    }
+    uint32_t ce = 0;
+    text_accum_hex_line(s + off + 100, len - off - 100, &ce);
+    return text_accum_crc32_lines(s + off, 10) == ce;
+}
+
+/* первое off (от 0 вверх), для которого cal_window_at истинно; иначе -1 */
 static inline int text_accum_find_cal_window(const char *s, int len)
 {
     for (int off = 0; off + 110 <= len; off++) {
-        bool ok = true;
-        for (int i = 0; i <= 10 && ok; i++)
-            if (!text_accum_hex_line(s + off + i * 10, len - off - i * 10, NULL)) ok = false;
-        if (!ok) continue;
-        uint32_t ce = 0;
-        text_accum_hex_line(s + off + 100, len - off - 100, &ce);
-        if (text_accum_crc32_lines(s + off, 10) == ce) return off;
+        if (text_accum_cal_window_at(s, len, off)) return off;
     }
     return -1;
 }
 
-/* Дамп накоплен целиком: ЛИБО начинается как дамп с позиции 0 И содержит
- * >=39 переводов строки (старый дешёвый триггер, короткое замыкание —
- * не меняет поведение существующих тестов на позиционных данных без
- * настоящего CRC), ЛИБО (R2) где-то в буфере нашлось CRC-валидное окно
- * дампа не с позиции 0. Старая ветка — перенесена из usb_host_cdc.c
- * (была is_complete_cal) без изменения семантики. */
+/* последнее такое off (перебор от конца вниз). В аккумуляторе может лежать
+ * недособранный прошлый дамп (потерян кадр), за которым пришёл новый; решение
+ * принимается по самому свежему дампу, иначе строка 39 от старого окна попадает
+ * в середину нового. Ложное окно внутри дампа требует совпадения CRC32. */
+static inline int text_accum_find_last_cal_window(const char *s, int len)
+{
+    for (int off = len - 110; off >= 0; off--) {
+        if (text_accum_cal_window_at(s, len, off)) return off;
+    }
+    return -1;
+}
+
+/* строка дампа ПО ФОРМЕ: len >= 10, байты 0..7 не '\r' и не '\n', s[8]=='\r', s[9]=='\n'.
+ * \0, заменённый на пробел в text_accum_feed, внутри строк L11..L38 не должен ломать сборку;
+ * длинная строка -inf под форму не подходит. */
+static inline bool text_accum_dump_shaped_line(const char *s, int len)
+{
+    if (len < 10) return false;
+    for (int i = 0; i < 8; i++) {
+        if (s[i] == '\r' || s[i] == '\n') return false;
+    }
+    return s[8] == '\r' && s[9] == '\n';
+}
+
+/* сколько строк формы дампа подряд с начала s, не больше max */
+static inline int text_accum_dump_lines(const char *s, int len, int max)
+{
+    int count = 0;
+    while (count < max) {
+        if (!text_accum_dump_shaped_line(s + count * 10, len - count * 10))
+            break;
+        count++;
+    }
+    return count;
+}
+
+/* конец ПОЛНОГО дампа от окна на off: 39 строк формы + 8 байт 40-й строки (серийник);
+ * завершающий \r\n 40-й строки не обязателен. Возвращает -1 при ошибках. */
+static inline int text_accum_cal_dump_end(const char *s, int len, int off)
+{
+    if (off < 0 || text_accum_dump_lines(s + off, len - off, 39) < 39) return -1;
+    int p = off + 390;
+    if (len - p < 8) return -1;
+    for (int i = 0; i < 8; i++) {
+        if (s[p + i] == '\r' || s[p + i] == '\n') return -1;
+    }
+    if (len - p > 8 && s[p + 8] != '\r' && s[p + 8] != '\n') return -1;
+    return p + 8;
+}
+
+/* прежний триггер: если !text_looks_like_cal_dump_start -> false; иначе посчитать '\n' в C-строке.
+ * Применяется только когда CRC-окна в буфере нет (дамп без сходящегося CRC), семантика как в 1.2.27. */
+static inline bool text_accum_is_complete_cal_positional(const char *s, int len)
+{
+    if (!text_looks_like_cal_dump_start(s, len)) return false;
+    int nl = 0;
+    for (const char *q = s; *q; q++)
+        if (*q == '\n') nl++;
+    return nl >= 39;
+}
+
+/* дамп накоплен ЦЕЛИКОМ (калибровка + серийник); раннее применение калибровки по одному окну —
+ * отдельное событие TEXT_ACCUM_CAL_COEFFS в text_accum_feed. */
 static inline bool text_accum_is_complete_cal(const char *s, int len)
 {
-    if (text_looks_like_cal_dump_start(s, len)) {
-        int nl = 0;
-        for (const char *q = s; *q; q++)
-            if (*q == '\n') nl++;
-        if (nl >= 39) return true;
-    }
-    int off = text_accum_find_cal_window(s, len);
-    if (off < 0) return false;
-    /* М1 (release-gate-firmware-v1.2.28-code.md): окно CRC (10 строк
-     * коэффициентов + строка CRC = 110 Б) находится раньше, чем приходит
-     * весь дамп (40 строк = 400 Б) — при дроблении Text(400) прибором на
-     * несколько кадров SHPROTO (напр. 200+200) первый кадр уже даёт
-     * валидное CRC-окно, а серийник (L39) лежит в 400-м байте и ещё не
-     * пришёл. Раньше find_cal_window>=0 сразу давал TEXT_ACCUM_CAL, вызывающий
-     * (usb_host_cdc.c) сбрасывал аккумулятор, и второй кадр с остатком
-     * дампа (включая серийник) накапливался с нуля как "чистый префикс" —
-     * следующий дамп срабатывал так же рано, серийник терялся насовсем.
-     * Дамп считается завершённым только когда после найденного окна есть
-     * все 40 строк (400 Б), а не только 11 строк самого CRC-окна. */
-    return (off + 400) <= len;
+    int off = text_accum_find_last_cal_window(s, len);
+    if (off >= 0) return text_accum_cal_dump_end(s, len, off) >= 0;
+    return text_accum_is_complete_cal_positional(s, len);
 }
 
 /* -inf: один Text(404) с параметрами прибора (VERSION..PileUpThr). Подстрока,
@@ -174,6 +223,7 @@ typedef enum {
     TEXT_ACCUM_TCPOT,         /* ответ на -tc_pot? накоплен целиком */
     TEXT_ACCUM_SHORT_ACK,     /* короткий -ok — поглощён, отброшен без данных */
     TEXT_ACCUM_OVERFLOW,      /* переполнение без триггера — отброшено */
+    TEXT_ACCUM_CAL_COEFFS,   /* CRC-окно дампа только что появилось, дамп ещё не весь: применить калибровку, аккумулятор НЕ сбрасывать */
 } text_accum_result_t;
 
 /* Роутер накопителя — ВСЯ логика handle_rx_packet(CMD_TEXT) из
@@ -192,6 +242,7 @@ static inline text_accum_result_t text_accum_feed(char *accum, int *accum_len, i
     if (text_accum_should_reset_before_pkt(accum, *accum_len, pkt, pkt_len))
         *accum_len = 0;
 
+    int before = *accum_len;   /* длина до этого пакета (после возможного сброса) */
     int sp = cap - *accum_len - 1;
     if (sp < 0) sp = 0;
     int cp = pkt_len < sp ? pkt_len : sp;
@@ -207,10 +258,62 @@ static inline text_accum_result_t text_accum_feed(char *accum, int *accum_len, i
     *accum_len += cp;
     accum[*accum_len] = '\0';
 
-    if (text_accum_is_complete_cal(accum, *accum_len))       return TEXT_ACCUM_CAL;
+    /* Н1/Н2 раунда 2 — калибровка применяется, как в 1.2.27, по первому кадру с CRC-окном (событие CAL_COEFFS, без сброса), серийник — когда пришёл весь дамп (CAL); потерянный второй кадр больше не откладывает калибровку и не смешивает остаток дампа с -inf. */
+    int woff = text_accum_find_last_cal_window(accum, *accum_len);
+    if (woff >= 0) {
+        if (text_accum_cal_dump_end(accum, *accum_len, woff) >= 0) return TEXT_ACCUM_CAL;
+        if (woff + 110 > before) return TEXT_ACCUM_CAL_COEFFS;   /* окно впервые целиком — один раз на окно */
+    } else if (text_accum_is_complete_cal_positional(accum, *accum_len)) {
+        return TEXT_ACCUM_CAL;
+    }
+
     if (text_accum_is_complete_inf(accum))                   return TEXT_ACCUM_INF;
     if (text_accum_is_complete_tcpot(accum, *accum_len))     return TEXT_ACCUM_TCPOT;
     if (text_accum_is_complete_short_ack(accum, *accum_len)) { *accum_len = 0; return TEXT_ACCUM_SHORT_ACK; }
     if (*accum_len >= cap - 128)                             { *accum_len = 0; return TEXT_ACCUM_OVERFLOW; }
     return TEXT_ACCUM_NONE;
+}
+
+/* Что отдать разборщику ответа (spectrum_process_info_response / spectrum_process_tcpot_response): полуинтервал [*off, *end) буфера s длиной len. Возвращает false, если разбирать нечего. */
+static inline bool text_accum_result_span(text_accum_result_t r, const char *s, int len, int *off, int *end)
+{
+    if (r == TEXT_ACCUM_CAL) {
+        int w = text_accum_find_last_cal_window(s, len);
+        if (w >= 0) {
+            int e = text_accum_cal_dump_end(s, len, w);
+            if (e >= 0) { *off = w; *end = e; return true; }
+        }
+        /* позиционная ветка, CRC-окна нет */
+        *off = 0;
+        *end = len;
+        return true;
+    }
+    if (r == TEXT_ACCUM_CAL_COEFFS) {
+        int w = text_accum_find_last_cal_window(s, len);
+        if (w < 0) return false;
+        *off = w;
+        *end = w + 10 * text_accum_dump_lines(s + w, len - w, 39);
+        return true;
+    }
+    if (r == TEXT_ACCUM_INF) {
+        const char *v = strstr(s, "VERSION ");
+        if (!v) return false;
+        *off = (int)(v - s);
+        *end = len;
+        return true;
+    }
+    if (r == TEXT_ACCUM_TCPOT) {
+        const char *v = strstr(s, "Tcpot ");
+        if (!v) return false;
+        *off = (int)(v - s);
+        *end = len;
+        return true;
+    }
+    return false;
+}
+
+/* true для TEXT_ACCUM_CAL, TEXT_ACCUM_INF, TEXT_ACCUM_TCPOT (вызывающий сбрасывает аккумулятор после разбора); false для остальных, в том числе TEXT_ACCUM_CAL_COEFFS (остаток дампа ещё придёт). SHORT_ACK/OVERFLOW сбрасывает сама feed. */
+static inline bool text_accum_result_consumes(text_accum_result_t r)
+{
+    return r == TEXT_ACCUM_CAL || r == TEXT_ACCUM_INF || r == TEXT_ACCUM_TCPOT;
 }

@@ -138,49 +138,22 @@ static bool s_boot_once_done      = false;
 // Действие по результату text_accum_feed() (main/text_accum.h) — побочные
 // эффекты (вызов парсеров spectrum_*, сброс s_text_accum_len, ESP_LOG)
 // отдельно от чистой логики роутера, чтобы последнюю тестировать на хосте.
+// Н1 раунда 2: ЧТО разбирать — text_accum_result_span(), сбрасывать ли —
+// text_accum_result_consumes() (обе чистые, test_text_accum.c). CAL_COEFFS —
+// калибровка по CRC-окну без сброса; -inf — с "VERSION " (R1); SHORT_ACK и
+// OVERFLOW сбрасывает сама text_accum_feed (RO3).
 static void usb_host_cdc_apply_text_accum_result(text_accum_result_t tar)
 {
-    switch (tar) {
-    case TEXT_ACCUM_CAL: {
-        // R2 (release-gate-1.2.28-code-rc2.md §2.1): дамп может начинаться
-        // не с позиции 0 (S10 однострочный hex-ответ перед дампом, S07
-        // обрывок <9 байт, S22 "-ok"+дамп одним кадром) — найти CRC-валидное
-        // окно text_accum_find_cal_window (main/text_accum.h); не найдено —
-        // старое поведение (позиция 0), не хуже прежнего.
-        int off = text_accum_find_cal_window(s_text_accum, s_text_accum_len);
-        spectrum_process_info_response(s_text_accum + (off >= 0 ? off : 0));
-        s_text_accum_len = 0;
-        break;
+    int off = 0, end = 0;
+    if (text_accum_result_span(tar, s_text_accum, s_text_accum_len, &off, &end)) {
+        char saved = s_text_accum[end];   // end <= len < sizeof(s_text_accum)
+        s_text_accum[end] = '\0';         // в разбор — только отрезок [off, end)
+        if (tar == TEXT_ACCUM_TCPOT) spectrum_process_tcpot_response(s_text_accum + off);
+        else spectrum_process_info_response(s_text_accum + off);
+        s_text_accum[end] = saved;        // CAL_COEFFS: буфер копится дальше
     }
-    case TEXT_ACCUM_INF:
-        // #AWF-12b R1 (release-gate-1.2.28-code-rc2.md): указатель С ПОЗИЦИИ
-        // "VERSION ", не s_text_accum — посторонний мусор перед -inf (короткий
-        // ответ прибора, не распознанный как "-ok", напр. "-ok collecting…")
-        // иначе уходит в s_info_raw (spectrum.c store_raw_trimmed) и дальше в
-        // файл бэкапа (GET /api/settings/backup). text_accum_is_complete_inf
-        // гарантирует, что "VERSION " в буфере есть.
-        spectrum_process_info_response(strstr(s_text_accum, "VERSION "));
-        s_text_accum_len = 0;
-        break;
-    case TEXT_ACCUM_TCPOT:
-        // #DEV-6: ответ на -tc_pot? — один Text-пакет "Tcpot [...]".
-        spectrum_process_tcpot_response(strstr(s_text_accum, "Tcpot "));
-        s_text_accum_len = 0;
-        break;
-    case TEXT_ACCUM_SHORT_ACK:
-        // #AWF-12b F1: короткий -ok — подтверждение без данных калибровки.
-        // #AWF-12b RO3 (release-gate-1.2.28-code-rc2.md): сброс s_text_accum_len
-        // делает сама text_accum_feed (main/text_accum.h) — здесь его нет,
-        // чтобы правило было одно и тестировалось на хосте, а не копией.
-        break;
-    case TEXT_ACCUM_OVERFLOW:
-        // RO3: сброс — см. комментарий у SHORT_ACK выше.
-        ESP_LOGW(TAG, "text accum overflow without trigger, reset");
-        break;
-    case TEXT_ACCUM_NONE:
-    default:
-        break;
-    }
+    if (text_accum_result_consumes(tar)) s_text_accum_len = 0;
+    if (tar == TEXT_ACCUM_OVERFLOW) ESP_LOGW(TAG, "text accum overflow without trigger, reset");
 }
 
 static void handle_rx_packet(void)
