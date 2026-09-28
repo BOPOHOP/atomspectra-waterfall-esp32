@@ -1761,38 +1761,27 @@ void spectrogram_prepare_reboot(void)
     FSUNLOCK();
 }
 
-// М3: применить wf_seg_rebuild_ranges() к уже наполненному реестру (idx 0..maxidx),
-// static-буферы — не стек (httpd, 8 КБ, вызывающая цепочка уже близко к пределу).
-static void seg_rebuild_apply_ranges(uint32_t maxidx)
-{
-    static uint32_t rb_idx[WF_REG_CAP], rb_rows[WF_REG_CAP];
-    static uint32_t rb_g0[WF_REG_CAP], rb_g1[WF_REG_CAP];
-    int m = 0;
-    LOCK();
-    for (uint32_t idx = 0; idx <= maxidx && m < WF_REG_CAP; idx++) {
-        int i = reg_find(idx);
-        if (i < 0 || !s_seg_reg[i].finalized) continue;
-        rb_idx[m] = idx; rb_rows[m] = s_seg_reg[i].rows; m++;
-    }
-    UNLOCK();
-    wf_seg_rebuild_ranges(rb_rows, m, rb_g0, rb_g1);
-    LOCK();
-    for (int k = 0; k < m; k++) {
-        reg_set_range(rb_idx[k], rb_g0[k]);
-        int i = reg_find(rb_idx[k]);
-        if (i >= 0) reg_update_open(rb_idx[k], s_seg_reg[i].rows, s_seg_reg[i].bytes, rb_g1[k]);
-    }
-    UNLOCK();
-}
-
 /* #FW-65: leftover after a failed clear — rebuild registry/counters/next
- * WITHOUT unlinking (no walk mutation). (под s_fs_lock) */
+ * WITHOUT unlinking (no walk mutation). (под s_fs_lock)
+ * Н3 (раунд 2): [g0,g1) уцелевших сегментов текущей сессии берутся из реестра
+ * ДО очистки (снимок rb_prev), а не пересчитываются подряд от 0 — иначе при
+ * уцелевших файлах прежней сессии или одном хвосте текущей экспорт n42 терял
+ * строки кольца. static — не стек (httpd), вызов только под FSLOCK. */
 static void seg_rebuild_counters_from_disk(void)
 {
+    static wf_seg_range_snap_t rb_prev[WF_REG_CAP];
+    int n_prev = 0;
     DIR *d = opendir(WF_SEG_DIR);
     uint32_t maxidx = 0, completed = 0, flash_rows = 0;
     bool any = false;
     LOCK();
+    for (int i = 0; i < WF_REG_CAP; i++) {
+        if (!s_seg_reg[i].valid) continue;
+        rb_prev[n_prev].idx = s_seg_reg[i].idx;
+        rb_prev[n_prev].g0 = s_seg_reg[i].g0;
+        rb_prev[n_prev].g1 = s_seg_reg[i].g1;
+        n_prev++;
+    }
     reg_clear_all();
     UNLOCK();
     if (!d) {
@@ -1828,9 +1817,15 @@ static void seg_rebuild_counters_from_disk(void)
         }
         seg_read_ids_open(f, &rseq, &rstart);
         fclose(f);
+        uint32_t g0 = 0, g1 = 0;
+        bool had_range = wf_seg_restore_range(rb_prev, n_prev, idx, rows, &g0, &g1);
         LOCK();
         reg_add(idx, rseq, rstart);
         reg_mark_finalized(idx, rows, (uint32_t)sb.st_size);
+        if (had_range) {   // Н3: сегмент текущей сессии — прежний g0, g1 по строкам файла
+            reg_set_range(idx, g0);
+            reg_update_open(idx, rows, (uint32_t)sb.st_size, g1);
+        }
         UNLOCK();
         completed++;
         flash_rows += rows;
@@ -1839,11 +1834,6 @@ static void seg_rebuild_counters_from_disk(void)
     closedir(d);
     if (any)
         s_seg_next = maxidx + 1;
-    // М3 (release-gate-firmware-v1.2.28-code.md, wf_seg_rebuild_range.h):
-    // reg_add() оставляет g0=g1=0 — wf_exp_plan примет сегмент за "старый" и
-    // отдаст целиком, а кольцо (не сброшено на пути неудачной очистки)
-    // накроет те же строки — дубль. seg_rebuild_apply_ranges() ниже чинит.
-    if (any) seg_rebuild_apply_ranges(maxidx);
     LOCK();
     s_status.seg_count = completed;
     /* leftover inventory, not a session-monotonic increment */
