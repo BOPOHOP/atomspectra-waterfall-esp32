@@ -3,6 +3,8 @@
 #include "boot_config.h"
 #include "wf_offload.h"   // #REC-11-A2: автономная выгрузка сегментов водопада
 #include "monitor.h"      // #MON-1: серия CPS-мониторинга на плате
+#include "ota_github_client.h"   // AWF-5
+#include "ota_busy.h"            // AWF-5 P1-фикс
 #include "net_time.h"     // #FIELD-5: источник времени (SNTP/браузер/ручной)
 #include "debug_log_ring.h"
 #include "hist_drop_diag.h"
@@ -13,6 +15,8 @@
 #include <inttypes.h>
 #include <sys/time.h>
 #include "esp_timer.h"
+#include "esp_ota_ops.h"  // AWF-4: mark_app_valid_cancel_rollback после успешного старта
+#include "ota_mark_valid_plan.h"   // D3: годность образа не только по Wi-Fi (host-тест)
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"   // #FW-13 фикс №2: ожидание коммита свипа перед autosave
@@ -67,6 +71,7 @@ void app_main(void)
     if (boot_session == 0)
         ESP_LOGE(TAG, "backups disabled this boot: no usable session number");
     spectrum_restore_autosave();
+    spectrum_restore_base();   // AWF-3: база — после D, до clr_spec (тот сам чистит обе)
     spectrum_load_calibration();
     // #FW-3: очистка накопленного спектра при старте — после restore, до того как
     // спектрограмма снимет baseline. -rst прибору пошлётся на первом USB-коннекте.
@@ -111,6 +116,8 @@ void app_main(void)
     }
 
     // #FIELD-1: рабочий сетевой стек — общий для Indoor (STA) и Outdoor (полевой AP).
+    ota_busy_init();         // AWF-5 P1-фикс: до обоих OTA-путей
+    ota_gh_client_init();   // AWF-5: до web_server_init — эндпоинты уже могут читать s_progress
     web_server_init();
     monitor_init();      // #MON-1: кольцо серии CPS (6 ч в PSRAM) + задача-подписчик коммитов
     tcp_bridge_init();
@@ -144,8 +151,34 @@ void app_main(void)
     int      backup_fail_streak = 0;
     int64_t  backup_due_us = 0;          // 0 = срок ещё не назначен
     boot_config_t backup_cfg = bc;       // стартуем от прочитанного на boot
+    // AWF-2a (#2): проверка возврата из fallback Field AP — раз в 15 тиков
+    // (10с*15=150с, ~2.5 мин); функция сама no-op вне Field AP/при клиентах.
+    int wifi_return_tick = 0;
+    // AWF-4: rollback-подтверждение образа после Wi-Fi OTA. httpd уже поднят
+    // (web_server_init() выше, безусловно); ждём именно Wi-Fi (в Outdoor/Field
+    // AP wifi_is_connected() истинно, когда есть клиент, — тоже валидный "жив").
+    bool ota_valid_marked = false;
+    uint32_t seconds_since_boot = 0;   // D3: тик main() — доказательство, что цикл жив
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(10000));
+        seconds_since_boot += 10;
+        // D3 (P1, verify-awf4-2026-09-27.md): было только wifi_is_connected() —
+        // в Field/Outdoor AP без клиентов никогда true (wifi_manager.c:602-604),
+        // образ никогда не подтверждался. httpd уже поднят безусловно (см.
+        // комментарий выше) -> httpd_up=true; N=30с — main/ota_mark_valid_plan.h.
+        if (!ota_valid_marked &&
+            ota_mark_valid_should_fire(wifi_is_connected(), usb_host_cdc_is_connected(),
+                                        /*httpd_up=*/true, seconds_since_boot, 30)) {
+            ota_valid_marked = true;
+            esp_err_t e = esp_ota_mark_app_valid_cancel_rollback();
+            if (e != ESP_OK)
+                ESP_LOGW(TAG, "AWF-4: mark_app_valid_cancel_rollback: %s", esp_err_to_name(e));
+        }
+        if (++wifi_return_tick >= 15) {
+            wifi_return_tick = 0;
+            wifi_manager_try_return_to_sta();
+        }
+        spectrum_base_save_retry_tick();   // F4: повтор отложенной base.bin
         const spectrum_data_t *sp = spectrum_get_current();
         ESP_LOGI(TAG, "USB:%s WiFi:%s TCP:%s counts:%" PRIu32 " cpu:%u%%",
             usb_host_cdc_is_connected() ? "OK" : "--",

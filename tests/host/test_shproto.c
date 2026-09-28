@@ -30,6 +30,30 @@ void fuzz_backup_name(void);
 // Сторож набора после перезагрузки прибора (main/acq_watch.h).
 void acq_watch_suite(void);
 void acq_intent_suite(void);
+void cmd_is_device_reset_suite(void);
+// AWF-1/2a: восстановление спектра и реконнект/возврат Field AP.
+void test_restore_plan(void);
+void test_wifi_reconnect_plan(void);
+void test_wifi_return_plan(void);
+void test_wifi_return_backoff(void);
+// AWF-3: сброс прибора и слияние база+прибор (main/spectrum_base_plan.h).
+void spectrum_base_plan_suite(void);
+// AWF-2a captive: классификация URI активность/проба (main/http_activity_plan.h).
+void test_http_activity_plan(void);
+void test_http_404_activity(void);
+void test_http_activity_quiet_model(void);
+// AWF-2a финал: семантика missing-key boot-флага (main/boot_flag_plan.h).
+void test_boot_flag_plan(void);
+// AWF-4: проверка заголовка OTA-образа (main/ota_image_check.h).
+void ota_image_check_suite(void);
+void ota_mark_valid_plan_suite(void);
+void json_uint_fmt_suite(void);
+void version_suite(void);
+void sha256sums_suite(void);
+void gh_parse_suite(void);
+void ota_busy_suite(void);
+void ota_gh_decision_suite(void);
+void ota_gh_redirect_suite(void);
 
 // Тестовая команда. CMD_HISTOGRAM (0x01) объявлена в main/atomspectra.h, но она
 // вне include-path host-сборки; shproto трактует cmd как обычный uint8_t.
@@ -191,6 +215,25 @@ int main(void)
     fuzz_backup_name();
     acq_watch_suite();
     acq_intent_suite();
+    cmd_is_device_reset_suite();
+    test_restore_plan();
+    test_wifi_reconnect_plan();
+    test_wifi_return_plan();
+    test_wifi_return_backoff();
+    spectrum_base_plan_suite();
+    test_http_activity_plan();
+    test_http_404_activity();
+    test_http_activity_quiet_model();
+    test_boot_flag_plan();
+    ota_image_check_suite();
+    ota_mark_valid_plan_suite();
+    json_uint_fmt_suite();
+    version_suite();
+    sha256sums_suite();
+    gh_parse_suite();
+    ota_busy_suite();
+    ota_gh_decision_suite();
+    ota_gh_redirect_suite();
 
     if (g_failures) {
         printf("\n%d CHECK(S) FAILED\n", g_failures);

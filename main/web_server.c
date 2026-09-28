@@ -4,6 +4,7 @@
 #include "web_waterfall.h"
 #include "web_util.h"
 #include "boot_config.h"
+#include "http_activity_plan.h"   // AWF-2a captive: http_uri_is_activity()
 #include "spectrogram.h"    // #FIELD-5: spectrogram_time_synced() при установке времени
 #include "net_time.h"       // #FIELD-5: guard-логика источника времени
 #include "monitor.h"        // #MON-1: серия CPS-мониторинга (/api/monitor/series)
@@ -34,6 +35,11 @@
 #include "esp_timer.h"
 #include "esp_littlefs.h"
 #include "esp_random.h"
+#include "esp_ota_ops.h"          // AWF-4: POST /api/ota (Wi-Fi OTA)
+#include "esp_app_format.h"       // AWF-4: ESP_CHIP_ID_ESP32S3
+#include "ota_image_check.h"      // AWF-4: проверка заголовка образа (host-тест)
+#include "ota_github_client.h"    // AWF-5: обновление с GitHub
+#include "ota_busy.h"              // AWF-5 P1-фикс: общий замок с GitHub-install
 #include <dirent.h>
 
 static const char *TAG = "web";
@@ -113,6 +119,16 @@ static int parse_saved_index(const char *uri)
     return atoi(p + 11);
 }
 
+// AWF-3 (#7): наблюдаемость слияния база+прибор в /api/status.
+static void status_add_base_info(cJSON *root)
+{
+    uint32_t base_time = 0, base_counts = 0, dev_resets = 0;
+    spectrum_get_base_info(&base_time, &base_counts, &dev_resets);
+    cJSON_AddNumberToObject(root, "base_time", base_time);
+    cJSON_AddNumberToObject(root, "base_counts", base_counts);
+    cJSON_AddNumberToObject(root, "dev_resets", dev_resets);
+}
+
 static esp_err_t handle_status(httpd_req_t *req)
 {
     const spectrum_data_t *sp = spectrum_get_current();
@@ -125,6 +141,20 @@ static esp_err_t handle_status(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "total_counts", sp->total_counts);
     cJSON_AddNumberToObject(root, "cpu_load", sp->cpu_load);
     cJSON_AddBoolToObject(root, "tcp_client", tcp_bridge_client_connected());
+    // AWF-1 (#3): ФС отформатирована при этой загрузке — видимость сброса flash.
+    cJSON_AddBoolToObject(root, "fs_formatted", spectrum_fs_was_formatted());
+    // AWF-4: версия/раздел — UI опрашивает /api/status после OTA-заливки,
+    // чтобы показать новую версию/раздел без /api/system (там fw_version уже
+    // был, handle_system, #FW-28; здесь — тот же app_desc, для той же цели).
+    const esp_app_desc_t *app_desc = esp_app_get_description();
+    cJSON_AddStringToObject(root, "fw_version", app_desc ? app_desc->version : "?");
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    cJSON_AddStringToObject(root, "running_partition", running ? running->label : "?");
+    // AWF-3 (#8): раньше "time" был di->time_sec (из -inf, опрос раз в ~30 мин —
+    // застывало между опросами, пока spectrum.json со STAT рос каждую секунду;
+    // наблюдение 25.09: time=3611 неподвижно против растущего spectrum.json).
+    cJSON_AddNumberToObject(root, "time", sp->total_time_sec);
+    status_add_base_info(root);
 
     if (di->valid) {
         cJSON_AddNumberToObject(root, "dev", di->dev);
@@ -134,7 +164,6 @@ static esp_err_t handle_status(httpd_req_t *req)
         json_add_temp(root, "t1", di->t1);
         json_add_temp(root, "t2", di->t2);
         json_add_temp(root, "t3", di->t3);
-        cJSON_AddNumberToObject(root, "time", di->time_sec);
         cJSON_AddNumberToObject(root, "noise", di->noise);
         cJSON_AddNumberToObject(root, "max", di->max_integral);
     }
@@ -476,18 +505,256 @@ static esp_err_t handle_reset(httpd_req_t *req)
     return ESP_OK;
 }
 
+// AWF-5: GET /api/ota/github/check -- сверка последнего релиза GitHub.
+// Ответ строит ota_gh_check() (main/ota_github_client.c).
+static esp_err_t handle_ota_gh_check(httpd_req_t *req)
+{
+    char resp[512];   // #AWF-6: +html_url (до 200 Б) поверх прежних полей — 256 стало тесно
+    ota_gh_check(resp, sizeof(resp));
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, resp);
+    return ESP_OK;
+}
+
+// AWF-5: POST /api/ota/github/install -- запускает фоновую задачу
+// (ota_github_client.c: install_task); httpd-worker не блокируется на минуты
+// сетевого приёма/прошивки.
+static esp_err_t handle_ota_gh_install(httpd_req_t *req)
+{
+    if (!csrf_check(req)) return ESP_FAIL;
+    esp_err_t e = ota_gh_install_start();
+    if (e != ESP_OK) {
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_sendstr(req, "Install already running or OOM");
+        return ESP_FAIL;
+    }
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
+// AWF-5: GET /api/ota/github/progress -- опрос UI во время установки.
+static esp_err_t handle_ota_gh_progress(httpd_req_t *req)
+{
+    ota_gh_progress_t p = ota_gh_get_progress();
+    static const char *names[] = {"idle","checking","downloading","verifying",
+                                   "installing","done","error"};
+    char resp[192];
+    snprintf(resp, sizeof(resp),
+             "{\"state\":\"%s\",\"bytes\":%" PRIu32 ",\"total\":%" PRIu32 ",\"error\":\"%s\"}",
+             names[p.state], p.bytes, p.total, p.error);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, resp);
+    return ESP_OK;
+}
+
+// AWF-5: GET/POST /api/ota/github/channel -- тумблер "получать предрелизы".
+static esp_err_t handle_ota_gh_channel_get(httpd_req_t *req)
+{
+    char resp[48];
+    snprintf(resp, sizeof(resp), "{\"prerelease\":%s}",
+             ota_gh_prerelease_channel_get() ? "true" : "false");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, resp);
+    return ESP_OK;
+}
+
+static esp_err_t handle_ota_gh_channel_set(httpd_req_t *req)
+{
+    if (!csrf_check(req)) return ESP_FAIL;
+    char body[64] = {0};
+    int total = req->content_len;
+    if (total > 0 && total < (int)sizeof(body)) httpd_req_recv(req, body, total);
+    bool on = strstr(body, "\"prerelease\":true") != NULL;
+    ota_gh_prerelease_channel_set(on);
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
+// AWF-4: POST /api/ota — приём .bin потоком (буфер 4 КБ), запись в неактивный
+// OTA-раздел. CSRF как у остальных мутирующих POST. Тело — application/octet-stream
+// (не multipart): UI шлёт raw ArrayBuffer, curl — `--data-binary @file.bin`.
+// D4 (P3): httpd v5.4 — один task на приём (см. verify-awf4-2026-09-27.md
+// D5) — медленный клиент, вечно попадающий в HTTPD_SOCK_ERR_TIMEOUT, держал
+// бы его неограниченно, блокируя ВСЕ остальные HTTP-запросы. Порог — число
+// ПОДРЯД идущих таймаутов (сброс на каждый успешный recv), не время: точное
+// значение recv-таймаута — дефолт esp_http_server (не переопределён этим
+// проектом), поэтому абсолютное время не гарантируем (#AH-1 — не измеряем
+// то, что берём из чужого дефолта); 30 подряд отказов приёма — явно не
+// "штатная сеть подождала", а зависший/враждебный клиент.
+#define OTA_MAX_CONSECUTIVE_TIMEOUTS 30u
+
+// P1-фикс (verify-awf5-github-ota-2026-09-27.md разд.2.4): переименована в
+// _locked, тело не тронуто -- ota_busy_acquire/release снаружи, одной точкой
+// на функцию (иначе пришлось бы трогать все ~8 return-путей ниже).
+static esp_err_t handle_ota_locked(httpd_req_t *req)
+{
+    if (!csrf_check(req)) return ESP_FAIL;
+    int total = req->content_len;
+    if (total <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    const esp_partition_t *update = esp_ota_get_next_update_partition(NULL);
+    if (!update) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No OTA partition");
+        return ESP_FAIL;
+    }
+    if ((size_t)total > update->size) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Image too large for partition");
+        return ESP_FAIL;
+    }
+    // Как spectrum_reset(): прервать автосохранение, НЕ удаляя файлы спектра
+    // (writer не должен драться с OTA-write за flash-freeze/шину). Снимок
+    // спектра/водопада на flash — не трогаем, OTA его не касается.
+    spectrum_autosave_abort();
+
+    esp_ota_handle_t ota = 0;
+    // D1: OTA_SIZE_UNKNOWN стирает ВЕСЬ слот сразу (не только Content-Length
+    // байт от клиента) — обрезанная запись не оставляет "хвост" старого
+    // образа структурно смешанным со свежими байтами.
+    esp_err_t err = esp_ota_begin(update, OTA_SIZE_UNKNOWN, &ota);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "AWF-4: esp_ota_begin: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ota_begin");
+        return ESP_FAIL;
+    }
+
+    // Буфер в куче, не на стеке httpd-worker'а (config.stack_size=8192,
+    // web_server_init) — тот же приём, что handle_devlog (malloc(9000)).
+    const size_t bufsz = 4096;
+    uint8_t *buf = malloc(bufsz);
+    if (!buf) {
+        esp_ota_abort(ota);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+    int remaining = total, received = 0;
+    bool header_checked = false, image_ok = true;
+    ota_image_walker_t walker;             // D1: структурная сверка сегментов
+    ota_image_walker_init(&walker);
+    uint32_t timeout_streak = 0;           // D4: подряд идущие таймауты
+    while (remaining > 0) {
+        int to_read = remaining < (int)bufsz ? remaining : (int)bufsz;
+        int rd = httpd_req_recv(req, (char *)buf, to_read);
+        if (rd == HTTPD_SOCK_ERR_TIMEOUT) {
+            if (++timeout_streak > OTA_MAX_CONSECUTIVE_TIMEOUTS) {
+                free(buf);
+                esp_ota_abort(ota);
+                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Timeout budget exceeded");
+                return ESP_FAIL;
+            }
+            continue;   // повтор, не абор (задача 2)
+        }
+        timeout_streak = 0;
+        if (rd <= 0) {
+            free(buf);
+            esp_ota_abort(ota);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv error");
+            return ESP_FAIL;
+        }
+        if (!header_checked) {
+            header_checked = true;
+            // main/ota_image_check.h (host-тест tests/host/test_ota_image_check.c):
+            // magic 0xE9 + chip_id ДО esp_ota_end() — не пропускаем битый/чужой образ.
+            if (!ota_image_header_is_valid((const uint8_t *)buf, (size_t)rd, ESP_CHIP_ID_ESP32S3))
+                image_ok = false;
+        }
+        if (!image_ok) break;
+        // D1: подать те же байты, что уходят в esp_ota_write(), в структурный
+        // walker — magic/segment_count/пройденность сегментов независимо от
+        // Content-Length (см. main/ota_image_check.h).
+        if (!ota_image_walker_feed(&walker, (const uint8_t *)buf, (size_t)rd)) {
+            image_ok = false;
+            break;
+        }
+        err = esp_ota_write(ota, buf, rd);
+        if (err != ESP_OK) {
+            free(buf);
+            esp_ota_abort(ota);
+            ESP_LOGE(TAG, "AWF-4: esp_ota_write: %s", esp_err_to_name(err));
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ota_write");
+            return ESP_FAIL;
+        }
+        remaining -= rd;
+        received += rd;
+    }
+    free(buf);
+    if (!image_ok) {
+        esp_ota_abort(ota);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad image header (magic/chip_id/segments)");
+        return ESP_FAIL;
+    }
+    // D1 (verify-awf4-2026-09-27.md, дефект D1/T3): Content-Length клиента
+    // может совпасть с фактически принятым числом байт — это НЕ доказывает,
+    // что образ ЦЕЛ (оба числа под контролем клиента). Структурная сверка:
+    // все сегменты, заявленные САМИМ образом, обязаны быть пройдены целиком.
+    if (!ota_image_walker_is_complete(&walker)) {
+        esp_ota_abort(ota);
+        ESP_LOGW(TAG, "AWF-4: D1 guard: image incomplete (%d/%d bytes, walker state=%d)",
+                 received, total, (int)walker.state);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Incomplete image (truncated)");
+        return ESP_FAIL;
+    }
+
+    // esp_ota_end() сама проверяет образ (SHA-256/подпись при secure boot) и
+    // отвергает мусор эффективнее нашего header-чека выше — тот отбраковывает
+    // раньше (не тратит запись всего .bin), а не заменяет эту проверку.
+    err = esp_ota_end(ota);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "AWF-4: esp_ota_end (image validation failed): %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ota_end: invalid image");
+        return ESP_FAIL;
+    }
+    err = esp_ota_set_boot_partition(update);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "AWF-4: esp_ota_set_boot_partition: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "set_boot_partition");
+        return ESP_FAIL;
+    }
+
+    char resp[128];
+    snprintf(resp, sizeof(resp), "{\"ok\":true,\"bytes\":%d,\"partition\":\"%s\"}",
+             received, update->label);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, resp);
+    ESP_LOGW(TAG, "AWF-4: OTA written %d bytes to '%s', rebooting", received, update->label);
+    // Как handle_reboot_esp/handle_wifi_reset: ответ уже отдан httpd_resp_sendstr
+    // (блокирующий send() успел уйти в TCP-буфер), задержка — дать WiFi/LWIP
+    // время реально протолкнуть его в эфир до esp_restart().
+    vTaskDelay(pdMS_TO_TICKS(800));
+    esp_restart();
+    return ESP_OK;
+}
+
+// P1-фикс: общий замок с GitHub-install_task (main/ota_busy.h) -- занято ->
+// 409, esp_ota_begin() (внутри _locked) вообще не вызывается.
+static esp_err_t handle_ota(httpd_req_t *req)
+{
+    if (!ota_busy_acquire(OTA_BUSY_MANUAL)) {
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_sendstr(req, "GitHub OTA install in progress");
+        return ESP_FAIL;
+    }
+    esp_err_t r = handle_ota_locked(req);
+    ota_busy_release(OTA_BUSY_MANUAL);   // на успехе _locked уже esp_restart() и сюда не дойдёт
+    return r;
+}
+
 // #FW-2/#FW-3: GET текущих настроек «Поведение при старте платы» (NVS).
 static esp_err_t handle_boot_config_get(httpd_req_t *req)
 {
     boot_config_t bc;
     boot_config_load(&bc);
-    char resp[320];
+    char resp[380];
     // #FW-42: name_prefix санитизирован в NVS ([A-Za-z0-9_-]) → JSON-escape не нужен.
     // issue #52: + настройки резервных снимков и текущий номер сессии (read-only).
+    // AWF-2a финал: field_ap_fallback — прямая семантика (structура тоже
+    // положительная теперь, см. boot_config.h), отсутствие ключа в NVS = ВЫКЛ.
     snprintf(resp, sizeof(resp),
         "{\"autostart_spectrum\":%s,\"autostart_waterfall\":%s,"
         "\"clear_spectrum\":%s,\"clear_waterfall\":%s,\"name_prefix\":\"%s\","
         "\"backup_keep\":%u,\"backup_hours\":%u,\"backup_test_minutes\":%s,"
+        "\"field_ap_fallback\":%s,"
         "\"session\":%" PRIu32 "}",
         bc.autostart_spectrum  ? "true" : "false",
         bc.autostart_waterfall ? "true" : "false",
@@ -496,6 +763,7 @@ static esp_err_t handle_boot_config_get(httpd_req_t *req)
         bc.name_prefix,
         (unsigned)bc.backup_keep, (unsigned)bc.backup_hours,
         bc.backup_test_minutes ? "true" : "false",
+        bc.field_ap_fallback_enabled ? "true" : "false",
         boot_config_get_session());
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, resp);
@@ -553,6 +821,8 @@ static esp_err_t handle_boot_config_set(httpd_req_t *req)
     // Стендовый режим: Y читается как минуты. В UI поля нет намеренно — только API.
     if ((it = cJSON_GetObjectItem(root, "backup_test_minutes")))
         bc.backup_test_minutes = cJSON_IsTrue(it);
+    if ((it = cJSON_GetObjectItem(root, "field_ap_fallback")))
+        bc.field_ap_fallback_enabled = cJSON_IsTrue(it);
     cJSON_Delete(root);
     int rc = boot_config_save(&bc);
     httpd_resp_set_type(req, "application/json");
@@ -718,10 +988,17 @@ static esp_err_t handle_list(httpd_req_t *req)
     return ESP_OK;
 }
 
+// #AWF-6/bug: страницы встроены в прошивку и отдаются по фиксированному URI без
+// версии в пути; без Cache-Control браузер применяет эвристическое кеширование
+// и после OTA (тот же /system, новый бинарник) показывает старую вкладку, пока
+// её не обновят через F5 -- новые блоки в разметке (напр. AWF-5 "Установить с
+// GitHub") тогда не видны, хотя уже зашиты. no-cache = обязательная ревалидация
+// (If-Modified-Since/ETag) на КАЖДЫЙ показ, не "не кешировать вовсе".
 #define EMBED_HTML_HANDLER(fn,sym) static esp_err_t fn(httpd_req_t *req){ \
     extern const uint8_t sym##_start[] asm("_binary_" #sym "_start"); \
     extern const uint8_t sym##_end[]   asm("_binary_" #sym "_end"); \
     httpd_resp_set_type(req,"text/html"); \
+    httpd_resp_set_hdr(req,"Cache-Control","no-cache"); \
     httpd_resp_send(req,(const char *)sym##_start, sym##_end - sym##_start); \
     return ESP_OK; }
 EMBED_HTML_HANDLER(handle_index,        index_html)
@@ -730,6 +1007,11 @@ EMBED_HTML_HANDLER(handle_system_page,  system_html)
 EMBED_HTML_HANDLER(handle_service_page, service_html)
 EMBED_HTML_HANDLER(handle_monitor_page, monitor_html)
 EMBED_HTML_HANDLER(handle_captive_page, captive_html)   // #FIELD-10/#FIELD-11: лёгкая captive-landing
+// F1 (итоговое ревью 25.09): обёртка handle_captive_page_route (откат метки
+// активности через prev-таблицу) убрана вместе со всей prev/cancel-моделью —
+// активность теперь поднимает ТОЛЬКО общий трамплин над uris[] (ниже,
+// web_server_init), который классифицирует URI ДО вызова любого обработчика;
+// /captive регистрируется как раньше, напрямую на handle_captive_page.
 
 // #FIELD-5: общий JS авто-синхронизации времени (application/javascript, не text/html).
 static esp_err_t handle_common_time_js(httpd_req_t *req)
@@ -1162,6 +1444,13 @@ static esp_err_t handle_export_csv(httpd_req_t *req)
 static esp_err_t handle_saved_export_xml(httpd_req_t *req);
 static esp_err_t handle_saved_export_csv(httpd_req_t *req);
 static esp_err_t handle_saved_json(httpd_req_t *req);
+// AWF-2a финал: обработчик ошибки 404 esp_http_server (регистрация ниже, у
+// httpd_register_err_handler — определение рядом с open_fn/activity slots).
+// Срабатывает ТОЛЬКО когда uri_match_fn не нашёл НИ ОДНОГО зарегистрированного
+// обработчика; httpd_resp_send_err(...,HTTPD_404_NOT_FOUND,...) ВНУТРИ уже
+// СОВПАВШЕГО обработчика (web_server.c/web_waterfall.c/spectrum_http_cache.c) —
+// другой путь esp_http_server, этим handle_404 не перехватывается, не трогать.
+static esp_err_t handle_404(httpd_req_t *req, httpd_err_code_t err);
 
 static esp_err_t handle_saved_get(httpd_req_t *req)
 {
@@ -1500,6 +1789,12 @@ static esp_err_t handle_system(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "ap_clients",     wifi_manager_ap_clients());
     cJSON_AddBoolToObject(root,   "ap_pass_default", wifi_manager_ap_pass_is_default());
     cJSON_AddBoolToObject(root,   "ap_forced",      wifi_manager_ap_forced());
+    // AWF-2a доработка: диагностика застревания в Field AP (живой тест 25.09,
+    // 11 минут без следа) — причина последнего блока возврата + давность HTTP.
+    cJSON_AddStringToObject(root, "return_block_reason", wifi_manager_return_block_reason());
+    // F1: справочные поля — 0/false, пока открыт хоть один user-сокет
+    // (гейт возврата смотрит НЕ на них, а на web_server_http_activity_quiet()).
+    cJSON_AddNumberToObject(root, "http_idle_s", (double)web_server_http_idle_s());
     cJSON_AddStringToObject(root, "time_source",    net_time_source_str());
     cJSON_AddBoolToObject(root,   "sntp_synced",    net_time_sntp_synced());
     // #PERF-1/#PERF-2: observability for multi-tab spectrum cache + HEAVY gate
@@ -2044,6 +2339,8 @@ static esp_err_t handle_time_set(httpd_req_t *req)
 // клиент, проба до неё не доходит; для чистоты отвечаем 204 (как настоящий generate_204).
 static esp_err_t handle_captive_probe(httpd_req_t *req)
 {
+    // F1 (итоговое ревью 25.09): классификация теперь идёт ДО дispatch, в
+    // общем трамплине (web_server_init) — здесь ничего откатывать не нужно.
     if (wifi_manager_is_ap_mode()) {
         // #FIELD-10/#FIELD-11: вместо 302 на тяжёлый index отдаём лёгкую captive-landing
         // прямо в мини-браузере ОС — крупный адрес 192.168.4.1 (виден сразу) + авто-редирект
@@ -2144,6 +2441,61 @@ static esp_err_t handle_net_mode(httpd_req_t *req)
     return ESP_OK;
 }
 
+// F1 (итоговое ревью 25.09): активность — на уровне СОКЕТА (прежняя модель
+// метила ОТКРЫТИЕ соединения; keep-alive-опрос и WS водопада держат одно
+// соединение часами, метка не обновлялась — через 10 мин работающий
+// пользователь считался бездействующим). Модель и host-тесты —
+// http_activity_plan.h. open_fn/close_fn метят открытие/закрытие;
+// web_server_note_request_activity() — ЕДИНСТВЕННАЯ точка, где запрос
+// СЧИТАЕТСЯ (общий трамплин над uris[] ниже + choke points web_waterfall.c).
+// N1 (ревью-2): open_fn/close_fn для активности БОЛЬШЕ НЕ НУЖНЫ — модель
+// упрощена до метки последнего запроса (http_activity_plan.h), сокет ей не
+// нужен вовсе. close_fn остаётся ТОЛЬКО ради чистки WS-реестра водопада
+// (web_waterfall_on_close) — config.close_fn ниже указывает на него напрямую.
+static http_activity_state_t s_activity;
+
+void web_server_note_request_activity(const char *uri)
+{
+    http_activity_note_request(&s_activity, http_uri_is_activity(uri),
+                                (uint32_t)(esp_timer_get_time() / 1000));
+}
+
+// Незарегистрированный URI структурно НЕ проходит через трамплин (тот висит
+// только на СОВПАВШИХ обработчиках) — не поднимает активность без единой
+// лишней строчки здесь. http_404_is_activity() остаётся тестируемым
+// инвариантом-документацией (всегда false).
+static esp_err_t handle_404(httpd_req_t *req, httpd_err_code_t err)
+{
+    (void)err;
+    httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Not Found");
+    return ESP_OK;
+}
+
+// F1: общий трамплин над uris[] (регистрация ниже, web_server_init) — индекс
+// в user_ctx выбирает исходный обработчик из простого массива функций (без
+// malloc/struct); 80 = запас max_uri_handlers (комментарий ниже, ~53 факт).
+#define WEB_SERVER_URI_MAX 90
+static esp_err_t (*s_wrap_handlers[WEB_SERVER_URI_MAX])(httpd_req_t *);
+
+static esp_err_t activity_trampoline(httpd_req_t *req)
+{
+    size_t idx = (size_t)(intptr_t)req->user_ctx;
+    web_server_note_request_activity(req->uri);
+    return s_wrap_handlers[idx](req);
+}
+
+bool web_server_http_activity_quiet(uint32_t threshold_ms)
+{
+    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    return http_activity_quiet(&s_activity, now_ms, threshold_ms);
+}
+
+uint32_t web_server_http_idle_s(void)
+{
+    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    return (now_ms - s_activity.last_user_event_ms) / 1000;
+}
+
 void web_server_init(void)
 {
     csrf_generate();
@@ -2155,27 +2507,37 @@ void web_server_init(void)
     // tskNO_AFFINITY позволял httpd (prio 5) исполняться на core 0 рядом с
     // USB-приёмом — уводим целиком.
     config.core_id = 1;
-    // #WF-2/#MON-1/#FIELD-4/#FW-50/issue #52: пересчитано 2026-09-07 по факту, а не
-    // по этому комментарию — он отставал (числился 50, в uris[] был 51).
-    // Сейчас: 53 в uris[] (в т.ч. 2 новых /api/backup/*) + 20 waterfall
-    // (web_waterfall_register: 19 reg + /ws/waterfall) = 73. С прежним лимитом 72
+    // #WF-2/#MON-1/#FIELD-4/#FW-50/issue #52/AWF-5: пересчитано 2026-09-27 по факту
+    // (было 53+20=73, лимит 80 — AWF-5 добавила 6 /api/ota/github/* эндпоинтов).
+    // Сейчас: 59 в uris[] + 20 waterfall (web_waterfall_register: 19 reg +
+    // /ws/waterfall) = 79. С прежним лимитом 80 запас был бы всего +1 —
     // ПОСЛЕДНИЙ обработчик молча не регистрировался бы → тихий 404 (та самая
-    // авария, которой лимит 45 стоил цикла reconnect). 80 даёт запас +7.
+    // авария, которой лимит 45 стоил цикла reconnect). 90 даёт запас +11.
     // Добавляешь эндпоинт — пересчитай:
     //   awk '/httpd_uri_t uris\[\]/,/^    };/' main/web_server.c | grep -cE '^\s*\{"/'
     //   grep -cE '^\s*reg\(server' main/web_waterfall.c   (+1 на /ws/waterfall)
-    config.max_uri_handlers = 80;
+    config.max_uri_handlers = 90;
     config.stack_size = 8192;
     config.max_open_sockets = 11;        // из 16 LWIP-сокетов; запас для tcp_bridge + sntp
     config.lru_purge_enable = true;      // при исчерпании пула закрыть LRU-соединение, не отказывать (errno 23)
     config.uri_match_fn = httpd_uri_match_wildcard;
     // #UI-15 P0: чистим WS-реестр при ЛЮБОМ закрытии сокета (RST/FIN/LRU/F5);
     // без callback зомбирующиеся fd ломают broadcast после нескольких F5.
-    config.close_fn = web_waterfall_on_close;
+    config.close_fn = web_waterfall_on_close;   // N1: активности тут больше не нужно
     // #UI-15 P2: сжимаем default recv/send (~5 c) — освобождаем сокеты быстрее
     // под давлением F5+poll, иначе пул держит «полудохлые» соединения долго.
     config.recv_wait_timeout = 3;
     config.send_wait_timeout = 3;
+    // N1 (ревью-2): TCP keepalive — зомби-сокет (телефон ушёл из зоны, FIN не
+    // пришёл, ACK последнего ответа получен, lwIP не ретранслирует) теперь
+    // корректно обнуляется гейтом возврата (активность по метке запроса, не
+    // по факту, что сокет ещё открыт), но keepalive всё равно освобождает
+    // занятый слот httpd раньше, чем это сделал бы LRU (только при 11/11).
+    // Значения IDF-дефолтов (esp_http_server.h): idle/interval 5с, count 3.
+    config.keep_alive_enable = true;
+    config.keep_alive_idle = 5;
+    config.keep_alive_interval = 5;
+    config.keep_alive_count = 3;
 
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) != ESP_OK) {
@@ -2198,6 +2560,12 @@ void web_server_init(void)
         {"/api/debug/log/config",        HTTP_POST, handle_debug_log_config_set, NULL},  // CSRF
         {"/api/monitor/series",          HTTP_GET,  handle_monitor_series,   NULL},  // #MON-1
         {"/api/reset",                   HTTP_POST, handle_reset,            NULL},
+        {"/api/ota",                     HTTP_POST, handle_ota,              NULL},  // AWF-4
+        {"/api/ota/github/check",        HTTP_GET,  handle_ota_gh_check,     NULL},  // AWF-5
+        {"/api/ota/github/install",      HTTP_POST, handle_ota_gh_install,   NULL},  // AWF-5
+        {"/api/ota/github/progress",     HTTP_GET,  handle_ota_gh_progress,  NULL},  // AWF-5
+        {"/api/ota/github/channel",      HTTP_GET,  handle_ota_gh_channel_get, NULL},// AWF-5
+        {"/api/ota/github/channel",      HTTP_POST, handle_ota_gh_channel_set, NULL},// AWF-5
         {"/api/boot-config",             HTTP_GET,  handle_boot_config_get,  NULL},
         {"/api/boot-config",             HTTP_POST, handle_boot_config_set,  NULL},
         {"/api/save",                    HTTP_POST, handle_save,             NULL},
@@ -2241,10 +2609,27 @@ void web_server_init(void)
         {"/",                            HTTP_GET,  handle_index,            NULL},
     };
 
-    for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++)
-        httpd_register_uri_handler(server, &uris[i]);
+    // N4 (ревью-2): uris[] — статический литерал, его размер ИЗВЕСТЕН на
+    // сборке (в отличие от web_waterfall.c's reg(), тут нужен ровно
+    // _Static_assert, не рантайм-guard) — лишняя запись без пересмотра
+    // WEB_SERVER_URI_MAX раньше молча переполнила бы s_wrap_handlers[].
+    _Static_assert(sizeof(uris) / sizeof(uris[0]) <= WEB_SERVER_URI_MAX,
+                   "WEB_SERVER_URI_MAX меньше числа записей uris[]");
+
+    // F1: трамплин маркирует активность (по http_uri_is_activity(req->uri))
+    // ДО вызова настоящего обработчика — правка ТОЛЬКО регистрации (эта
+    // петля), не тел ~53 обработчиков. user_ctx — индекс в s_wrap_handlers
+    // (иначе он свободен у всех записей uris[], проверено до внедрения).
+    for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {
+        s_wrap_handlers[i] = uris[i].handler;
+        httpd_uri_t entry = uris[i];
+        entry.handler = activity_trampoline;
+        entry.user_ctx = (void *)(intptr_t)i;
+        httpd_register_uri_handler(server, &entry);
+    }
 
     web_waterfall_register(server);      // /waterfall, /api/waterfall/*, /ws/waterfall
+    httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, handle_404);
 
     ESP_LOGI(TAG, "Web server started on port %d", config.server_port);
 }
