@@ -132,7 +132,7 @@ Then a future reset can be detected and both snapshots handed to the manufacture
 snapshot" button on the "Service" page — `POST /api/settings/snapshot` saves both replies
 (`-inf` and `-tc_pot?`) to LittleFS with a timestamp; `GET /api/settings/snapshot` returns
 the last saved snapshot WITHOUT re-querying the instrument (important if the DSP tuning is
-broken right now — a POST would not overwrite it with a bad read). `main/web_server.c:2071-2236`
+broken right now — a POST would not overwrite it with a bad read). `main/web_server.c:2072-2238`
 (`handle_settings_snapshot`, `handle_settings_snapshot_get`), `web/service.html` and
 `demo/service.html` (button + "Download last snapshot" link). The root defect itself (the
 instrument zeroing its own tuning) remains an instrument limitation — the snapshot only
@@ -157,7 +157,7 @@ same dump) is still read correctly.
 acquisition (#AWF-12) sends `-cal` as long as no calibration is set — if it succeeds once,
 the serial number gets filled the same way. The mitigation is one-shot: once
 `spectrum_calibration_is_missing()` turns false, further starts stop requesting `-cal`
-(`main/usb_host_cdc.c:961-962`, `main/calib_autoread.h:99-109`), so the serial number loses
+(`main/usb_host_cdc.c:982-983`, `main/calib_autoread.h:99-109`), so the serial number loses
 its automatic chances to update until the calibration is cleared again. Auto-read does not
 fire at all for starts over the TCP bridge (see F3 below). The root cause (an instrument
 that genuinely truncates its `-cal` reply) is not verifiable by static reading — it needs
@@ -244,7 +244,7 @@ arrived" requires `/api/device` (`calib_set`) and the command log.
 grew, logs `cal.readEmpty` ("device returned an empty calibration (zeros/NaN) — board
 calibration unchanged") to the log panel. The counter is `main/spectrum.c:90,548,1196`
 (bumped under the same `SPEC_LOCK` as the rejection branch itself), the reply field is
-`main/web_server.c:1745`, the UI read is `web/index.html:690-698`, `web/service.html:337-344`
+`main/web_server.c:1746`, the UI read is `web/index.html:690-698`, `web/service.html:337-344`
 (+ demo mirrors). The behavior itself (do not overwrite) is unchanged — only visibility was
 added.
 
@@ -272,12 +272,12 @@ not the one just added — the search would have started in the wrong place (the
 that already cost an incident at the old limit of 45).
 
 As of v1.2.28 all 4 registration sites check the return value and log the failure:
-`ESP_LOGE(TAG, "issue#52b: register '%s' failed: %s", ...)` — `main/web_server.c:2784`,
+`ESP_LOGE(TAG, "issue#52b: register '%s' failed: %s", ...)` — `main/web_server.c:2786`,
 `main/web_waterfall.c:1253,1298`, `main/wifi_manager.c:284`. `config.max_uri_handlers` was
 recounted and raised from the old 80 (against 73 actual) to **90** against **79** actual
-routes (headroom +11) — `main/web_server.c:2626,2668` (`WEB_SERVER_URI_MAX`); a
+routes (headroom +11) — `main/web_server.c:2628,2670` (`WEB_SERVER_URI_MAX`); a
 `_Static_assert` there keeps `uris[]` from exceeding the limit at compile time
-(`:2748-2749`).
+(`:2769-2770`).
 
 ### #AWF-12b: theoretical instrument-response packet sequences (R2/R3) — FIXED (v1.2.28)
 
@@ -292,11 +292,28 @@ later text reply until the accumulator overflowed (~4 KB, ≈2 h at a 30-minute 
 As of v1.2.28 (`fadde1c`, sweep-C): `text_accum_find_cal_window()` scans the whole
 accumulator byte-by-byte looking for 10 coefficient lines plus a CRC line valid under CRC32
 — `main/text_accum.h:52-118`; a `\0` inside a packet is replaced with a space on copy
-(`main/text_accum.h:243-256`, was a bare `memcpy`); `main/usb_host_cdc.c:148-153` now passes
+(`main/text_accum.h:332-336`, was a bare `memcpy`); `main/usb_host_cdc.c:160-165` (via
+`text_accum_dispatch()`, `main/text_accum.h:443-460`) now passes
 `spectrum_process_info_response()` the found window instead of always position 0. Verified
 against a real-world fixture (an actual dump `REAL_DUMP_110` from `.logs/cal_capture.txt`,
 CRC32 independently checked with `zlib.crc32`) and by mutation testing — 4/4 mutants killed. None of these sequences has still ever fired live — the fix closes
 a code-level vulnerability, not an observed incident.
+
+**Split dump and a lost frame (1.2.28 review, round 3).** If the instrument sends the `-cal` dump
+in several frames and the last frame is lost, the next dump could "complete" the old one to 40
+lines, and the serial number was taken from someone else's line. The accumulator now remembers
+packet starts (`text_accum_marks_t`, `main/text_accum.h:241-245`): if a packet started on a line
+boundary in the dump's tail and the CRC window of a possible new dump has not fully arrived, the
+serial is not taken until the next packet or one second of silence decides
+(`TEXT_ACCUM_QUIET_MS`, `main/usb_host_cdc.c:253-259`); a new dump with the same beginning is
+recognised at once. The cost: for a dump whose last frame starts on a line boundary the serial
+arrives up to ~1 s later. Remaining: (1) a double loss (the previous dump lost its last frame,
+the next one lost everything after its first frame) combined with recalibrating the instrument
+between the two `-cal` requests yields a wrong serial until the next complete `-cal`; (2) a
+stray reply in the same frame as a dump start shorter than 110 bytes still loses that dump, as
+in 1.2.27 and ae667ba (calibration is not applied, the automatic `-cal` request repeats). The
+dump's frame size on the live instrument has not been captured; only whole Text(400) replies
+were observed.
 
 ### #FW-19: n42 export was truncated by the flash-ring capacity (256 rows ≈ 4.25 h) — FIXED (v1.2.28)
 
@@ -308,7 +325,7 @@ As of v1.2.28 (`425b4df`, sweep-A) the n42 export streams FINALIZED flash segmen
 ~760 rows) merged with the current session's ring sections by global row index — the plan is
 built by a pure `wf_exp_plan()` (`main/wf_export_plan.h`), the handler is `h_export_n42`
 (`main/web_waterfall.c:651`), the atomic registry snapshot is
-`spectrogram_export_snapshot` (`main/spectrogram.c:2013`). No row is ever emitted twice;
+`spectrogram_export_snapshot` (`main/spectrogram.c:2012`). No row is ever emitted twice;
 `?ring=1` keeps the old behavior (ring only, ≤256 rows) — `main/web_waterfall.c:637-658`.
 The export-time cost on a full flash (tens of seconds, httpd fully busy, same class as
 before when serving one segment) and the single current-calibration-per-file limitation
