@@ -81,6 +81,9 @@ void text_accum_r2_offset_dump_suite(void);
 void text_accum_r2_fragment_before_dump_suite(void);
 void text_accum_r2_ok_plus_dump_one_frame_suite(void);
 void text_accum_r3_null_byte_suite(void);
+void text_accum_m1_split_real_dump_suite(void);
+void wf_seg_rebuild_range_suite(void);
+void spec_cache_gen_suite(void);
 
 // Тестовая команда. CMD_HISTOGRAM (0x01) объявлена в main/atomspectra.h, но она
 // вне include-path host-сборки; shproto трактует cmd как обычный uint8_t.
@@ -283,6 +286,9 @@ int main(void)
     text_accum_r2_fragment_before_dump_suite();
     text_accum_r2_ok_plus_dump_one_frame_suite();
     text_accum_r3_null_byte_suite();
+    text_accum_m1_split_real_dump_suite();
+    wf_seg_rebuild_range_suite();
+    spec_cache_gen_suite();
 
     if (g_failures) {
         printf("\n%d CHECK(S) FAILED\n", g_failures);
