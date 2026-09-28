@@ -13,6 +13,7 @@
 #include "monitor.h"        // #MON-1: серия CPS-мониторинга (/api/monitor/series)
 #include "spectrum_http_cache.h"  // #PERF-1: 2s snapshot cache + meta/binary
 #include "http_io_gate.h"         // #PERF-2: HEAVY lane gate
+#include "flash_quiet.h"          // М7: координация записи слепка DSP с autosave (#FW-8)
 #include "backup_plan.h"          // issue #52: разбор имени снимка в /api/backup/*
 #include "debug_log_ring.h"
 #include "esp_heap_caps.h"  // #MON-1: PSRAM-буфер чанка серии
@@ -591,10 +592,11 @@ static esp_err_t handle_ota_gh_channel_set(httpd_req_t *req)
 // D5) — медленный клиент, вечно попадающий в HTTPD_SOCK_ERR_TIMEOUT, держал
 // бы его неограниченно, блокируя ВСЕ остальные HTTP-запросы. Порог — число
 // ПОДРЯД идущих таймаутов (сброс на каждый успешный recv), не время: точное
-// значение recv-таймаута — дефолт esp_http_server (не переопределён этим
-// проектом), поэтому абсолютное время не гарантируем (#AH-1 — не измеряем
-// то, что берём из чужого дефолта); 30 подряд отказов приёма — явно не
-// "штатная сеть подождала", а зависший/враждебный клиент.
+// значение recv-таймаута — О9 (release-gate-firmware-v1.2.28-code.md):
+// ПЕРЕОПРЕДЕЛЁН этим проектом, `config.recv_wait_timeout = 3` (ниже,
+// web_server_init) — 3 с, не дефолт esp_http_server; бюджет простоя httpd
+// D4 = 30 × 3 с = 90 с. 30 подряд отказов приёма — явно не "штатная сеть
+// подождала", а зависший/враждебный клиент.
 #define OTA_MAX_CONSECUTIVE_TIMEOUTS 30u
 
 // P1-фикс (verify-awf5-github-ota-2026-09-27.md разд.2.4): переименована в
@@ -2138,15 +2140,24 @@ static esp_err_t handle_settings_backup(httpd_req_t *req)
 
 // BUG-AS-08 (KNOWN_ISSUES.md:77): пишет снимок на flash. Вынесена из
 // handle_settings_snapshot ниже — держит его < 25 строк (delegation guard).
-static void settings_snapshot_write_file(const char *info_line,
+// М7 (release-gate-firmware-v1.2.28-code.md): flash_quiet_writer_lock — тот же
+// лок, что берут autosave (spectrum.c) и /api/save перед своей flash-записью;
+// раньше запись шла в обход и могла совпасть с секундным пакетом гистограммы
+// (класс потерь #FW-8). Успех — по КАЖДОМУ шагу (fopen/fputs/fclose), не
+// только fopen: caller больше не отвечает "сохранён" на обрезанную/неполную
+// запись (не проверялось совсем).
+static bool settings_snapshot_write_file(const char *info_line,
                                           const char *tcpot_line, const char *stamp)
 {
+    if (!flash_quiet_writer_lock(flash_quiet_writer_lock_ticks())) return false;
     FILE *f = fopen(DSP_SNAPSHOT_PATH, "w");
-    if (!f) return;   // сбой записи — не блокирует скачивание, просто не сохранится
-    fprintf(f, "# AtomSpectra DSP snapshot %s\r\n", stamp);
-    fputs(info_line, f); fputs("\r\n", f);
-    fputs(tcpot_line, f); fputs("\r\n", f);
-    fclose(f);
+    bool ok = f != NULL;
+    if (ok) ok = fprintf(f, "# AtomSpectra DSP snapshot %s\r\n", stamp) > 0;
+    if (ok) ok = fputs(info_line, f) >= 0 && fputs("\r\n", f) >= 0;
+    if (ok) ok = fputs(tcpot_line, f) >= 0 && fputs("\r\n", f) >= 0;
+    if (f) ok = (fclose(f) == 0) && ok;
+    flash_quiet_writer_unlock();
+    return ok;
 }
 
 // BUG-AS-08: стримит тот же снимок на скачивание с меткой-времени-именем.
@@ -2192,7 +2203,10 @@ static esp_err_t handle_settings_snapshot(httpd_req_t *req)
     localtime_r(&now, &tmv);
     char stamp[24];
     strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &tmv);
-    settings_snapshot_write_file(info_line, tcpot_line, stamp);
+    bool saved = settings_snapshot_write_file(info_line, tcpot_line, stamp);
+    // М7: заголовок читает frontend (web/service.html doDspSnapshot) — текст
+    // "сохранён на плате" не показывается на сбое записи.
+    httpd_resp_set_hdr(req, "X-Dsp-Snapshot-Saved", saved ? "1" : "0");
     return settings_snapshot_send(req, info_line, tcpot_line, &tmv, stamp);
 }
 
@@ -2637,10 +2651,10 @@ void web_server_init(void)
     // tskNO_AFFINITY позволял httpd (prio 5) исполняться на core 0 рядом с
     // USB-приёмом — уводим целиком.
     config.core_id = 1;
-    // #WF-2/#MON-1/#FIELD-4/#FW-50/issue #52/AWF-5: пересчитано 2026-09-27 по факту
-    // (было 53+20=73, лимит 80 — AWF-5 добавила 6 /api/ota/github/* эндпоинтов).
-    // Сейчас: 59 в uris[] + 20 waterfall (web_waterfall_register: 19 reg +
-    // /ws/waterfall) = 79. С прежним лимитом 80 запас был бы всего +1 —
+    // #WF-2/#MON-1/#FIELD-4/#FW-50/issue #52/AWF-5: О9 (release-gate-firmware-
+    // v1.2.28-code.md) — пересчитано 2026-09-28 теми же командами (см. ниже):
+    // 61 в uris[] + 19 reg + 1 /ws/waterfall = 81, не 79 (комментарий отстал
+    // от кода при добавлении эндпоинтов после 2026-09-27). С лимитом 80 запас был бы всего +1 —
     // ПОСЛЕДНИЙ обработчик молча не регистрировался бы → тихий 404 (та самая
     // авария, которой лимит 45 стоил цикла reconnect). 90 даёт запас +11.
     // Добавляешь эндпоинт — пересчитай:
