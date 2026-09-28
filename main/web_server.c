@@ -2061,10 +2061,13 @@ static int kv_get_array(const char *text, const char *key, long *out, int max)
     return n;
 }
 
-// GET /api/settings/backup — read-only относительно физического состояния
-// прибора: шлёт -inf/-tc_pot? и отдаёт сырые ответы (см. spectrum_get_info_raw/
-// spectrum_get_tcpot_raw, atomspectra.h). CSRF не требуется (не мутирует прибор).
-static esp_err_t handle_settings_backup(httpd_req_t *req)
+// Общая для /api/settings/backup И /api/settings/snapshot (BUG-AS-08,
+// KNOWN_ISSUES.md:77): read-only -inf/-tc_pot? прибору + ожидание ответа
+// (spectrum_get_info_raw/spectrum_get_tcpot_raw, atomspectra.h). Сама шлёт
+// httpd-ошибку и ESP_FAIL при неудаче.
+static esp_err_t settings_read_raw_or_err(httpd_req_t *req,
+                                           char *info_out, size_t info_cap,
+                                           char *tcpot_out, size_t tcpot_cap)
 {
     if (!usb_host_cdc_is_connected()) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Device not connected");
@@ -2085,11 +2088,7 @@ static esp_err_t handle_settings_backup(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No response to -inf (device busy/offline?)");
         return ESP_FAIL;
     }
-    // #FW-17: static + 2048Б — под полную -inf с 99-элементным PileUp[] (см.
-    // s_info_raw в spectrum.c). НЕ на стеке: httpd-воркер сериализует запросы
-    // (async off), реентранси нет; 2КБ на стеке 8192 — лишний риск.
-    static char info_line[2048];
-    spectrum_get_info_raw(info_line, sizeof(info_line), NULL);
+    spectrum_get_info_raw(info_out, info_cap, NULL);
 
     spectrum_get_tcpot_raw(line, sizeof(line), &seq_before);
     usb_host_send_text_command("-tc_pot?");
@@ -2103,10 +2102,20 @@ static esp_err_t handle_settings_backup(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No response to -tc_pot? (older firmware?)");
         return ESP_FAIL;
     }
-    char tcpot_line[700];
-    spectrum_get_tcpot_raw(tcpot_line, sizeof(tcpot_line), NULL);
+    spectrum_get_tcpot_raw(tcpot_out, tcpot_cap, NULL);
+    return ESP_OK;
+}
 
-    char bkp_name[48], bkp_disp[80];                         // #FW-42: префикс
+// GET /api/settings/backup — не изменилось для клиента: читалка выше + стрим
+// на скачивание. #FW-17: static 2048Б — не на стеке httpd-воркера.
+static esp_err_t handle_settings_backup(httpd_req_t *req)
+{
+    static char info_line[2048];
+    char tcpot_line[700];
+    if (settings_read_raw_or_err(req, info_line, sizeof(info_line),
+                                  tcpot_line, sizeof(tcpot_line)) != ESP_OK)
+        return ESP_FAIL;
+    char bkp_name[48], bkp_disp[80];
     web_build_export_name(bkp_name, sizeof(bkp_name), "atomspectra_backup.txt");
     snprintf(bkp_disp, sizeof(bkp_disp), "attachment; filename=\"%s\"", bkp_name);
     httpd_resp_set_type(req, "text/plain");
@@ -2117,6 +2126,66 @@ static esp_err_t handle_settings_backup(httpd_req_t *req)
     httpd_resp_sendstr_chunk(req, "\r\n");
     httpd_resp_send_chunk(req, NULL, 0);
     return ESP_OK;
+}
+
+// #FW-42-style: одна крайняя копия слепка на LittleFS, перезаписывается.
+#define DSP_SNAPSHOT_PATH STORAGE_PATH "/dsp_snapshot.txt"
+
+// BUG-AS-08 (KNOWN_ISSUES.md:77): пишет снимок на flash. Вынесена из
+// handle_settings_snapshot ниже — держит его < 25 строк (delegation guard).
+static void settings_snapshot_write_file(const char *info_line,
+                                          const char *tcpot_line, const char *stamp)
+{
+    FILE *f = fopen(DSP_SNAPSHOT_PATH, "w");
+    if (!f) return;   // сбой записи — не блокирует скачивание, просто не сохранится
+    fprintf(f, "# AtomSpectra DSP snapshot %s\r\n", stamp);
+    fputs(info_line, f); fputs("\r\n", f);
+    fputs(tcpot_line, f); fputs("\r\n", f);
+    fclose(f);
+}
+
+// BUG-AS-08: стримит тот же снимок на скачивание с меткой-времени-именем.
+static esp_err_t settings_snapshot_send(httpd_req_t *req, const char *info_line,
+    const char *tcpot_line, struct tm *tmv, const char *stamp)
+{
+    char dl_base[40], dl_name[64], dl_disp[100];
+    snprintf(dl_base, sizeof(dl_base), "dsp_snapshot_%04d%02d%02d_%02d%02d%02d.txt",
+             tmv->tm_year + 1900, tmv->tm_mon + 1, tmv->tm_mday,
+             tmv->tm_hour, tmv->tm_min, tmv->tm_sec);
+    web_build_export_name(dl_name, sizeof(dl_name), dl_base);
+    snprintf(dl_disp, sizeof(dl_disp), "attachment; filename=\"%s\"", dl_name);
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_set_hdr(req, "Content-Disposition", dl_disp);
+    httpd_resp_sendstr_chunk(req, "# AtomSpectra DSP snapshot ");
+    httpd_resp_sendstr_chunk(req, stamp);
+    httpd_resp_sendstr_chunk(req, "\r\n");
+    httpd_resp_sendstr_chunk(req, info_line);
+    httpd_resp_sendstr_chunk(req, "\r\n");
+    httpd_resp_sendstr_chunk(req, tcpot_line);
+    httpd_resp_sendstr_chunk(req, "\r\n");
+    httpd_resp_send_chunk(req, NULL, 0);
+    return ESP_OK;
+}
+
+// POST /api/settings/snapshot (BUG-AS-08, KNOWN_ISSUES.md:77): "Сохранить
+// слепок настройки прибора" — читает -inf/-tc_pot? (settings_read_raw_or_err,
+// read-only), пишет на LittleFS (settings_snapshot_write_file) и отдаёт на
+// скачивание (settings_snapshot_send). CSRF обязателен — пишет flash.
+static esp_err_t handle_settings_snapshot(httpd_req_t *req)
+{
+    if (!csrf_check(req)) return ESP_FAIL;
+    static char info_line[2048];
+    char tcpot_line[700];
+    if (settings_read_raw_or_err(req, info_line, sizeof(info_line),
+                                  tcpot_line, sizeof(tcpot_line)) != ESP_OK)
+        return ESP_FAIL;
+    time_t now = time(NULL);
+    struct tm tmv;
+    localtime_r(&now, &tmv);
+    char stamp[24];
+    strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &tmv);
+    settings_snapshot_write_file(info_line, tcpot_line, stamp);
+    return settings_snapshot_send(req, info_line, tcpot_line, &tmv, stamp);
 }
 
 static void send_cmd_delayed(const char *cmd)
@@ -2617,6 +2686,7 @@ void web_server_init(void)
         {"/api/reboot-esp",              HTTP_POST, handle_reboot_esp,       NULL},
         {"/api/calibration",             HTTP_POST, handle_set_calibration,  NULL},
         {"/api/settings/backup",         HTTP_GET,  handle_settings_backup,  NULL},
+        {"/api/settings/snapshot",       HTTP_POST, handle_settings_snapshot, NULL},  // BUG-AS-08
         {"/api/settings/restore",        HTTP_POST, handle_settings_restore, NULL},
         // #FIELD-5/7: установка времени от браузера + смена пароля полевого AP
         {"/api/time",                    HTTP_POST, handle_time_set,         NULL},
