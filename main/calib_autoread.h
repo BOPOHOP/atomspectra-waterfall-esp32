@@ -35,6 +35,15 @@ static inline bool calib_coeffs_any_nonfinite(const double *coeffs, int n)
     return false;
 }
 
+// Раздел 5 (release-gate-firmware-v1.2.28-code.md, непокрытое): #AWF-12b F13
+// (spectrum.c spectrum_load_calibration) — calib_order из файла ВНЕ [0,n) дал
+// бы чтение за границей массива coeffs[] у всех потребителей ниже по коду.
+// Было инлайн-условием без теста; вынесено сюда как пара с проверкой файла.
+static inline bool calib_order_in_range(int order, int n)
+{
+    return order >= 0 && order < n;
+}
+
 static inline bool calib_is_missing(const double *coeffs, int n, bool calib_valid)
 {
     if (!calib_valid) return true;

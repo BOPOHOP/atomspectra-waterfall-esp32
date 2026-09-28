@@ -90,4 +90,15 @@ void calib_autoread_suite(void)
         // now сдвинут ещё на 40000 мс после last (через wrap) -> порог пройден.
         CHECK(calib_autoread_should_request(false, 39984u, 0xFFFFFFF0u) == true);
     }
+
+    // Раздел 5 (release-gate-firmware-v1.2.28-code.md): calib_order_in_range —
+    // #AWF-12b F13, границы calib.bin (CALIB_COEFFS=5 в прошивке, здесь n=5
+    // условно — предикат не завязан на константу проекта).
+    {
+        CHECK(calib_order_in_range(0, 5) == true);    // нижняя граница
+        CHECK(calib_order_in_range(4, 5) == true);     // верхняя граница (n-1)
+        CHECK(calib_order_in_range(5, 5) == false);    // ровно n — уже за массивом
+        CHECK(calib_order_in_range(-1, 5) == false);   // отрицательный (битый файл)
+        CHECK(calib_order_in_range(1000, 5) == false); // явный мусор
+    }
 }

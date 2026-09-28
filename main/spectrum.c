@@ -468,6 +468,7 @@ void spectrum_process_info_response(const char *text)
     // #AWF-12b R5: инвалидировать HTTP-кэш ТОЛЬКО если калибровка реально
     // применилась ниже (calib_read_is_success) — не на каждый -inf/-cal.
     bool calib_updated = false;
+    bool calib_rejected = false;   // О10: лог — ПОСЛЕ SPEC_UNLOCK (см. ниже)
     SPEC_LOCK();
     // #BRIDGE-3: этот вход обслуживает ДВА разных ответа прибора — роутер
     // (usb_host_cdc.c) шлёт сюда и -inf (параметры+температура), и -cal (дамп
@@ -546,7 +547,11 @@ void spectrum_process_info_response(const char *text)
             ESP_LOGD(TAG, "Calibration CRC mismatch: computed=%08x expected=%08x", (unsigned)cc, (unsigned)ce);
         } else {
             s_calib_reject_seq++;   // F12/RO1: под SPEC_LOCK, как весь этот блок
-            ESP_LOGW(TAG, "Calibration CRC OK but all-zero/non-finite dump - ignored (treated as not set)");
+            // О10 (release-gate-firmware-v1.2.28-code.md): сам ESP_LOGW — ПОСЛЕ
+            // SPEC_UNLOCK (см. ниже), не здесь: правило :494 (эта функция — в
+            // задаче CDC, UART0 115200 блокирующая) запрещает LOGI/LOGW под
+            // локом, счётчик выше остаётся под локом как был.
+            calib_rejected = true;
         }
     }
 
@@ -575,6 +580,8 @@ void spectrum_process_info_response(const char *text)
         }
         SPEC_UNLOCK();
         if (calib_updated) spectrum_http_cache_invalidate();  // #AWF-12b R5
+        if (calib_rejected)   // О10: WARN вне SPEC_LOCK (правило :494)
+            ESP_LOGW(TAG, "Calibration CRC OK but all-zero/non-finite dump - ignored (treated as not set)");
         return;
     }
 
@@ -1154,7 +1161,7 @@ void spectrum_load_calibration(void)
     // границы. Повреждённый calib.bin с calib_order вне [0,CALIB_COEFFS)
     // давал бы чтение за массивом. Тот же приём, что sanitize_loaded()
     // (spectrum.c) — для пути восстановления спектра.
-    if (st.calib_order < 0 || st.calib_order >= CALIB_COEFFS) {
+    if (!calib_order_in_range(st.calib_order, CALIB_COEFFS)) {
         ESP_LOGW(TAG, "Calibration file: calib_order=%d out of range, dropped", st.calib_order);
         return;
     }
