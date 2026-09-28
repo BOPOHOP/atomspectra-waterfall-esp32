@@ -30,6 +30,18 @@ static int build_cal_lines(char *buf, int n, int cap)
     return off;
 }
 
+// М1-fix: полный боевой дамп -cal (40 строк=400Б) — REAL_DUMP_110 (CRC-окно)
+// + 28 строк "FFFFFFFF" (пустые слоты) + серийник (валидный, не все 'F').
+// is_complete_cal теперь требует все 40 строк после окна, не только окно.
+static int build_full_cal_dump(char *buf)
+{
+    memcpy(buf, REAL_DUMP_110, 110);
+    int off = 110;
+    for (int i = 0; i < 28; i++) { memcpy(buf + off, "FFFFFFFF\r\n", 10); off += 10; }
+    memcpy(buf + off, "0012ABCD\r\n", 10); off += 10;
+    return off;
+}
+
 void text_accum_predicates_suite(void)
 {
     CHECK(text_is_hex_digit('0') && text_is_hex_digit('9') && text_is_hex_digit('A') &&
@@ -223,13 +235,14 @@ void text_accum_r2_offset_dump_suite(void)
 void text_accum_r2_fragment_before_dump_suite(void)
 {
     char accum[512]; int len = 0;
+    char full[400]; int fn = build_full_cal_dump(full);   // М1-fix: нужны все 40 строк, не только окно
     text_accum_result_t r1 = text_accum_feed(accum, &len, sizeof accum, "-er\r\n", 5);
     CHECK(r1 == TEXT_ACCUM_NONE);
-    text_accum_result_t r2 = text_accum_feed(accum, &len, sizeof accum, REAL_DUMP_110, 5);
+    text_accum_result_t r2 = text_accum_feed(accum, &len, sizeof accum, full, 5);
     CHECK(r2 == TEXT_ACCUM_NONE);   // первый кадр < 9 байт
     text_accum_result_t r3 = text_accum_feed(accum, &len, sizeof accum,
-                                              REAL_DUMP_110 + 5, 110 - 5);
-    CHECK(r3 == TEXT_ACCUM_CAL);    // R2-fix: окно найдено CRC-сканом
+                                              full + 5, fn - 5);
+    CHECK(r3 == TEXT_ACCUM_CAL);    // R2-fix: окно найдено CRC-сканом, М1-fix: и все 40 строк на месте
     CHECK(text_accum_find_cal_window(accum, len) == 5);  // = длина "-er\r\n"
 }
 
@@ -238,11 +251,11 @@ void text_accum_r2_fragment_before_dump_suite(void)
 // "-ok", не hex) — NONE, дамп потерян целиком за один кадр.
 void text_accum_r2_ok_plus_dump_one_frame_suite(void)
 {
-    char pkt[256];
+    char pkt[512];
     memcpy(pkt, "-ok\r\n", 5);
-    memcpy(pkt + 5, REAL_DUMP_110, 110);
-    char accum[256]; int len = 0;
-    text_accum_result_t r = text_accum_feed(accum, &len, sizeof accum, pkt, 5 + 110);
+    int fn = build_full_cal_dump(pkt + 5);   // М1-fix: нужны все 40 строк, не только окно
+    char accum[512]; int len = 0;
+    text_accum_result_t r = text_accum_feed(accum, &len, sizeof accum, pkt, 5 + fn);
     CHECK(r == TEXT_ACCUM_CAL);     // R2-fix: найдено окно на позиции 5
     CHECK(text_accum_find_cal_window(accum, len) == 5);
 }
@@ -265,4 +278,24 @@ void text_accum_r3_null_byte_suite(void)
     text_accum_result_t r = text_accum_feed(accum, &len, sizeof accum, pkt, n);
     CHECK(r == TEXT_ACCUM_INF);         // R3-fix: -inf распознан несмотря на \0
     CHECK(accum[2] == ' ');             // \0 заменён пробелом, не потерян
+}
+
+// М1 (release-gate-firmware-v1.2.28-code.md): Text(400) дробится прибором на
+// два кадра SHPROTO по 200 Б ровно по границе строки (20+20 строк). В первых
+// 200 Б уже есть валидное CRC-окно (L0..L10) — ДО fix'а это давало
+// TEXT_ACCUM_CAL сразу после первого кадра, вызывающий сбрасывал аккумулятор,
+// и серийник (L39, второй кадр) терялся навсегда.
+void text_accum_m1_split_real_dump_suite(void)
+{
+    char dump[400]; int dn = build_full_cal_dump(dump);
+    CHECK(dn == 400);
+
+    char accum[4096]; int len = 0;
+    text_accum_result_t r1 = text_accum_feed(accum, &len, sizeof accum, dump, 200);
+    CHECK(r1 == TEXT_ACCUM_NONE);   // окно уже видно, но не все 40 строк — рано
+    CHECK(len == 200);              // накопилось, не сброшено
+
+    text_accum_result_t r2 = text_accum_feed(accum, &len, sizeof accum, dump + 200, 200);
+    CHECK(r2 == TEXT_ACCUM_CAL);
+    CHECK(len == 400);              // серийник (L39) доехал вместе с полным дампом
 }
