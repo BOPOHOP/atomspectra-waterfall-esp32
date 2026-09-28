@@ -1212,6 +1212,16 @@ bool spectrum_calibration_is_missing(void)
     return calib_is_missing(coeffs, CALIB_COEFFS, valid);
 }
 
+// BUG-AS-03: серийник приходит только из полного дампа -cal; пока он пуст,
+// автосчитывание перед -sta повторяется и при заданной калибровке.
+bool spectrum_serial_is_missing(void)
+{
+    SPEC_LOCK();
+    bool missing = s_spectrum.serial_number[0] == '\0';
+    SPEC_UNLOCK();
+    return missing;
+}
+
 // F12/RO1: монотонный счётчик отвергнутых -cal дампов (CRC ok, но нули/NaN) —
 // см. s_calib_reject_seq выше. /api/device отдаёт его как есть, страница
 // сравнивает "до" и "после" своего запроса, а не полагается на фронт.

@@ -294,6 +294,7 @@ void spectrum_load_calibration(void);
 // #AWF-12: «калибровка не задана» = невалидна ИЛИ все коэффициенты — точный
 // 0.0 (main/calib_autoread.h: calib_is_missing). Снимок читается под SPEC_LOCK.
 bool spectrum_calibration_is_missing(void);
+bool spectrum_serial_is_missing(void);
 // F12/RO1 (release-gate-1.2.28-code-fixes.md:128): счётчик -cal дампов,
 // отвергнутых при валидном CRC (все нули/NaN) — калибровка платы не тронута.
 uint32_t spectrum_get_calib_reject_seq(void);

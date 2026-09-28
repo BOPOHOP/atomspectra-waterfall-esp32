@@ -952,7 +952,7 @@ static int send_text_command_raw(const char *cmd)
 // проходили гейт, уходили два "-cal"). Штамп ставится СРАЗУ при захвате гейта
 // (закрывает гонку), а не после TX; если TX не ушёл — откатывается (F4: не
 // жечь 30с кулдаун впустую на неудачной попытке). Вызывается ТОЛЬКО когда
-// cmd_is_acq_start(cmd) && spectrum_calibration_is_missing() уже истинны.
+// cmd_is_acq_start(cmd) && calib_autoread_needed(калибровка, серийник) уже истинны.
 static void usb_host_cdc_calib_autoread_gate(void)
 {
     uint32_t now = diag_now_ms();
@@ -966,10 +966,10 @@ static void usb_host_cdc_calib_autoread_gate(void)
     DIAG_UNLOCK();
     if (!claimed) return;
     if (send_text_command_raw("-cal") == 0) {
-        ESP_LOGI(TAG, "calibration not set -> requesting -cal before -sta");
+        ESP_LOGI(TAG, "calibration or serial not set -> requesting -cal before -sta");
         vTaskDelay(pdMS_TO_TICKS(100));
     } else {
-        ESP_LOGW(TAG, "calibration not set -> -cal send failed, will retry sooner");
+        ESP_LOGW(TAG, "calibration or serial not set -> -cal send failed, will retry sooner");
         DIAG_LOCK();
         if (s_calib_autoread_last_ms == now) s_calib_autoread_last_ms = 0;
         DIAG_UNLOCK();
@@ -979,7 +979,8 @@ static void usb_host_cdc_calib_autoread_gate(void)
 int usb_host_send_text_command(const char *cmd)
 {
     if (!cmd) return -1;
-    if (cmd_is_acq_start(cmd) && spectrum_calibration_is_missing())
+    if (cmd_is_acq_start(cmd) &&
+        calib_autoread_needed(spectrum_calibration_is_missing(), spectrum_serial_is_missing()))
         usb_host_cdc_calib_autoread_gate();
     return send_text_command_raw(cmd);
 }

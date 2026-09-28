@@ -105,6 +105,13 @@ static inline bool cmd_is_acq_start(const char *cmd)
 _Static_assert(CALIB_AUTOREAD_COOLDOWN_MS > ACQ_WATCH_MS,
                "calib autoread cooldown must exceed one acq-watch cycle");
 
+// BUG-AS-03: -cal перед стартом нужен и при заданной калибровке, пока пуст
+// серийник (он есть только в полном дампе -cal).
+static inline bool calib_autoread_needed(bool calib_missing, bool serial_missing)
+{
+    return calib_missing || serial_missing;
+}
+
 static inline bool calib_autoread_should_request(bool prev_was_run, uint32_t now_ms,
                                                    uint32_t last_request_ms)
 {
