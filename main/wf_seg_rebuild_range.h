@@ -1,6 +1,7 @@
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
+#include "spectrogram.h"   /* wf_seg_reg_t */
 
 typedef struct { uint32_t idx, g0, g1; } wf_seg_range_snap_t;
 
@@ -42,3 +43,28 @@ static inline bool wf_seg_restore_range(const wf_seg_range_snap_t *prev, int n, 
     return false;
 }
 
+/* У6 (раунд 3): запись реестра для сегмента, найденного на диске при пересборке, — та же
+ * цепочка, что reg_add → reg_mark_finalized → (диапазон восстановлен) reg_set_range →
+ * reg_update_open, без реестра и лока (host-тест). default_bytes — заготовка reg_add. */
+static inline void wf_seg_rebuild_entry(wf_seg_reg_t *e, uint32_t idx, uint32_t seg_seq,
+        int64_t started_at, uint32_t rows, uint32_t bytes, uint32_t default_bytes,
+        const wf_seg_range_snap_t *prev, int n_prev)
+{
+    uint32_t g0 = 0, g1 = 0;
+    bool had_range = wf_seg_restore_range(prev, n_prev, idx, rows, &g0, &g1);
+    e->idx = idx;
+    e->seg_seq = seg_seq;
+    e->started_at = started_at;
+    e->rows = rows;
+    e->bytes = bytes ? bytes : default_bytes;
+    e->g0 = 0;
+    e->g1 = 0;
+    e->finalized = true;
+    e->valid = true;
+    if (had_range) {
+        /* Н3: сегмент текущей сессии — прежний g0, g1 по строкам файла */
+        e->g0 = g0;
+        e->bytes = bytes;
+        e->g1 = g1;
+    }
+}

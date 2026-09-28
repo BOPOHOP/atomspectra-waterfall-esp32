@@ -1817,15 +1817,14 @@ static void seg_rebuild_counters_from_disk(void)
         }
         seg_read_ids_open(f, &rseq, &rstart);
         fclose(f);
-        uint32_t g0 = 0, g1 = 0;
-        bool had_range = wf_seg_restore_range(rb_prev, n_prev, idx, rows, &g0, &g1);
         LOCK();
-        reg_add(idx, rseq, rstart);
-        reg_mark_finalized(idx, rows, (uint32_t)sb.st_size);
-        if (had_range) {   // Н3: сегмент текущей сессии — прежний g0, g1 по строкам файла
-            reg_set_range(idx, g0);
-            reg_update_open(idx, rows, (uint32_t)sb.st_size, g1);
-        }
+        int ri = reg_find(idx);
+        if (ri < 0) ri = reg_free_slot();
+        if (ri >= 0)   // У6: разметка записи (Н3: диапазон из снимка) — чистая, host-тест
+            wf_seg_rebuild_entry(&s_seg_reg[ri], idx, rseq, rstart, rows, (uint32_t)sb.st_size,
+                                 (uint32_t)WF_SEG_HEADER + (uint32_t)WF_BASELINE_BYTES, rb_prev, n_prev);
+        else
+            ESP_LOGW(TAG, "seg registry full (%d), seg_%05" PRIu32 " not tracked", WF_REG_CAP, idx);
         UNLOCK();
         completed++;
         flash_rows += rows;

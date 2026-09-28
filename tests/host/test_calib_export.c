@@ -413,8 +413,8 @@ void round2_wiring_sites_suite(void)
     w_site("../../main/usb_host_cdc.c", "usb_rx_worker", "TEXT_ACCUM_QUIET_MS", "text_accum_flush(");
     /* Н3 снимок диапазонов до очистки */
     w_site("../../main/spectrogram.c", "seg_rebuild_counters_from_disk", "rb_prev[n_prev].g0", "reg_clear_all()");
-    /* Н3 восстановление */
-    w_site("../../main/spectrogram.c", "seg_rebuild_counters_from_disk", "wf_seg_restore_range(", "reg_set_range(");
+    /* Н3 восстановление; У6 раунда 3: разметка — wf_seg_rebuild_entry (test_round3_misc.c) */
+    w_site("../../main/spectrogram.c", "seg_rebuild_counters_from_disk", "wf_seg_rebuild_entry(", "rb_prev, n_prev");
     /* Н4 переоткрытие до решения */
     w_site("../../main/ota_github_client.c", "ota_gh_download_retry", "ota_gh_dl_is_already_complete(", "ota_gh_dl_reopen_until_decided(");
     /* Н4 без прямого decide */
