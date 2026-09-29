@@ -49,5 +49,6 @@ mut R1_old_resync 's/if (pre == NULL || cur == NULL) {/if (1) {/' 'test_rst_reje
 mut R2_total 's/if (cur_total < pre_total || cur_time < pre_time) {/if (cur_time < pre_time) {/' 'test_rst_rejects'
 mut R3_time 's/if (cur_total < pre_total || cur_time < pre_time) {/if (cur_total < pre_total) {/' 'test_rst_rejects'
 mut R4_channels 's/if (cur\[i\] < pre\[i\]) {/if (0) {/' 'test_rst_after_device_restart_no_jump test_rst_device_did_reset test_rst_rejects'
+mut R5_last_channel 's/for (size_t i = 0; i < channels; i++) {/for (size_t i = 0; i + 1 < channels; i++) {/' 'test_rst_rejects'
 
 rm -f test_runner; exit $RC

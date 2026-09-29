@@ -37,21 +37,33 @@ static void time_sync_cb(struct timeval *tv)
 // Гейт 1.2.29: int_min (минимум внутренней RAM) падал до 231 Б. Узлы cJSON мелкие
 // (< SPIRAM_MALLOC_ALWAYSINTERNAL) и шли во внутреннюю RAM, которой нужен Wi-Fi (#FW-50):
 // JSON всех ответов — в PSRAM, внутренняя — запасной путь. Отказы аллокации — счётчик.
+static uint32_t s_cjson_spill, s_alloc_fail_n, s_alloc_fail_size, s_alloc_fail_caps;
+static __thread bool t_cjson_try;   // промах PSRAM у cJSON — не отказ: есть запасной путь
 static void *cjson_psram_malloc(size_t sz)
 {
-    return heap_caps_malloc_prefer(sz, 2, MALLOC_CAP_SPIRAM, MALLOC_CAP_DEFAULT);
+    t_cjson_try = true;
+    void *p = heap_caps_malloc(sz, MALLOC_CAP_SPIRAM);
+    t_cjson_try = false;
+    if (!p) {   // F-7: уход во внутреннюю RAM считаем отдельно
+        __atomic_fetch_add(&s_cjson_spill, 1, __ATOMIC_RELAXED);
+        p = heap_caps_malloc(sz, MALLOC_CAP_DEFAULT);
+    }
+    return p;
 }
-static volatile uint32_t s_alloc_fail_n, s_alloc_fail_size, s_alloc_fail_caps;
 static void alloc_failed_cb(size_t size, uint32_t caps, const char *fn)
 {
     (void)fn;
-    s_alloc_fail_n++;
-    s_alloc_fail_size = (uint32_t)size;
-    s_alloc_fail_caps = caps;
+    if (t_cjson_try) return;   // колбэк зовётся в контексте той же задачи
+    __atomic_fetch_add(&s_alloc_fail_n, 1, __ATOMIC_RELAXED);   // F-7: два ядра
+    __atomic_store_n(&s_alloc_fail_size, (uint32_t)size, __ATOMIC_RELAXED);
+    __atomic_store_n(&s_alloc_fail_caps, caps, __ATOMIC_RELAXED);
 }
-void mem_diag_get(uint32_t *n, uint32_t *last_size, uint32_t *last_caps)
+void mem_diag_get(uint32_t *n, uint32_t *last_size, uint32_t *last_caps, uint32_t *cjson_spill)
 {
-    *n = s_alloc_fail_n; *last_size = s_alloc_fail_size; *last_caps = s_alloc_fail_caps;
+    *n = __atomic_load_n(&s_alloc_fail_n, __ATOMIC_RELAXED);
+    *last_size = __atomic_load_n(&s_alloc_fail_size, __ATOMIC_RELAXED);   // пара size/caps — последнего
+    *last_caps = __atomic_load_n(&s_alloc_fail_caps, __ATOMIC_RELAXED);   // отказа, без гарантии пары
+    *cjson_spill = __atomic_load_n(&s_cjson_spill, __ATOMIC_RELAXED);
 }
 
 static void init_sntp(void)

@@ -38,6 +38,10 @@ static void test_rst_rejects(void)
     low[2] = 29;
     CHECK(!wf_rst_keeps_data(pre, 100, 50, low, 120, 60, RN));
 
+    memcpy(low, cur, sizeof(low));   /* F-2 (разбор 1c57e98): последний канал тоже сравнивается */
+    low[RN - 1] = pre[RN - 1] - 1;
+    CHECK(!wf_rst_keeps_data(pre, 100, 50, low, 120, 60, RN));
+
     CHECK(wf_rst_keeps_data(pre, 100, 50, pre, 100, 50, RN));
 }
 

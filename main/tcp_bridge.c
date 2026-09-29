@@ -146,9 +146,12 @@ static void tcp_rx_task(void *arg)
     // Гейт 1.2.29 (stack_min_free.tcp_rx = 508 Б после первого клиента): приёмный буфер
     // не на стеке, а в PSRAM — cdc_acm_host_data_tx_blocking копирует данные в свой буфер.
     enum { RX_BUF = 1024 };
-    uint8_t *buf = heap_caps_malloc(RX_BUF, MALLOC_CAP_SPIRAM);
-    if (!buf) buf = malloc(RX_BUF);
-    if (!buf) { ESP_LOGE(TAG, "rx buffer alloc failed"); vTaskDelete(NULL); return; }
+    uint8_t *buf = NULL;
+    while (!buf) {   // F-5: не удалять задачу при отказе — мост ПК→прибор умер бы молча
+        buf = heap_caps_malloc(RX_BUF, MALLOC_CAP_SPIRAM);
+        if (!buf) buf = malloc(RX_BUF);
+        if (!buf) { ESP_LOGE(TAG, "rx buffer alloc failed, retry in 1 s"); vTaskDelay(pdMS_TO_TICKS(1000)); }
+    }
     while (1) {
         FD_LOCK();
         int fd = s_client_fd;
@@ -290,8 +293,8 @@ void tcp_bridge_init(void)
     // (кэш/критические секции LWIP), независимо от раскладки приоритетов.
     xTaskCreatePinnedToCore(tcp_server_task, "tcp_srv", 4096, NULL, 5, NULL, 1);
     xTaskCreatePinnedToCore(tcp_tx_task,     "tcp_tx",  4096, NULL, 6, NULL, 1);
-    // 5120: запас на Сброс от клиента (spectrum_reset → запись метки во флеш + лог), замер
-    // этой ветки невозможен без Сброса спектра; стек без приёмного буфера (см. tcp_rx_task).
+    // 5120: запас на Сброс от клиента (spectrum_reset → запись метки во флеш + лог); эта ветка
+    // не измерена (нужен Сброс спектра через мост); стек без приёмного буфера (см. tcp_rx_task).
     xTaskCreatePinnedToCore(tcp_rx_task,     "tcp_rx",  5120, NULL, 5, NULL, 1);
     ESP_LOGI(TAG, "TCP bridge initialized, port %d (net tasks pinned core 1)", TCP_BRIDGE_PORT);
 }

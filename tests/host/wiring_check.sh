@@ -61,13 +61,25 @@ need wf_offload.c  1 'if (short_rd) { result = -16; goto done; }'
 # #AUD-RST: неподтверждённый Сброс — опора до Сброса сохраняется и проверяется в wf_task
 need spectrogram.c 1 'memcpy(s_pre_rst_bins, s_prev, WF_CHANNELS * sizeof(uint32_t));'
 need spectrogram.c 1 'bool keep = s_pre_rst_valid && wf_rst_keeps_data('
-need spectrogram.c 1 's_prev_valid = s_wf_snap->valid;   /* #AUD-RST: пустой снимок после Сброса — не опора */'
+need spectrogram.c 1 's_prev_valid = s_wf_snap->valid && wf_base_zero();   /* #AUD-RST: пустой снимок после Сброса — не опора */'
 # Гейт 1.2.29: cJSON в PSRAM, счётчик отказов аллокации, стек tcp_rx без приёмного буфера
 need main.c        1 'cJSON_InitHooks(&cj_hooks);'
 need main.c        1 'heap_caps_register_failed_alloc_callback(alloc_failed_cb);'
 need web_server.c  1 'cJSON_AddNumberToObject(root, "alloc_fail", af_n);'
 need tcp_bridge.c  1 'xTaskCreatePinnedToCore(tcp_rx_task,     "tcp_rx",  5120, NULL, 5, NULL, 1);'
 need tcp_bridge.c  0 'uint8_t buf[1024];'
+need tcp_bridge.c  0 'vTaskDelete(NULL); return; }'                        # F-5: отказ буфера не убивает задачу
+# Разбор 1c57e98 / Codeaudit 19:49: база AWF-3, устаревшая опора (F-4), рукопожатие wf_task↔prepare_reboot (LK-16)
+need spectrogram.c 3 '&& wf_base_zero();'
+need spectrogram.c 1 'if (rs == s_wf_resync_seen) s_pre_rst_valid = false;'
+need spectrogram.c 1 'for (int i = 0; i < 200 && s_wf_busy; i++) vTaskDelay(pdMS_TO_TICKS(10));'
+need spectrogram.c 1 's_wf_busy = true;    /* до проверки recording'
+need main.c        1 'if (t_cjson_try) return;'
+# P-03 (Codeaudit): журнал главной страницы существует и показывается (в копии main/ без web/ — пропуск)
+if [ -f ../web/index.html ]; then
+    need ../web/index.html 1 '<pre id="log" style="display:none;'
+    need ../web/index.html 1 'function lg(m){if(!logEl)return;logEl.style.display="";'
+fi
 # F-09 (класс): результат cJSON_PrintUnformatted проверен на NULL в 3 строках после вызова (все *.c)
 f09=$(awk 'match($0,/char \*[A-Za-z_]+ = cJSON_PrintUnformatted\(/){v=substr($0,RSTART+6,RLENGTH-6); sub(/ =.*/,"",v); k=3; want=FILENAME":"FNR; next}
   k>0 { if (index($0,"!" v) || index($0, v " ?")) k=0; else if (--k==0) print want }' ./*.c)

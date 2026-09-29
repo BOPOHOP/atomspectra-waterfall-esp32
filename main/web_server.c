@@ -1849,8 +1849,9 @@ static esp_err_t handle_system(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "int_dflt_free",
                             heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DEFAULT));
     cJSON_AddNumberToObject(root, "int_dflt_largest", dflt_largest);
-    uint32_t af_n, af_size, af_caps;
-    mem_diag_get(&af_n, &af_size, &af_caps);
+    uint32_t af_n, af_size, af_caps, cj_spill;
+    mem_diag_get(&af_n, &af_size, &af_caps, &cj_spill);
+    cJSON_AddNumberToObject(root, "cjson_spill", cj_spill);      // cJSON ушёл из PSRAM во внутреннюю
     cJSON_AddNumberToObject(root, "alloc_fail", af_n);            // отказы аллокации с загрузки
     cJSON_AddNumberToObject(root, "alloc_fail_last_size", af_size);
     cJSON_AddNumberToObject(root, "alloc_fail_last_caps", af_caps);

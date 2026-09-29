@@ -350,4 +350,5 @@ void spectrum_get_base_info(uint32_t *base_time, uint32_t *base_counts, uint32_t
 // был занят) — вызывать раз в main-тик, no-op если нечего повторять.
 void spectrum_base_save_retry_tick(void);
 // Гейт 1.2.29: отказы аллокации с загрузки (heap_caps_register_failed_alloc_callback), main.c.
-void mem_diag_get(uint32_t *n, uint32_t *last_size, uint32_t *last_caps);
+// cjson_spill — сколько раз узел/буфер cJSON не влез в PSRAM и ушёл во внутреннюю RAM.
+void mem_diag_get(uint32_t *n, uint32_t *last_size, uint32_t *last_caps, uint32_t *cjson_spill);
