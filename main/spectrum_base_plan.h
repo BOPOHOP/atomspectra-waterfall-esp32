@@ -163,19 +163,54 @@ static inline bool spectrum_reset_stat_is_plausible_gen(uint32_t stat_time_sec,
     return spectrum_reset_stat_is_plausible(stat_time_sec, elapsed_since_reset_sec);
 }
 
-// issue #58: гейт выше — только после явного Reset в этой загрузке
-// (reset_armed), и не вечно: STAT текущего gen, неправдоподобный подряд
-// SPECTRUM_RESET_CONFIRM_TIMEOUT_S, значит прибор -rst не выполнил.
+// issue #58: гейт выше — только после явного Reset в этой загрузке (armed), и
+// не вечно: STAT текущего gen неправдоподобен SPECTRUM_RESET_CONFIRM_TIMEOUT_S —
+// прибор -rst не выполнил. У-1 (release-gate 1.2.29): таймер запускает только
+// STAT текущего gen; по таймауту принимается только STAT, пришедший ПОСЛЕ
+// первого отказа (другой seq) — отклонённый пакет не расходуется и иначе сам
+// себя принял бы через 10 с (например, залежавшись на переподключении USB).
 #define SPECTRUM_RESET_CONFIRM_TIMEOUT_S 10u
-static inline bool spectrum_reset_stat_accept(bool reset_armed,
-                                              uint32_t stat_time_sec,
-                                              uint32_t elapsed_since_reset_sec,
-                                              uint32_t stat_stage_gen,
-                                              uint32_t current_reset_gen,
-                                              uint32_t rejected_for_sec)
+
+typedef struct {
+    bool     armed;             // Reset был, первый коммит после него не прошёл
+    int64_t  reject_since_us;   // 0 = серии отказов текущего gen нет
+    uint32_t reject_first_seq;  // номер STAT на первом отказе серии
+} spectrum_reset_gate_t;
+
+// true = STAT принять; *by_timeout = принят без подтверждения сброса прибором.
+static inline bool spectrum_reset_gate_step(spectrum_reset_gate_t *g, int64_t now_us,
+                                            uint32_t elapsed_since_reset_sec, uint32_t stat_time_sec,
+                                            uint32_t stat_seq, uint32_t stat_gen,
+                                            uint32_t current_gen, bool *by_timeout)
 {
-    if (!reset_armed) return true;
-    if (stat_stage_gen != current_reset_gen) return false;
-    if (spectrum_reset_stat_is_plausible(stat_time_sec, elapsed_since_reset_sec)) return true;
-    return rejected_for_sec >= SPECTRUM_RESET_CONFIRM_TIMEOUT_S;
+    *by_timeout = false;
+
+    if (!g->armed) {
+        return true;
+    }
+
+    if (spectrum_reset_stat_is_plausible_gen(stat_time_sec, elapsed_since_reset_sec, stat_gen, current_gen)) {
+        return true;
+    }
+
+    if (stat_gen != current_gen) {
+        return false;
+    }
+
+    if (g->reject_since_us == 0) {
+        g->reject_since_us = now_us;
+        g->reject_first_seq = stat_seq;
+        return false;
+    }
+
+    if ((now_us - g->reject_since_us) / 1000000 < SPECTRUM_RESET_CONFIRM_TIMEOUT_S) {
+        return false;
+    }
+
+    if (stat_seq == g->reject_first_seq) {
+        return false;
+    }
+
+    *by_timeout = true;
+    return true;
 }

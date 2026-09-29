@@ -258,6 +258,10 @@ bool spectrum_get_meta(spectrum_data_t *out);
 // ЧАНКИ гистограммы и в разы больше — это разные величины.
 void spectrum_get_sweep_stats(uint32_t *commits, uint32_t *drops);
 bool spectrum_get_snapshot(spectrum_data_t *out);
+// У-3: снимок + счётчик переноса опоры водопада (под одним локом).
+bool spectrum_get_snapshot_wf(spectrum_data_t *out, uint32_t *resync_seq);
+// У-2: сколько Reset с боота прибор не выполнил (данные прибора сохранены по таймауту).
+uint32_t spectrum_reset_unconfirmed_count(void);
 // #MON-1: атомарная пара (total_counts, total_time_sec) под коммит-локом —
 // для монитора CPS; НЕ копирует 32 КБ bins (в отличие от spectrum_get_snapshot).
 void spectrum_get_totals(uint32_t *counts, uint32_t *time_sec);

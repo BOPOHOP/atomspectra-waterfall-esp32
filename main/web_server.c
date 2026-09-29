@@ -134,6 +134,8 @@ static void status_add_base_info(cJSON *root)
     cJSON_AddNumberToObject(root, "base_time", base_time);
     cJSON_AddNumberToObject(root, "base_counts", base_counts);
     cJSON_AddNumberToObject(root, "dev_resets", dev_resets);
+    // У-2: Reset, которые прибор не выполнил (его набор сохранён по таймауту гейта #58).
+    cJSON_AddNumberToObject(root, "reset_unconfirmed", spectrum_reset_unconfirmed_count());
 }
 
 static esp_err_t handle_status(httpd_req_t *req)
@@ -515,9 +517,11 @@ static esp_err_t handle_reset(httpd_req_t *req)
     for (int i = 0; cmd[i]; i++) shproto_packet_add_data(&pkt, cmd[i]);
     shproto_packet_add_data(&pkt, '\0');
     shproto_packet_complete(&pkt);
-    usb_host_cdc_send(pkt.data, pkt.len);
+    // У-2: sent=false — прибор -rst не получил (не подключён/ошибка USB); сброс
+    // платы всё равно выполнен, данные прибора вернутся по таймауту гейта #58.
+    bool sent = usb_host_cdc_send(pkt.data, pkt.len) == 0;
     spectrum_reset();
-    httpd_resp_sendstr(req, "{\"ok\":true}");
+    httpd_resp_sendstr(req, sent ? "{\"ok\":true,\"sent\":true}" : "{\"ok\":true,\"sent\":false}");
     return ESP_OK;
 }
 
@@ -1784,16 +1788,26 @@ static esp_err_t handle_system(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "min_free_heap", esp_get_minimum_free_heap_size());
     // #MON-3: PSRAM отдельной строкой. Общая куча складывает internal и SPIRAM, по
     // ней нельзя судить, влезет ли следующее крупное кольцо: решение «расширить
-    // историю мониторинга» до сих пор принималось по косвенной цифре. Значения
-    // берутся из heap_caps напрямую, дешёвые (счётчики аллокатора, не обход).
+    // историю мониторинга» до сих пор принималось по косвенной цифре. *_free и
+    // *_min — счётчики аллокатора; *_largest — ОБХОД блоков кучи в критической
+    // секции (У-4): его цена публикуется в heap_walk_us.
+    int64_t walk_t0 = esp_timer_get_time();
+    size_t psram_largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+    size_t int_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    size_t dflt_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DEFAULT);
+    cJSON_AddNumberToObject(root, "heap_walk_us", (double)(esp_timer_get_time() - walk_t0));
     cJSON_AddNumberToObject(root, "psram_total", heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
     cJSON_AddNumberToObject(root, "psram_free", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-    cJSON_AddNumberToObject(root, "psram_largest", heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
-    // Wi-Fi берёт буферы кадров из internal: при исчерпании теряются крупные
-    // кадры, а free_heap (с PSRAM) этого не показывает.
+    cJSON_AddNumberToObject(root, "psram_largest", psram_largest);
+    // Wi-Fi берёт буферы кадров из internal (#FW-50). int_* включают DMA-резерв
+    // SPIRAM_MALLOC_RESERVE_INTERNAL (32 КБ), недоступный malloc()/cJSON/httpd (У-5);
+    // int_dflt_* — только то, что доступно обычному malloc().
     cJSON_AddNumberToObject(root, "int_free", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
-    cJSON_AddNumberToObject(root, "int_largest", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    cJSON_AddNumberToObject(root, "int_largest", int_largest);
     cJSON_AddNumberToObject(root, "int_min", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+    cJSON_AddNumberToObject(root, "int_dflt_free",
+                            heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DEFAULT));
+    cJSON_AddNumberToObject(root, "int_dflt_largest", dflt_largest);
     cJSON_AddNumberToObject(root, "uptime_sec", (double)(esp_timer_get_time() / 1000000));
     cJSON_AddBoolToObject(root, "usb_connected", usb_host_cdc_is_connected());
     cJSON_AddBoolToObject(root, "wifi_connected", wifi_is_connected());

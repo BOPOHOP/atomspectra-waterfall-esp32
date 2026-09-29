@@ -35,6 +35,9 @@ static const char *TAG = "spectrum";
 // AWF-3: спектр, накопленный до последнего обнаруженного сброса анализатора.
 #define BASE_FILE         STORAGE_PATH "/base.bin"
 #define BASE_TMP_FILE     STORAGE_PATH "/base.bin.tmp"
+// Метка «Reset был, спектр после него ещё не сохранён» — restore при старте
+// её видит и не поднимает ничего, записанного ДО сброса (см. spectrum_reset).
+#define RESET_MARK_FILE   STORAGE_PATH "/reset.mark"
 #define AUTOSAVE_RESERVE  (1024 * 1024)
 
 typedef struct {
@@ -120,8 +123,11 @@ static uint32_t  s_stage_reset_gen;               // снимок gen на offse
 static int64_t   s_reset_at_us;
 // issue #58: гейт AWF-4 взводит только spectrum_reset(); старт платы без
 // current.bin — не Reset. Снимается первым опубликованным коммитом.
-static bool      s_reset_armed;
-static int64_t   s_reset_reject_since_us;         // начало серии отклонений STAT (0 = нет)
+static spectrum_reset_gate_t s_reset_gate;
+static uint32_t  s_reset_unconfirmed;             // У-2: Reset, не выполненный прибором (с боота)
+// У-3: +1 на первом коммите после valid=false, если он НЕ подтверждённый сброс
+// (старт без current.bin, принятие по таймауту) — водопад переносит опору без строки.
+static uint32_t  s_wf_resync_seq;
 static uint32_t  s_hist_commits = 0;             // опубликованных полных свипов
 static uint32_t  s_hist_drops = 0;                // отброшенных рваных свипов
 typedef struct {
@@ -132,6 +138,7 @@ typedef struct {
     uint32_t pulse_width;
     bool     fresh;                               // пришёл ли STAT после последнего commit
     uint32_t gen;   // D2: s_reset_gen на момент постановки fresh=true (spectrum_reset_stat_is_plausible_gen)
+    uint32_t seq;   // У-1: номер пакета STAT (отличить новый пакет от отклонённого залежавшегося)
 } stat_stage_t;
 static stat_stage_t s_stat_stage;
 
@@ -363,23 +370,26 @@ void spectrum_process_histogram_chunk(const uint8_t *data, size_t len)
             // (обычный порядок ИЛИ гонка: пришёл ПОСЛЕ spectrum_reset(), но
             // ДО того как прибор обработал -rst) не может быть правдоподобен
             // относительно реального времени, прошедшего с Reset.
-            if (stat_fresh && !s_spectrum.valid) {
+            bool first_valid = !s_spectrum.valid;
+            bool reset_confirmed = false;   // У-3: подтверждённый сброс — строка водопада законна
+            if (stat_fresh && first_valid) {
                 int64_t now_us = esp_timer_get_time();
                 uint32_t elapsed_since_reset_s = (uint32_t)((now_us - s_reset_at_us) / 1000000);
-                uint32_t rejected_for_s = s_reset_reject_since_us
-                    ? (uint32_t)((now_us - s_reset_reject_since_us) / 1000000) : 0;
-                if (!spectrum_reset_stat_accept(s_reset_armed, s_stat_stage.total_time_sec,
-                                                elapsed_since_reset_s, s_stat_stage.gen,
-                                                s_reset_gen, rejected_for_s)) {
+                bool was_armed = s_reset_gate.armed, by_timeout;
+                if (!spectrum_reset_gate_step(&s_reset_gate, now_us, elapsed_since_reset_s,
+                                              s_stat_stage.total_time_sec, s_stat_stage.seq,
+                                              s_stat_stage.gen, s_reset_gen, &by_timeout)) {
                     stat_fresh = false;
-                    if (!s_reset_reject_since_us) s_reset_reject_since_us = now_us;
                     ESP_LOGW(TAG, "Reset: stale staged STAT (t=%" PRIu32 "s, elapsed=%" PRIu32
                              "s) ignored on first post-reset commit",
                              s_stat_stage.total_time_sec, elapsed_since_reset_s);
-                } else if (s_reset_reject_since_us) {
-                    ESP_LOGW(TAG, "Reset: STAT accepted after %" PRIu32 "s of rejections (t=%" PRIu32
-                             "s; t>>elapsed = device ignored -rst)",
-                             rejected_for_s, s_stat_stage.total_time_sec);
+                } else if (by_timeout) {
+                    s_reset_unconfirmed++;
+                    ESP_LOGW(TAG, "Reset: device did not confirm -rst in %us, its data kept (t=%" PRIu32
+                             "s, elapsed=%" PRIu32 "s)", SPECTRUM_RESET_CONFIRM_TIMEOUT_S,
+                             s_stat_stage.total_time_sec, elapsed_since_reset_s);
+                } else {
+                    reset_confirmed = was_armed;
                 }
             }
             // R1 (ревью-3): двусмысленный коммит (без STAT, count не сказал
@@ -395,8 +405,9 @@ void spectrum_process_histogram_chunk(const uint8_t *data, size_t len)
             bool did_reset = commit_fold_and_merge_locked(stat_fresh, t_new_raw, total);
             commit_time_locked(stat_fresh, t_new_raw);
             s_spectrum.valid = true;
-            s_reset_armed = false;             // issue #58
-            s_reset_reject_since_us = 0;
+            s_reset_gate.armed = false;        // issue #58
+            s_reset_gate.reject_since_us = 0;
+            if (first_valid && !reset_confirmed) s_wf_resync_seq++;
             SPEC_UNLOCK();
             if (did_reset) spectrum_base_save();   // flash-запись, ВНЕ лока
             s_hist_commits++;
@@ -444,6 +455,7 @@ void spectrum_process_stat_packet(const uint8_t *data, size_t len)
             s_stat_stage.pulse_width = data[14] | (data[15]<<8) | (data[16]<<16) | (data[17]<<24);
         s_stat_stage.fresh = true;
         s_stat_stage.gen = s_reset_gen;   // D2: печать поколения на момент постановки
+        s_stat_stage.seq++;
         return;
     }
     SPEC_LOCK();
@@ -752,11 +764,21 @@ void spectrum_reset(void)
     // «Reset обязан удалить всё, что могло бы быть прочитано»).
     if (unlink(BASE_TMP_FILE) != 0 && errno != ENOENT)
         ESP_LOGW(TAG, "Reset: base.bin.tmp unlink failed (errno=%d)", errno);
+    // Живой тест 1.2.29 (29.09): unlink(.tmp) выше отказывает EBUSY, пока порционный
+    // автосейв держит его открытым (esp_littlefs), а abort обрабатывается только на
+    // следующем опубликованном коммите — до 10 с. Перезагрузка/обрыв питания в этом
+    // окне поднимали .tmp ДО сброса; а без current.bin/.tmp restore берёт последний
+    // автоснимок bk_* (issue #52) — тоже ДО сброса. Метку снимает первый автосейв
+    // снимка того же gen (reset_mark_clear_if_current) — создание и gen++ под
+    // одним локом, иначе автосейв старого снимка мог бы снять новую метку.
     SPEC_LOCK();
+    FILE *mark = fopen(RESET_MARK_FILE, "wb");
+    if (mark) fclose(mark);
+    else ESP_LOGW(TAG, "Reset: reset.mark create failed (errno=%d)", errno);
     s_reset_gen++;
     s_reset_at_us = esp_timer_get_time();   // AWF-4: t0 для гейта правдоподобности STAT
-    s_reset_armed = true;                   // issue #58
-    s_reset_reject_since_us = 0;
+    s_reset_gate.armed = true;              // issue #58
+    s_reset_gate.reject_since_us = 0;
     memset(s_spectrum.bins, 0, sizeof(s_spectrum.bins));
     s_spectrum.total_counts = 0;
     s_spectrum.total_time_sec = 0;
@@ -785,6 +807,23 @@ bool spectrum_get_snapshot(spectrum_data_t *out)
     memcpy(out, &s_spectrum, sizeof(*out));
     SPEC_UNLOCK();
     return out->valid;
+}
+
+// У-3: снимок + счётчик переноса опоры под одним локом — иначе водопад может
+// увидеть новые данные со старым счётчиком и выдать строку-скачок.
+bool spectrum_get_snapshot_wf(spectrum_data_t *out, uint32_t *resync_seq)
+{
+    SPEC_LOCK();
+    memcpy(out, &s_spectrum, sizeof(*out));
+    *resync_seq = s_wf_resync_seq;
+    SPEC_UNLOCK();
+    return out->valid;
+}
+
+uint32_t spectrum_reset_unconfirmed_count(void)
+{
+    SPEC_LOCK(); uint32_t n = s_reset_unconfirmed; SPEC_UNLOCK();
+    return n;
 }
 
 // #MON-1: атомарная пара (total_counts, total_time_sec) под тем же SPEC_LOCK,
@@ -1245,6 +1284,18 @@ static int s_as_fail_streak;
 static int64_t s_as_last_ok_us;
 static volatile bool s_as_abort;
 
+static uint32_t s_as_snap_gen;   // s_reset_gen на момент снимка порционного автосейва
+
+// Метку RESET_MARK_FILE снимает только сохранённый снимок, сделанный ПОСЛЕ
+// последнего Reset (gen совпал); под SPEC_LOCK — как её создание в spectrum_reset.
+static void reset_mark_clear_if_current(uint32_t snap_gen)
+{
+    SPEC_LOCK();
+    if (snap_gen == s_reset_gen && unlink(RESET_MARK_FILE) == 0)
+        ESP_LOGI(TAG, "reset.mark cleared: post-reset spectrum saved");
+    SPEC_UNLOCK();
+}
+
 static void autosave_cleanup_failed(void)
 {
     if (s_as_fp) { fclose(s_as_fp); s_as_fp = NULL; }
@@ -1371,6 +1422,7 @@ bool spectrum_autosave_begin(void)
     SPEC_LOCK();
     if (!s_spectrum.valid) { SPEC_UNLOCK(); free(snap); return false; }
     memcpy(snap, &s_spectrum, sizeof(*snap));
+    s_as_snap_gen = s_reset_gen;
     SPEC_UNLOCK();
 
     if (!http_io_gate_try_enter()) {
@@ -1443,6 +1495,7 @@ void spectrum_autosave_pump(void)
         }
         flash_quiet_writer_unlock();
         http_io_gate_leave();
+        reset_mark_clear_if_current(s_as_snap_gen);
         int64_t total_us = esp_timer_get_time() - s_as_t0;
         ESP_LOGI(TAG, "autosave complete slices=%d total_us=%lld",
                  s_as_slices, (long long)total_us);
@@ -1516,6 +1569,7 @@ void spectrum_autosave(void)
     SPEC_LOCK();
     if (!s_spectrum.valid) { SPEC_UNLOCK(); free(snap); return; }
     memcpy(snap, &s_spectrum, sizeof(*snap));
+    uint32_t snap_gen = s_reset_gen;
     SPEC_UNLOCK();
 
     if (!http_io_gate_try_enter()) {
@@ -1535,6 +1589,7 @@ void spectrum_autosave(void)
         http_io_gate_leave();
     } else {
         http_io_gate_leave();
+        reset_mark_clear_if_current(snap_gen);
         spectrum_autosave_note_ok();
     }
     free(snap);
@@ -1640,7 +1695,21 @@ void spectrum_restore_autosave(void)
         SPEC_UNLOCK();
         return;
     }
-    restore_source_t src = restore_resolve(buf);
+    // Метка: Reset был, а спектр после него ещё не сохранён — всё на flash
+    // (current.bin/.tmp, автоснимки bk_*) старше сброса. Метку не снимаем: её
+    // снимет первый автосейв после сброса (повторная перезагрузка — тот же исход).
+    // stat(), не access(): esp_littlefs не реализует access_p — access() там
+    // всегда -1 (живой тест dev4 29.09: метка на flash была, restore её не увидел).
+    restore_source_t src;
+    struct stat mark_st;
+    if (stat(RESET_MARK_FILE, &mark_st) == 0) {
+        ESP_LOGW(TAG, "Restore skipped: reset.mark present (Reset before reboot, nothing saved after it)");
+        unlink(AUTOSAVE_TMP_FILE);
+        unlink(AUTOSAVE_FILE);
+        src = RESTORE_SRC_NONE;
+    } else {
+        src = restore_resolve(buf);
+    }
 
     SPEC_LOCK();
     restore_apply(src, buf);

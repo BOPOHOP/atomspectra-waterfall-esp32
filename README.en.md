@@ -355,7 +355,10 @@ that point into a **base**, then shows the analyzer's fresh (zeroed) histogram o
   can be lost (worst case: the cut happens right after an autosave). Everything saved
   before that is restored into the base on the next boot.
 - **`/api/status`**: `base_counts`/`base_time` — how much is stored in the base, `dev_resets`
-  — how many times the board has caught the analyzer resetting during this session.
+  — how many times the board has caught the analyzer resetting during this session,
+  `reset_unconfirmed` — how many Resets the analyzer did not perform (`firmware-v1.2.29+`): if
+  it keeps sending its old data for 10 seconds after a Reset, the board shows that data instead
+  of keeping the screen empty, and the main page log says so.
 - **The Reset button** (in the Web UI **and** in BecqMoni/AtomSpectra over the TCP bridge,
   see below) is the only way to actually zero the reading — a power loss by itself never
   touches the base; if anything, it preserves whatever had already been accumulated.
@@ -387,7 +390,7 @@ that point into a **base**, then shows the analyzer's fresh (zeroed) histogram o
 | `/api/backup/<name>/spectrum.json` | GET | Auto snapshot (JSON) |
 | `/api/backup/<name>` | POST | Delete an auto snapshot |
 | `/api/device` | GET | Instrument info (settings, calibration, serial) |
-| `/api/system` | GET | ESP32 health: `free_heap`/`min_free_heap`, `psram_total`/`psram_free`/`psram_largest` (`#MON-3`, `firmware-v1.2.16+` — the combined heap mixes internal and SPIRAM, so it can't tell whether the next large buffer will fit), uptime, RSSI, `flash_total`/`flash_used` |
+| `/api/system` | GET | ESP32 health: `free_heap`/`min_free_heap`, `psram_total`/`psram_free`/`psram_largest` (`#MON-3`, `firmware-v1.2.16+` — the combined heap mixes internal and SPIRAM, so it can't tell whether the next large buffer will fit); `int_free`/`int_largest`/`int_min` — internal RAM that Wi-Fi takes frame buffers from (`firmware-v1.2.29+`, includes the 32 KB DMA reserve); `int_dflt_free`/`int_dflt_largest` — internal RAM available to plain `malloc()`; `heap_walk_us` — time spent computing `*_largest` (a heap walk), uptime, RSSI, `flash_total`/`flash_used` |
 | `/api/calibration` | POST | Set calibration coefficients manually |
 | `/api/reboot-device` | POST | Reboot the spectrometer (CMD 0xF3) |
 | `/api/reboot-esp` | POST | Reboot the ESP32 |

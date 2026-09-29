@@ -555,6 +555,14 @@ static void try_open_device(void)
         // спектра на приборе (-sta). Защищает от случайной остановки анализатора и
         // от ситуации «ESP ребутнулся, восстановил запись, но прибор уже не набирает».
         // Запись уже идёт → автозапуск #FW-2 не нужен (намеренно пропускаем).
+        // У-2 (release-gate 1.2.29): очистка при старте #FW-3 обязана дойти до
+        // прибора и здесь — main.c уже взвёл гейт #58; без -rst через 10 с
+        // вернулся бы старый набор, а «очистка при старте» тихо не выполнена.
+        if (first_connect && s_boot_clear_spectrum) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            usb_host_send_text_command("-rst");
+            ESP_LOGW(TAG, "FW-3: boot clear spectrum — sent -rst to device (recording active)");
+        }
         vTaskDelay(pdMS_TO_TICKS(100));
         usb_host_send_text_command("-sta");
         ESP_LOGW(TAG, "recording active — resent -sta to resume acquisition");

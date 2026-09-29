@@ -59,6 +59,7 @@ static uint32_t         s_prev_total;
 static uint16_t        *s_dur;       // #FW-5: кольцо реальных длительностей строк (сек), параллельно s_ring
 static float           *s_temp;      // #FW-41: кольцо t1 детектора (°C), параллельно s_ring (NaN пока -inf не прочитан)
 static uint32_t         s_prev_time; // #FW-5: предыдущее device total_time_sec (дельта = живое время среза)
+static uint32_t         s_wf_resync_seen; // У-3: последний учтённый spectrum resync_seq
 static spectrum_data_t *s_snap;     // start()/seg_header_build() (serial/calib для шапки)
 // #FW-62: калибровка предыдущего сегмента — чтобы в шапке отметить факт её смены.
 // Сравниваются сами коэффициенты, а не флаг «прибор что-то присылал»: -inf приходит
@@ -1448,7 +1449,19 @@ static void wf_task(void *arg)
         uint32_t now_time = spectrum_get_current()->total_time_sec;
         if (now_time >= s_prev_time && now_time - s_prev_time < iv) continue;
 
-        spectrum_get_snapshot(s_wf_snap);
+        uint32_t resync_seq;
+        spectrum_get_snapshot_wf(s_wf_snap, &resync_seq);
+        // У-3: первый коммит после valid=false без подтверждённого сброса (старт без
+        // current.bin, Reset не выполнен прибором) несёт ВЕСЬ набор прибора — строкой
+        // он дал бы скачок (до 65535 на канал). Переносим опору, строку не пишем.
+        if (resync_seq != s_wf_resync_seen) {
+            s_wf_resync_seen = resync_seq;
+            memcpy(s_prev, s_wf_snap->bins, WF_CHANNELS * sizeof(uint32_t));
+            s_prev_total = s_wf_snap->total_counts;
+            s_prev_time  = s_wf_snap->total_time_sec;
+            ESP_LOGW(TAG, "reference resync (t=%" PRIu32 "s), no row", s_prev_time);
+            continue;
+        }
 
         bool reset = (s_wf_snap->total_counts < s_prev_total);
         for (int i = 0; i < WF_CHANNELS; i++) {
@@ -1605,7 +1618,7 @@ void spectrogram_restore(void)
     if (!st.active || !st.persist) return;   // запись была остановлена — не возобновляем
 
     // Возобновляем запись в НОВЫЙ сегмент (wf_task откроет лениво на первом тике).
-    spectrum_get_snapshot(s_snap);
+    spectrum_get_snapshot_wf(s_snap, &s_wf_resync_seen);   // У-3: опора и счётчик одним снимком
     // v3: baseline при resume — накопительный спектр на момент восстановления
     if (s_baseline) {
         for (int i = 0; i < WF_CHANNELS; i++) s_baseline[i] = s_snap->bins[i];
@@ -1672,7 +1685,7 @@ int spectrogram_start(void)
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
-    spectrum_get_snapshot(s_snap);
+    spectrum_get_snapshot_wf(s_snap, &s_wf_resync_seen);   // У-3: опора и счётчик одним снимком
     // v3: снимок накопительного спектра → baseline секция каждого сегмента
     if (s_baseline) {
         for (int i = 0; i < WF_CHANNELS; i++) s_baseline[i] = s_snap->bins[i];

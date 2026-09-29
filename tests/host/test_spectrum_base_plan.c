@@ -230,10 +230,51 @@ static void test_d2_stale_stat_never_accepted_after_reset(void)
     CHECK(!spectrum_reset_stat_is_plausible_gen(2000, 6, current_gen, current_gen));
 }
 
-// Тест: загрузка без сброса принимает статистику
+// тест: запуск без сброса — шлюз открыт, статистика принимается
 static void test_issue58_boot_without_reset_accepts_stat(void) {
-    CHECK(spectrum_reset_stat_accept(false, 1667686, 3, 0, 0, 0));
-    CHECK(spectrum_reset_stat_accept(false, 1667691, 8, 0, 0, 5));
+    bool bt = true;
+    spectrum_reset_gate_t g = { false, 0, 0 };
+    CHECK(spectrum_reset_gate_step(&g, 3000000, 3, 1667686, 1, 0, 0, &bt));
+    CHECK(!bt);
+    CHECK(spectrum_reset_gate_step(&g, 8000000, 8, 1667691, 2, 0, 0, &bt));
+    CHECK(g.reject_since_us == 0);
+}
+
+// тест: AWF-4 — устаревшая статистика сразу после сброса отклоняется, правдоподобная принимается
+static void test_issue58_awf4_race_still_rejected(void) {
+    bool bt = true;
+    spectrum_reset_gate_t g = { true, 0, 0 };
+    CHECK(!spectrum_reset_gate_step(&g, 1000000, 1, 2410, 5, 1, 1, &bt));
+    CHECK(spectrum_reset_gate_step(&g, 6000000, 6, 6, 6, 1, 1, &bt));
+    CHECK(!bt);
+}
+
+// тест: U1 — статистика старой генерации никогда не принимается и не запускает таймер
+static void test_u1_old_gen_never_starts_timer(void) {
+    bool bt = true;
+    spectrum_reset_gate_t g = { true, 0, 0 };
+    CHECK(!spectrum_reset_gate_step(&g, 1000000, 1, 1667686, 9, 2, 3, &bt));
+    CHECK(g.reject_since_us == 0);
+    CHECK(!spectrum_reset_gate_step(&g, 1000000000, 1000, 1667686, 10, 2, 3, &bt));
+    CHECK(g.reject_since_us == 0);
+}
+
+// тест: U1 — таймаут принимает только статистику, полученную после первого отклонения
+static void test_u1_timeout_needs_new_stat(void) {
+    bool bt = true;
+    spectrum_reset_gate_t g = { true, 0, 0 };
+    CHECK(!spectrum_reset_gate_step(&g, 1000000, 1, 1667686, 7, 3, 3, &bt));
+    CHECK(g.reject_since_us == 1000000);
+    CHECK(g.reject_first_seq == 7);
+    CHECK(!spectrum_reset_gate_step(&g, 10999999, 10, 1667695, 8, 3, 3, &bt));
+    CHECK(!spectrum_reset_gate_step(&g, 11000000, 11, 1667686, 7, 3, 3, &bt));
+    CHECK(!bt);
+    CHECK(spectrum_reset_gate_step(&g, 11000000, 11, 1667696, 8, 3, 3, &bt));
+    CHECK(bt);
+}
+
+// issue #58: старт без current.bin — первый коммит публикуется, не откладывается
+static void test_issue58_boot_commit_publishes(void) {
     uint32_t base_bins[3] = {0,0,0};
     uint32_t shown_bins[3] = {0,0,0};
     spectrum_base_state_t st = { base_bins, 0, 0, shown_bins, 0, 0 };
@@ -244,23 +285,6 @@ static void test_issue58_boot_without_reset_accepts_stat(void) {
     CHECK(st.base_counts == 0);
     CHECK(st.shown_counts == 1000);
     CHECK(shown_bins[0] == 400 && shown_bins[1] == 300 && shown_bins[2] == 300);
-}
-
-// Тест: неподтвержденный сброс истекает по таймауту
-static void test_issue58_unconfirmed_reset_times_out(void) {
-    CHECK(!spectrum_reset_stat_accept(true, 1667686, 3, 3, 3, 0));
-    CHECK(!spectrum_reset_stat_accept(true, 1667686, 3, 3, 3, SPECTRUM_RESET_CONFIRM_TIMEOUT_S - 1));
-    CHECK(spectrum_reset_stat_accept(true, 1667686, 3, 3, 3, SPECTRUM_RESET_CONFIRM_TIMEOUT_S));
-    CHECK(spectrum_reset_stat_accept(true, 1667700, 17, 3, 3, SPECTRUM_RESET_CONFIRM_TIMEOUT_S + 7));
-    CHECK(!spectrum_reset_stat_accept(true, 1667686, 3, 2, 3, 1000000));
-}
-
-// issue #58: гонка AWF-4 (старый STAT сразу после Reset) по-прежнему отклоняется
-static void test_issue58_awf4_race_still_rejected(void) {
-    CHECK(!spectrum_reset_stat_accept(true, 2410, 1, 1, 1, 0));
-    CHECK(!spectrum_reset_stat_accept(true, 2410, 1, 1, 1, 1));
-    CHECK(spectrum_reset_stat_accept(true, 6, 6, 1, 1, 0));
-    CHECK(spectrum_reset_stat_accept(true, 6, 6, 1, 1, 3));
 }
 
 void spectrum_base_plan_suite(void)
@@ -278,6 +302,8 @@ void spectrum_base_plan_suite(void)
     test_awf4_reset_stat_race();
     test_d2_stale_stat_never_accepted_after_reset();
     test_issue58_boot_without_reset_accepts_stat();
-    test_issue58_unconfirmed_reset_times_out();
+    test_issue58_boot_commit_publishes();
     test_issue58_awf4_race_still_rejected();
+    test_u1_old_gen_never_starts_timer();
+    test_u1_timeout_needs_new_stat();
 }

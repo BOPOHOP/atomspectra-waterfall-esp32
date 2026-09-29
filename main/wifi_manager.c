@@ -729,6 +729,13 @@ void wifi_manager_try_return_to_sta(void)
         note_return_block("activity");
         return;
     }
+    // AWF-2a (KNOWN_ISSUES): работа ПК-программы через TCP-мост — тоже работа с
+    // платой. Только при подключённом приборе: тогда поток идёт и мёртвый клиент
+    // закрывается по SO_SNDTIMEO (tcp_bridge.c) — вечного блока нет.
+    if (tcp_bridge_client_connected() && usb_host_cdc_is_connected()) {
+        note_return_block("bridge");
+        return;
+    }
 
     char ssid[WIFI_SSID_MAX] = {0};
     if (!load_saved_sta_ssid(ssid, sizeof(ssid))) {
