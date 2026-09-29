@@ -18,8 +18,8 @@ network" threat model is a separate task after 1.2.29.
 
 The board's web server is single-threaded: while one request runs a long operation, other tabs and clients
 wait. Found by an external code audit (Codeaudit, 29.09), moved to 1.2.30 by the project owner.
-- LK-02: start/stop/delete/reboot requests wait for the waterfall file lock without a timeout while writing
-  is in progress.
+- LK-02: start/stop/clear/delete requests wait for the waterfall file lock without a timeout while writing
+  is in progress (a reboot waits for it at most 5 s).
 - LK-03: "Clear" waterfall deletes up to ~11 segments directly in the web server task.
 - LK-04: waterfall recording Start/Stop wait for pending rows (up to 60 s) and for the segment to close
   inside the request.
@@ -104,7 +104,7 @@ serial number is empty (`calib_autoread_needed`, `main/calib_autoread.h:110-113`
 1.2.28 mitigation is no longer one-shot. If the board already has a calibration (including a
 manually entered one), the reply to such a request only updates the serial number; the
 instrument's coefficients are not applied (`calib_apply_coeffs`, `main/calib_autoread.h:118-121`;
-request flag — `main/usb_host_cdc.c:991`, valid for 5 s). A manual "Read" still applies the
+request flag — `main/usb_host_cdc.c:1021`, valid for 5 s). A manual "Read" still applies the
 instrument's calibration. The "Mitigated… in v1.2.28" paragraph below describes the previous
 behaviour.
 
@@ -242,7 +242,7 @@ live snapshot. Measured after the fix: a difference of −170 pulses, within noi
 
 ### A "Reset" not performed by the instrument lost pulses in the waterfall — FIXED (v1.2.29)
 
-**Before.** If the instrument did not perform a "Reset", after 10 s the board showed the instrument's data
+**Before.** If the instrument did not perform a "Reset", after about 10 s the board showed the instrument's data
 set, and the waterfall moved its reference without writing a row. Pulses between the last row before the
 "Reset" and that moment were lost (4718 and 2826 pulses observed).
 
@@ -262,11 +262,11 @@ then a "Reset" was not confirmed, the pulses of that interval are still lost (wi
   overwritten by a retry of the old one.
 - A `-rst` from a PC program through the TCP bridge clears the board spectrum only if it reached the
   instrument.
-- The "Reset" mark is written via a temporary file: a power loss while writing leaves no broken mark.
+- The "Reset not delivered" mark is written via a temporary file: a power loss while writing leaves no broken mark (losing the mark of a delivered "Reset" is harmless).
 - The spectrum autosave is sanity-checked on boot.
 - An update from GitHub aborts the autosave without deleting the spectrum files.
-- When there is no memory for a JSON response the board answers `503 {"ok":false,"err":"oom"}` instead of
-  cutting the response.
+- When there is no memory to print a JSON response the board answers `503 {"ok":false,"err":"oom"}` instead of
+  cutting the response (no memory for the response object itself — `500 oom`).
 - Segment upload to a server (push): a short file read ends the attempt with error `-16` instead of
   sending an incomplete body.
 - The reboot when falling back to the field access point runs in a separate task with enough stack.
@@ -281,7 +281,7 @@ shown until the instrument itself reset its acquisition time. A "Reset" that the
 perform (the command did not arrive or was rejected) froze the spectrum the same way.
 
 **Now.** After a "Reset" the board waits for the instrument's confirmation (acquisition time
-restarting from zero) for at most 10 s (`SPECTRUM_RESET_CONFIRM_TIMEOUT_S`,
+restarting from zero) for about 10 s after the first rejected packet, 11–13 s after the command in practice (`SPECTRUM_RESET_CONFIRM_TIMEOUT_S`,
 `main/spectrum_base_plan.h:172`), then shows the instrument's acquisition, increments
 `reset_unconfirmed` (`/api/status`, `/api/spectrum/meta.json`) and writes a line to the main page
 log. The first commit after a reset is accepted only on a time packet received after the reset
@@ -295,11 +295,11 @@ accumulated acquisition. Mutation-tested: `tests/host/mutate_issue58.sh`, 15 mut
 a minute), it restored the spectrum acquired before the reset (from an automatic snapshot or an
 unfinished `.tmp`). A "Reset" with the instrument unplugged cleared only the board.
 
-**Now.** "Reset" creates a `reset.mark` marker (`reset_mark_create`, `main/spectrum.c:774`); while
+**Now.** "Reset" creates a `reset.mark` marker (`reset_mark_create`, `main/spectrum.c:775`); while
 the marker exists, restore after boot brings nothing back, and the first autosave of the new
 acquisition removes the marker. If the `-rst` command did not reach the instrument, the marker is
 flagged "not delivered" and the board repeats `-rst` on the next instrument connection — including
-after its own reboot (`main/usb_host_cdc.c:610`). The repeat is dropped if another "Reset"
+after its own reboot (`main/usb_host_cdc.c:564`, function — `:602`). The repeat is dropped if another "Reset"
 happened in the meantime.
 
 ### #HTTP-FS1: the web UI froze for up to 5 s when a collector acknowledged a segment — FIXED (v1.2.29)
@@ -397,9 +397,9 @@ returned the board to the router after 10 minutes without Web UI use; PC-app tra
 (AtomSpectra/BecqMoni) over the TCP bridge did not count, so the link could drop from a reboot.
 
 **Now.** TCP-bridge traffic within the last 10 minutes (`WIFI_RETURN_BRIDGE_IDLE_MS`,
-`main/wifi_return_plan.h:16`) also blocks the return (`main/wifi_manager.c:691`, `:742`). So that
+`main/wifi_return_plan.h:16`) also blocks the return (`main/wifi_manager.c:708`, `:759`). So that
 a client that vanished without disconnecting cannot hold the board forever, TCP keepalive is
-enabled on the bridge socket (`main/tcp_bridge.c:234`): such a client is released in about a
+enabled on the bridge socket (`main/tcp_bridge.c:252`): such a client is released in about a
 minute.
 
 ### issue #52b: URI handler table overflow stayed silent — FIXED (v1.2.28)

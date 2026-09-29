@@ -75,10 +75,18 @@ need spectrogram.c 1 'if (rs == s_wf_resync_seen) s_pre_rst_valid = false;'
 need spectrogram.c 1 'for (int i = 0; i < 200 && s_wf_busy; i++) vTaskDelay(pdMS_TO_TICKS(10));'
 need spectrogram.c 1 's_wf_busy = true;    /* до проверки recording'
 need main.c        1 'if (t_cjson_try) return;'
-need spectrogram.c 1 's_pre_rst_bins = s_ref_bins;'                        # один PSRAM-буфер на две роли (min_free_heap)# P-03 (Codeaudit): журнал главной страницы существует и показывается (в копии main/ без web/ — пропуск)
+need spectrogram.c 1 's_pre_rst_bins = s_ref_bins;'                        # один PSRAM-буфер на две роли (min_free_heap)
+# Разбор 54194aa pass2: барьеры Деккера — сразу после s_wf_busy = true и сразу перед ожиданием в prepare_reboot
+dk=$(awk '{c=$0; sub(/\r$/,"",c); sub(/^[ \t]+/,"",c)}
+  p ~ /^s_wf_busy = true;/ {n++; if (c ~ /^__sync_synchronize\(\);/) a++}
+  c ~ /^for \(int i = 0; i < / && p ~ /^__sync_synchronize\(\);/ {b++}
+  {p=c} END{print (a == n && b == 1) ? "ok" : "bad " n+0 "/" a+0 "/" b+0}' spectrogram.c)
+[ "$dk" = ok ] || { echo "WIRING FAIL spectrogram.c: Dekker barrier around s_wf_busy missing ($dk)"; RC=1; }
+# P-03 (Codeaudit): журнал главной страницы существует и показывается (в копии main/ без web/ — пропуск)
 if [ -f ../web/index.html ]; then
     need ../web/index.html 1 '<pre id="log" style="display:none;'
     need ../web/index.html 1 'function lg(m){if(!logEl)return;logEl.style.display="";'
+    need ../web/index.html 1 '.row + .row, #log + .row{'                     # pass2 C: pre#log рвал .row + .row
 fi
 # F-09 (класс): результат cJSON_PrintUnformatted проверен на NULL в 3 строках после вызова (все *.c)
 f09=$(awk 'match($0,/char \*[A-Za-z_]+ = cJSON_PrintUnformatted\(/){v=substr($0,RSTART+6,RLENGTH-6); sub(/ =.*/,"",v); k=3; want=FILENAME":"FNR; next}
