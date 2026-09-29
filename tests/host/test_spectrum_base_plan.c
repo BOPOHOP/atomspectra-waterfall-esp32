@@ -311,6 +311,15 @@ static void test_n12_gate_on_publish(void) {
     CHECK(!spectrum_reset_gate_on_publish(&g, false, false));
 }
 
+// Н-Д1: отложенный -rst — только пока тот же сброс не выполнен
+static void test_nd1_reset_pending_valid(void) {
+    spectrum_reset_gate_t g = { true, 0, 0 };
+    CHECK(spectrum_reset_pending_valid(&g, 5, 5));
+    CHECK(!spectrum_reset_pending_valid(&g, 5, 6));
+    g.armed = false;
+    CHECK(!spectrum_reset_pending_valid(&g, 5, 5));
+}
+
 // issue #58: старт без current.bin — первый коммит публикуется, не откладывается
 static void test_issue58_boot_commit_publishes(void) {
     uint32_t base_bins[3] = {0,0,0};
@@ -348,4 +357,5 @@ void spectrum_base_plan_suite(void)
     test_n12_stat_tag_stamp();
     test_n11_stat_tag_session();
     test_n12_gate_on_publish();
+    test_nd1_reset_pending_valid();
 }

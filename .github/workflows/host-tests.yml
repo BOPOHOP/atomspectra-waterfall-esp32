@@ -16,3 +16,5 @@ jobs:
         run: cd tests/host && make asan
       - name: Mutation acceptance (issue #58 gate, release-gate 1.2.29)
         run: bash tests/host/mutate_issue58.sh
+      - name: Wiring check (call sites not compiled by host tests)
+        run: bash tests/host/wiring_check.sh

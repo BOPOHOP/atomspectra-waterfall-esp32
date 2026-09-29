@@ -277,6 +277,11 @@ void spectrum_get_totals(uint32_t *counts, uint32_t *time_sec, uint32_t *resync_
 // Н-3.3: метка reset.mark на flash и -rst до прибора не дошёл (Сброс без прибора
 // до перезагрузки, спектр после него не сохранён). Вызывать после spectrum_restore_autosave().
 bool spectrum_reset_mark_undelivered(void);
+// Н-Д1: поколение сброса (для досылки -rst) и «тот же сброс ещё не выполнен».
+uint32_t spectrum_reset_gen(void);
+bool spectrum_reset_still_undelivered(uint32_t pending_gen);
+// Н-Д2: новый сеанс USB (вызывать в задаче разбора при сбросе RX-пути).
+void spectrum_usb_session_bump(void);
 const device_info_t   *spectrum_get_device_info(void);
 int  spectrum_save_to_flash(void);  // >=0 idx; -1 нет валидного спектра; -2 мало места; -3 ошибка FS (#FW-24)
 int  spectrum_load_from_flash(int index, spectrum_data_t *out);

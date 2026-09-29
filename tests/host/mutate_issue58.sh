@@ -5,7 +5,8 @@ set -u
 cd "$(dirname "$0")"
 H=../../main/spectrum_base_plan.h
 B=$(mktemp); cp "$H" "$B"
-trap 'cp "$B" "$H"; rm -f "$B"' EXIT
+C=../../main/calib_autoread.h; CB=$(mktemp); cp "$C" "$CB"
+trap 'cp "$B" "$H"; cp "$CB" "$C"; rm -f "$B" "$CB"' EXIT
 RC=0
 check() {   # build failure must not read as "0 FAIL"; rc=1: survivor / build fail / red baseline (CI)
     rm -f test_runner; out=$(make test 2>&1)
@@ -31,11 +32,12 @@ run M8_plausible_no_gen 's/if (spectrum_reset_stat_is_plausible_gen(stat_time_se
 run M9_no_seq_inc       's/    t->seq++;/    (void)t;/'                                     # n12_stat_tag_stamp
 run M10_no_session      's/return t->fresh \&\& t->session == session;/return ((void)session, t->fresh);/'    # n11_stat_tag_session
 run M11_publish_armed   's/    g->armed = false;/    (void)g;/'                               # n12_gate_on_publish
+run M14_pending_no_armed 's/return g->armed \&\& pending_gen == current_gen;/return ((void)g, pending_gen == current_gen);/'   # nd1
+run M15_pending_no_gen   's/return g->armed \&\& pending_gen == current_gen;/return ((void)pending_gen, (void)current_gen, g->armed);/'   # nd1
 run M12_resync_always   's/return first_valid \&\& !reset_confirmed;/return ((void)reset_confirmed, first_valid);/'   # n12_gate_on_publish
 cp "$B" "$H"
-C=../../main/calib_autoread.h; CB=$(mktemp); cp "$C" "$CB"
 sed -i 's/return read_success \&\& !serial_only_request;/return ((void)serial_only_request, read_success);/' "$C"
 if cmp -s "$C" "$CB"; then echo "== M13_calib_serial_only: SED DID NOT APPLY"; RC=1; else check M13_calib_serial_only; fi  # calib_autoread
-cp "$CB" "$C"; rm -f "$CB"
+cp "$CB" "$C"
 check baseline
 exit $RC

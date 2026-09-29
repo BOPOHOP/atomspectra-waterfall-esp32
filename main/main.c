@@ -82,7 +82,7 @@ void app_main(void)
     if (bc.clear_spectrum || reset_mark) {
         spectrum_reset_undelivered();
         spectrum_autosave_consume_abort();
-        if (reset_mark) usb_host_cdc_request_rst();
+        usb_host_cdc_request_rst();   // FW-3 и метка 'P': -rst на первом коннекте
         ESP_LOGW(TAG, "%s: accumulated spectrum cleared on boot",
                  bc.clear_spectrum ? "FW-3" : "reset.mark");
     }

@@ -82,8 +82,8 @@ static SemaphoreHandle_t s_spec_lock;
 // Н-5 (release-gate 1.2.29): файловые операции метки reset.mark — под своим
 // мьютексом, НЕ под SPEC_LOCK (#WF-1). Порядок: MARK_LOCK → SPEC_LOCK.
 static SemaphoreHandle_t s_mark_lock;
-static bool s_mark_present;   // метка на flash (под MARK_LOCK): лишний unlink не нужен
-static char s_mark_state;     // MARK_DELIVERED / MARK_PENDING (под MARK_LOCK)
+static bool s_mark_present;   // метка на flash (под MARK_LOCK; на старте — одна задача)
+static char s_mark_state;     // MARK_DELIVERED / MARK_PENDING (то же)
 #define MARK_LOCK()   do { if (s_mark_lock) xSemaphoreTake(s_mark_lock, portMAX_DELAY); } while (0)
 #define MARK_UNLOCK() do { if (s_mark_lock) xSemaphoreGive(s_mark_lock); } while (0)
 
@@ -93,6 +93,10 @@ static char s_mark_state;     // MARK_DELIVERED / MARK_PENDING (под MARK_LOCK
 static volatile bool s_calib_dirty;
 // Н-1: ближайший ответ -cal запрошен только ради серийника (calib_apply_coeffs).
 static volatile bool s_cal_serial_only;
+// Н-Д3: флаг живёт CAL_SERIAL_ONLY_MS после авто -cal — потерянный или битый ответ не
+// должен превращать поздний -cal ПК-программы через мост в «только серийник».
+static volatile uint32_t s_cal_serial_only_ms;
+#define CAL_SERIAL_ONLY_MS 5000u
 
 // F12/RO1 (release-gate-1.2.28-code-fixes.md:128): бампается КАЖДЫЙ раз, когда
 // -cal дал ВАЛИДНЫЙ CRC, но calib_read_is_success() всё равно false (все нули
@@ -131,7 +135,7 @@ static uint32_t  s_stage_reset_gen;               // снимок gen на offse
 // AWF-4: момент spectrum_reset() (esp_timer, мкс) — гейт правдоподобности STAT
 // на первом коммите после Reset (spectrum_reset_stat_is_plausible).
 static int64_t   s_reset_at_us;
-// issue #58: гейт AWF-4 взводит только spectrum_reset(); старт платы без
+// issue #58: гейт AWF-4 взводит только сброс (spectrum_reset/_undelivered); старт платы без
 // current.bin — не Reset. Снимается первым опубликованным коммитом.
 static spectrum_reset_gate_t s_reset_gate;
 static uint32_t  s_reset_unconfirmed;             // У-2: Reset, не выполненный прибором (с боота)
@@ -149,7 +153,7 @@ typedef struct {
     spectrum_stat_tag_t tag;   // fresh/gen (D2)/seq (У-1)/session (Н-1.1) — spectrum_base_plan.h
 } stat_stage_t;
 static stat_stage_t s_stat_stage;
-// Н-1.1: номер сеанса USB, +1 на каждом разрыве CDC (spectrum_t1_on_cdc_teardown).
+// Н-1.1: номер сеанса USB, +1 на каждом сбросе RX-пути (spectrum_usb_session_bump, usb_rxw).
 static volatile uint32_t s_usb_session;
 
 // #FW-13 фикс №2: слушатели коммита свипа. Полный свип = конец USB-burst и начало
@@ -583,7 +587,8 @@ void spectrum_process_info_response(const char *text)
         // проверяли одни лишь тесты (мёртвый параметр).
         bool serial_only = false;   // Н-1: флаг гасит только ответ -cal (CRC ok)
         if (!is_inf && cc == ce) {
-            serial_only = s_cal_serial_only;
+            serial_only = s_cal_serial_only &&
+                (uint32_t)(esp_timer_get_time() / 1000) - s_cal_serial_only_ms < CAL_SERIAL_ONLY_MS;
             s_cal_serial_only = false;
         }
         if (calib_apply_coeffs(calib_read_is_success(cc == ce, coeffs, CALIB_COEFFS), serial_only)) {
@@ -705,7 +710,7 @@ void spectrum_t1_on_cdc_open(uint32_t now_ms)
 void spectrum_t1_on_cdc_teardown(void)
 {
     SPEC_LOCK();
-    s_usb_session++;   // Н-1.1: STAT прошлого сеанса в коммите больше не участвует
+    s_cal_serial_only = false;   // Н-Д3: ответ на авто -cal этого сеанса уже не придёт
     s_t1_session_inf = 0;
     s_t1_refresh_sent = false;
     s_t1_open_ms = 0;
@@ -885,6 +890,27 @@ uint32_t spectrum_reset_unconfirmed_count(void)
 {
     SPEC_LOCK(); uint32_t n = s_reset_unconfirmed; SPEC_UNLOCK();
     return n;
+}
+
+uint32_t spectrum_reset_gen(void)
+{
+    SPEC_LOCK(); uint32_t g = s_reset_gen; SPEC_UNLOCK();
+    return g;
+}
+
+bool spectrum_reset_still_undelivered(uint32_t pending_gen)
+{
+    SPEC_LOCK();
+    bool v = spectrum_reset_pending_valid(&s_reset_gate, pending_gen, s_reset_gen);
+    SPEC_UNLOCK();
+    return v;
+}
+
+// Н-Д2: новый сеанс USB — в задаче разбора (usb_rxw) при сбросе RX-пути, то есть в
+// той же задаче, что ставит штамп STAT: хвост кольца старого сеанса уже выброшен.
+void spectrum_usb_session_bump(void)
+{
+    SPEC_LOCK(); s_usb_session++; SPEC_UNLOCK();
 }
 
 // #MON-1: атомарная пара (total_counts, total_time_sec) под тем же SPEC_LOCK,
@@ -1323,6 +1349,7 @@ bool spectrum_calibration_is_missing(void)
 // автосчитывание перед -sta повторяется и при заданной калибровке.
 void spectrum_calib_set_serial_only(bool serial_only)
 {
+    s_cal_serial_only_ms = (uint32_t)(esp_timer_get_time() / 1000);
     s_cal_serial_only = serial_only;
 }
 

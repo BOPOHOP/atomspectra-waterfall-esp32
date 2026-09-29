@@ -248,3 +248,12 @@ static inline bool spectrum_reset_gate_on_publish(spectrum_reset_gate_t *g, bool
     g->reject_since_us = 0;
     return first_valid && !reset_confirmed;
 }
+
+// Н-Д1 (release-gate 1.2.29): отложенный -rst досылается, только пока ТОТ ЖЕ сброс не
+// выполнен: поколение не сменилось (новый Сброс, дошедший -rst) и гейт взведён (нет
+// публикации — ни подтверждённой, ни по таймауту, когда набор прибора уже показан).
+static inline bool spectrum_reset_pending_valid(const spectrum_reset_gate_t *g, uint32_t pending_gen,
+                                                uint32_t current_gen)
+{
+    return g->armed && pending_gen == current_gen;
+}

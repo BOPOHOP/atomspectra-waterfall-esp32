@@ -518,7 +518,8 @@ static esp_err_t handle_reset(httpd_req_t *req)
     shproto_packet_add_data(&pkt, '\0');
     shproto_packet_complete(&pkt);
     // У-2: sent=false — прибор -rst не получил (не подключён/ошибка USB); сброс
-    // платы всё равно выполнен, данные прибора вернутся по таймауту гейта #58.
+    // платы выполнен. Н-4/Н-Д1: -rst дошлётся на ближайшем коннекте, если к тому
+    // времени набор прибора не принят по таймауту гейта #58 и не было нового Сброса.
     bool sent = usb_host_cdc_send(pkt.data, pkt.len) == 0;
     if (sent) {
         spectrum_reset();
@@ -629,7 +630,7 @@ static esp_err_t handle_ota_locked(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Image too large for partition");
         return ESP_FAIL;
     }
-    // Как spectrum_reset(): прервать автосохранение, НЕ удаляя файлы спектра
+    // В отличие от spectrum_reset(): прервать автосохранение, НЕ удаляя файлы спектра (П-6)
     // (writer не должен драться с OTA-write за flash-freeze/шину). Снимок
     // спектра/водопада на flash — не трогаем, OTA его не касается.
     spectrum_autosave_abort_keep();   // П-6: current.bin не трогать

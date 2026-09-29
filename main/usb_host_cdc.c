@@ -136,6 +136,7 @@ static bool s_boot_autostart_spec = false;
 static bool s_boot_autostart_wf   = false;
 static bool s_boot_clear_spectrum = false;
 static volatile bool s_rst_pending = false;   // Н-4: -rst ждёт ближайшего коннекта
+static uint32_t s_rst_pending_gen;            // Н-Д1: поколение сброса, который досылаем
 static bool s_boot_once_done      = false;
 
 // #CMD-1/#AWF-12b: разбор дампа -cal (40 регистров, строки по 8 hex через
@@ -250,6 +251,7 @@ static void usb_rx_worker(void *arg)
             s_text_marks = (text_accum_marks_t){0};
             s_text_flush_armed = false;
             (void)xStreamBufferReset(s_rx_ring);
+            spectrum_usb_session_bump();   // Н-1.1/Н-Д2: STAT прошлого сеанса — не свежий
         }
         // У1 (раунд 3): TEXT_ACCUM_QUIET_MS без текстовых пакетов — отложенный дамп
         // (конец на границе строки мог быть началом нового дампа) разбирается.
@@ -554,7 +556,12 @@ static void try_open_device(void)
     // #FW-3 (очистка при старте), Сброс без прибора и Сброс до перезагрузки без
     // сохранения (reset.mark) — -rst прибору на КАЖДОМ коннекте, пока не уйдёт
     // (Н-4/Н-3.3/Н-1.4 release-gate 1.2.29; до записи/автозапуска, как раньше).
-    if (first_connect && s_boot_clear_spectrum) s_rst_pending = true;
+    // Н-Д1: досылать, только пока ТОТ ЖЕ сброс не выполнен — иначе поздний реконнект
+    // (через часы) стёр бы набор, принятый по таймауту или начатый новым Сбросом.
+    if (s_rst_pending && !spectrum_reset_still_undelivered(s_rst_pending_gen)) {
+        s_rst_pending = false;
+        ESP_LOGI(TAG, "pending -rst dropped: reset already delivered or superseded");
+    }
     if (s_rst_pending) {
         vTaskDelay(pdMS_TO_TICKS(100));
         if (usb_host_send_text_command("-rst") == 0) {
@@ -600,6 +607,7 @@ void usb_host_cdc_set_autostart(bool autostart_spectrum, bool autostart_waterfal
 
 void usb_host_cdc_request_rst(void)
 {
+    s_rst_pending_gen = spectrum_reset_gen();   // поколение ЭТОГО сброса (Н-Д1)
     s_rst_pending = true;
 }
 

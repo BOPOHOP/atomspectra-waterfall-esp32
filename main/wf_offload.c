@@ -134,7 +134,10 @@ static int post_segment(const wf_offload_cfg_t *c, const char *name,
         esp_http_client_set_header(cl, "Authorization", authhdr);
     }
 
-    int result;
+    // #UPL-1: result был без инициализации — при сбое записи (-14) проверка
+    // «result != -15» читала мусор со стека, и в журнал уходил ложный -15
+    // (отмена очистки) от прошлого вызова вместо настоящего -14.
+    int result = 0;
     if (esp_http_client_open(cl, (int)size) != ESP_OK) { result = -12; goto done; }
 
     {
