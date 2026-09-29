@@ -251,6 +251,8 @@ static void reg_clear_all(void)
 // в кольцо и будит wf_fs_task (consumer), который пишет сегменты в своём темпе —
 // латентность стирания флеша (1МБ unlink на границе ~31с) больше НЕ тормозит такт.
 static SemaphoreHandle_t s_fs_sig;     // будит consumer на новую строку
+static QueueHandle_t     s_del_q;      // #HTTP-FS1: pull-ack удаления для wf_fs_task
+#define WF_DEL_Q_LEN 8
 // #FW-13 фикс №2: коммит свипа спектра (конец USB-burst) будит producer — снапшот
 // и flash-запись строки уходят в тихое окно, а не в случайную фазу 1-с тика.
 static SemaphoreHandle_t s_commit_sig;
@@ -1254,6 +1256,8 @@ void spectrogram_init(void)
     // #FW-6: семафор-будильник consumer'а создаём ДО запуска producer'а.
     s_fs_sig = xSemaphoreCreateBinary();
     if (!s_fs_sig) { ESP_LOGE(TAG, "fs sig create failed"); s_status.ready = false; return; }
+    s_del_q = xQueueCreate(WF_DEL_Q_LEN, sizeof(uint32_t));   // NULL → delete_async отвечает 503
+    if (!s_del_q) ESP_LOGE(TAG, "seg delete queue create failed");
     // #FW-13 фикс №2: подписка producer'а на коммиты свипов (NULL — останется 1-с тик).
     s_commit_sig = xSemaphoreCreateBinary();
     if (s_commit_sig) spectrum_add_commit_listener(s_commit_sig);
@@ -1538,6 +1542,12 @@ static void wf_fs_task(void *arg)
                 seg_write_row(s_fs_buf, s_fs_dur, s_fs_temp);
             }
             LOCK(); s_fs_flushed++; UNLOCK();
+        }
+        // #HTTP-FS1: удаления по pull-ack — здесь, а не в задаче httpd (см. spectrogram_seg_delete_async).
+        uint32_t del_idx;
+        while (s_del_q && xQueueReceive(s_del_q, &del_idx, 0) == pdTRUE) {
+            if (!spectrogram_seg_delete(del_idx))
+                ESP_LOGW(TAG, "seg_delete: seg_%05" PRIu32 " not deleted (open/pinned/absent)", del_idx);
         }
         // #FW-14: финализация по возрасту — 64 строки ИЛИ 10 мин (WATERFALL.md),
         // чтобы при больших интервалах файл не висел открытым часами и приёмник
@@ -2223,6 +2233,17 @@ bool spectrogram_seg_delete(uint32_t idx)
     }
     FSUNLOCK();
     return ok;
+}
+
+// #HTTP-FS1: httpd однопоточный — синхронное удаление держало ВСЕХ HTTP-клиентов на время
+// http_io_gate (~1 с до тихого окна), FSLOCK (закрытие+открытие сегмента, до 5 с) и unlink.
+// Замер до фикса: raw-1229/httpfs1-repro-before.csv (4961/4980 мс на смене сегмента).
+// false — очередь не создана или полна (клиент повторит на следующем проходе).
+bool spectrogram_seg_delete_async(uint32_t idx)
+{
+    if (!s_del_q || xQueueSend(s_del_q, &idx, 0) != pdTRUE) return false;
+    if (s_fs_sig) xSemaphoreGive(s_fs_sig);
+    return true;
 }
 
 // v3: дозовый коэффициент µSv/h per cps. Сохраняется в NVS как IEEE-754 bits.

@@ -19,5 +19,9 @@ need usb_host_cdc.c 1 'spectrum_calib_set_serial_only(!spectrum_calibration_is_m
 need wifi_manager.c 2 'if (tcp_bridge_client_active(WIFI_RETURN_BRIDGE_IDLE_MS)) {'
 need tcp_bridge.c  1 'setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof(ka)) < 0 ||'
 need monitor.c     1 'if (!prev_valid || resync != prev_resync) {'
+# #HTTP-FS1: pull-ack удаление — только через очередь wf_fs_task, не синхронно в httpd
+need web_waterfall.c 1 'if (!spectrogram_seg_delete_async(idx)) {'
+need web_waterfall.c 0 'spectrogram_seg_delete(idx)'
+need spectrogram.c 1 'while (s_del_q && xQueueReceive(s_del_q, &del_idx, 0) == pdTRUE) {'
 [ "$RC" -eq 0 ] && echo "wiring: OK"
 exit $RC

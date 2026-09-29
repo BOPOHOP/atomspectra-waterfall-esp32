@@ -994,13 +994,17 @@ static esp_err_t h_segment_delete(httpd_req_t *req)
         return ESP_FAIL;
     }
     uint32_t idx = (uint32_t)strtoul(name + 4, NULL, 10);
-    // #3/Codeaudit P1: unlink идёт с отпущенным FSLOCK внутри spectrogram_seg_delete —
-    // гейт нужен только вокруг ЭТОГО вызова, не вокруг csrf/parse выше.
-    if (!http_io_gate_enter_wait_or_503(req, WF_SEGMENT_GATE_WAIT_MS)) return ESP_OK;
-    bool ok = spectrogram_seg_delete(idx);
-    http_io_gate_leave();
+    // #HTTP-FS1: удаляет wf_fs_task; здесь только постановка в очередь — задача httpd
+    // не ждёт ни http_io_gate, ни FSLOCK (стоп всех клиентов до 5 с). Открытый/pinned/
+    // отсутствующий сегмент wf_fs_task пропускает с WARN; клиент повторит ack при листинге.
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, ok ? "{\"ok\":true}" : "{\"ok\":false,\"err\":\"not-deletable\"}");
+    if (!spectrogram_seg_delete_async(idx)) {
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        httpd_resp_set_hdr(req, "Retry-After", "5");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"err\":\"busy\"}");
+        return ESP_OK;
+    }
+    httpd_resp_sendstr(req, "{\"ok\":true,\"queued\":true}");
     return ESP_OK;
 }
 
