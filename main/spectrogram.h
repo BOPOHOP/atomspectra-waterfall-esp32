@@ -200,8 +200,9 @@ void spectrogram_offload_release(uint32_t idx);
 // #REC-11 pull: удалить завершённый сегмент по индексу (PC подтвердил приём через
 // POST /api/waterfall/segment/delete). Не трогает открытый/pinned сегмент. true=удалён.
 bool spectrogram_seg_delete(uint32_t idx);
-// #HTTP-FS1: то же в задаче wf_fs_task (не блокирует httpd). true = поставлено в очередь.
-bool spectrogram_seg_delete_async(uint32_t idx);
+// #HTTP-FS1: то же в задаче wf_fs_task (не блокирует httpd).
+// 1 = в очереди; 0 = не завершённый сегмент реестра (not-deletable); -1 = очередь полна/нет.
+int spectrogram_seg_delete_async(uint32_t idx);
 
 // #FW-60: снимок RAM-реестра сегментов для листинга /api/waterfall/segments.
 // Все поля известны в момент создания сегмента, поэтому листинг не трогает flash вовсе

@@ -995,10 +995,16 @@ static esp_err_t h_segment_delete(httpd_req_t *req)
     }
     uint32_t idx = (uint32_t)strtoul(name + 4, NULL, 10);
     // #HTTP-FS1: удаляет wf_fs_task; здесь только постановка в очередь — задача httpd
-    // не ждёт ни http_io_gate, ни FSLOCK (стоп всех клиентов до 5 с). Открытый/pinned/
-    // отсутствующий сегмент wf_fs_task пропускает с WARN; клиент повторит ack при листинге.
+    // не ждёт ни http_io_gate, ни FSLOCK (стоп всех клиентов до 5 с). Открытый/неизвестный
+    // сегмент отсекается сразу по RAM-реестру (прежний not-deletable); pinned и прочее
+    // wf_fs_task пропускает с WARN — сегмент остаётся в листинге, клиент повторит ack.
     httpd_resp_set_type(req, "application/json");
-    if (!spectrogram_seg_delete_async(idx)) {
+    int q = spectrogram_seg_delete_async(idx);
+    if (q == 0) {
+        httpd_resp_sendstr(req, "{\"ok\":false,\"err\":\"not-deletable\"}");
+        return ESP_OK;
+    }
+    if (q < 0) {
         httpd_resp_set_status(req, "503 Service Unavailable");
         httpd_resp_set_hdr(req, "Retry-After", "5");
         httpd_resp_sendstr(req, "{\"ok\":false,\"err\":\"busy\"}");

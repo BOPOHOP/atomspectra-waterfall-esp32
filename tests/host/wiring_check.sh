@@ -20,8 +20,14 @@ need wifi_manager.c 2 'if (tcp_bridge_client_active(WIFI_RETURN_BRIDGE_IDLE_MS))
 need tcp_bridge.c  1 'setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof(ka)) < 0 ||'
 need monitor.c     1 'if (!prev_valid || resync != prev_resync) {'
 # #HTTP-FS1: pull-ack удаление — только через очередь wf_fs_task, не синхронно в httpd
-need web_waterfall.c 1 'if (!spectrogram_seg_delete_async(idx)) {'
+need web_waterfall.c 1 'int q = spectrogram_seg_delete_async(idx);'
 need web_waterfall.c 0 'spectrogram_seg_delete(idx)'
-need spectrogram.c 1 'while (s_del_q && xQueueReceive(s_del_q, &del_idx, 0) == pdTRUE) {'
+need spectrogram.c 1 'if (s_del_q && xQueueReceive(s_del_q, &dr, 0) == pdTRUE) {'
+need spectrogram.c 1 'if (dr.epoch != s_wf_epoch)'
+need spectrogram.c 1 'bool fin = (i >= 0 && s_seg_reg[i].finalized);'
+# #AUD-DIAG-1 R1/R2: причина сброса, номер загрузки и SHA ELF в /api/status
+need web_server.c  1 'cJSON_AddStringToObject(root, "reset_reason", reset_reason_str(rr));'
+need web_server.c  1 'cJSON_AddNumberToObject(root, "boot_count", boot_config_get_session());'
+need web_server.c  1 'cJSON_AddStringToObject(root, "elf_sha", elf_sha);'
 [ "$RC" -eq 0 ] && echo "wiring: OK"
 exit $RC

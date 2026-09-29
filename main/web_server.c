@@ -126,9 +126,39 @@ static int parse_saved_index(const char *uri)
     return atoi(p + 11);
 }
 
+// #AUD-DIAG-1 R1: причина последнего сброса. Только имена, что есть во всех IDF 5.x;
+// прочее — "OTHER" + числовой reset_reason_code рядом.
+static const char *reset_reason_str(esp_reset_reason_t r)
+{
+    switch (r) {
+    case ESP_RST_POWERON:   return "POWERON";
+    case ESP_RST_EXT:       return "EXT";
+    case ESP_RST_SW:        return "SW";
+    case ESP_RST_PANIC:     return "PANIC";
+    case ESP_RST_INT_WDT:   return "INT_WDT";
+    case ESP_RST_TASK_WDT:  return "TASK_WDT";
+    case ESP_RST_WDT:       return "WDT";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT:  return "BROWNOUT";
+    case ESP_RST_SDIO:      return "SDIO";
+    case ESP_RST_UNKNOWN:   return "UNKNOWN";
+    default:                return "OTHER";
+    }
+}
+
 // AWF-3 (#7): наблюдаемость слияния база+прибор в /api/status.
 static void status_add_base_info(cJSON *root)
 {
+    // #AUD-DIAG-1 R1/R2: причина сброса, номер загрузки (сессия платы, +1 за загрузку,
+    // issue #52), время работы и SHA256 ELF — версия "1.2.29" разные сборки не различает.
+    esp_reset_reason_t rr = esp_reset_reason();
+    cJSON_AddStringToObject(root, "reset_reason", reset_reason_str(rr));
+    cJSON_AddNumberToObject(root, "reset_reason_code", (int)rr);
+    cJSON_AddNumberToObject(root, "boot_count", boot_config_get_session());
+    cJSON_AddNumberToObject(root, "uptime_s", (double)(esp_timer_get_time() / 1000000));
+    char elf_sha[17];
+    esp_app_get_elf_sha256(elf_sha, sizeof(elf_sha));
+    cJSON_AddStringToObject(root, "elf_sha", elf_sha);
     uint32_t base_time = 0, base_counts = 0, dev_resets = 0;
     spectrum_get_base_info(&base_time, &base_counts, &dev_resets);
     cJSON_AddNumberToObject(root, "base_time", base_time);

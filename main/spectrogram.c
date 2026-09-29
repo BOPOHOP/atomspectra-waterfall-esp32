@@ -253,6 +253,9 @@ static void reg_clear_all(void)
 static SemaphoreHandle_t s_fs_sig;     // будит consumer на новую строку
 static QueueHandle_t     s_del_q;      // #HTTP-FS1: pull-ack удаления для wf_fs_task
 #define WF_DEL_Q_LEN 8
+// epoch = s_wf_epoch на момент ack: start/clear его меняют (clear обнуляет нумерацию),
+// и ack прежней сессии не должен удалить новый сегмент с тем же индексом.
+typedef struct { uint32_t idx; uint32_t epoch; } wf_del_req_t;
 // #FW-13 фикс №2: коммит свипа спектра (конец USB-burst) будит producer — снапшот
 // и flash-запись строки уходят в тихое окно, а не в случайную фазу 1-с тика.
 static SemaphoreHandle_t s_commit_sig;
@@ -1256,7 +1259,7 @@ void spectrogram_init(void)
     // #FW-6: семафор-будильник consumer'а создаём ДО запуска producer'а.
     s_fs_sig = xSemaphoreCreateBinary();
     if (!s_fs_sig) { ESP_LOGE(TAG, "fs sig create failed"); s_status.ready = false; return; }
-    s_del_q = xQueueCreate(WF_DEL_Q_LEN, sizeof(uint32_t));   // NULL → delete_async отвечает 503
+    s_del_q = xQueueCreate(WF_DEL_Q_LEN, sizeof(wf_del_req_t));   // NULL → delete_async отвечает 503
     if (!s_del_q) ESP_LOGE(TAG, "seg delete queue create failed");
     // #FW-13 фикс №2: подписка producer'а на коммиты свипов (NULL — останется 1-с тик).
     s_commit_sig = xSemaphoreCreateBinary();
@@ -1544,10 +1547,15 @@ static void wf_fs_task(void *arg)
             LOCK(); s_fs_flushed++; UNLOCK();
         }
         // #HTTP-FS1: удаления по pull-ack — здесь, а не в задаче httpd (см. spectrogram_seg_delete_async).
-        uint32_t del_idx;
-        while (s_del_q && xQueueReceive(s_del_q, &del_idx, 0) == pdTRUE) {
-            if (!spectrogram_seg_delete(del_idx))
-                ESP_LOGW(TAG, "seg_delete: seg_%05" PRIu32 " not deleted (open/pinned/absent)", del_idx);
+        // Не больше ОДНОГО за проход: удаление стоит секунды (quiet_unlink_path), запись строк
+        // и финализация не должны ждать всю очередь; остаток — следующим проходом (сигнал ниже).
+        wf_del_req_t dr;
+        if (s_del_q && xQueueReceive(s_del_q, &dr, 0) == pdTRUE) {
+            if (dr.epoch != s_wf_epoch)
+                ESP_LOGW(TAG, "seg_delete: seg_%05" PRIu32 " ack of previous session dropped", dr.idx);
+            else if (!spectrogram_seg_delete(dr.idx))
+                ESP_LOGW(TAG, "seg_delete: seg_%05" PRIu32 " not deleted (open/pinned/absent)", dr.idx);
+            if (uxQueueMessagesWaiting(s_del_q)) xSemaphoreGive(s_fs_sig);
         }
         // #FW-14: финализация по возрасту — 64 строки ИЛИ 10 мин (WATERFALL.md),
         // чтобы при больших интервалах файл не висел открытым часами и приёмник
@@ -2238,12 +2246,20 @@ bool spectrogram_seg_delete(uint32_t idx)
 // #HTTP-FS1: httpd однопоточный — синхронное удаление держало ВСЕХ HTTP-клиентов на время
 // http_io_gate (~1 с до тихого окна), FSLOCK (закрытие+открытие сегмента, до 5 с) и unlink.
 // Замер до фикса: raw-1229/httpfs1-repro-before.csv (4961/4980 мс на смене сегмента).
-// false — очередь не создана или полна (клиент повторит на следующем проходе).
-bool spectrogram_seg_delete_async(uint32_t idx)
+// 1 — в очереди; 0 — не завершённый сегмент реестра (открытый/неизвестный: прежний синхронный
+// not-deletable); -1 — очередь не создана или полна (клиент повторит). Предпроверка по RAM-реестру
+// под LOCK (без FSLOCK и flash); окончательная проверка — в spectrogram_seg_delete под FSLOCK.
+int spectrogram_seg_delete_async(uint32_t idx)
 {
-    if (!s_del_q || xQueueSend(s_del_q, &idx, 0) != pdTRUE) return false;
+    LOCK();
+    int i = reg_find(idx);
+    bool fin = (i >= 0 && s_seg_reg[i].finalized);
+    wf_del_req_t r = { .idx = idx, .epoch = s_wf_epoch };
+    UNLOCK();
+    if (!fin) return 0;
+    if (!s_del_q || xQueueSend(s_del_q, &r, 0) != pdTRUE) return -1;
     if (s_fs_sig) xSemaphoreGive(s_fs_sig);
-    return true;
+    return 1;
 }
 
 // v3: дозовый коэффициент µSv/h per cps. Сохраняется в NVS как IEEE-754 bits.
