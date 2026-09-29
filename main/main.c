@@ -75,10 +75,16 @@ void app_main(void)
     spectrum_load_calibration();
     // #FW-3: очистка накопленного спектра при старте — после restore, до того как
     // спектрограмма снимет baseline. -rst прибору пошлётся на первом USB-коннекте.
-    if (bc.clear_spectrum) {
-        spectrum_reset();
+    // Н-3.3 (release-gate 1.2.29): метка reset.mark 'P' — Сброс до перезагрузки, а
+    // -rst до прибора не дошёл. Сброс повторяется, как FW-3: гейт #58 взведён,
+    // -rst уйдёт на первом коннекте.
+    bool reset_mark = spectrum_reset_mark_undelivered();
+    if (bc.clear_spectrum || reset_mark) {
+        spectrum_reset_undelivered();
         spectrum_autosave_consume_abort();
-        ESP_LOGW(TAG, "FW-3: accumulated spectrum cleared on boot");
+        if (reset_mark) usb_host_cdc_request_rst();
+        ESP_LOGW(TAG, "%s: accumulated spectrum cleared on boot",
+                 bc.clear_spectrum ? "FW-3" : "reset.mark");
     }
     // #FW-50: PSRAM log ring — after spectrum_init, before spectrogram (reserve before WF).
     debug_log_ring_boot();
@@ -211,7 +217,7 @@ void app_main(void)
                     ESP_LOGI(TAG, "LittleFS autosave tick skipped: OTA in progress");
                 } else if (!usb_host_cdc_is_connected() || spectrum_autosave_fail_streak() >= 5) {
                     if (spectrum_autosave_in_progress())
-                        spectrum_autosave_abort();
+                        spectrum_autosave_abort_keep();   // П-6: current.bin не трогать
                     spectrum_autosave_consume_abort();
                     hist_drop_diag_autosave_begin(true);
                     int64_t t0 = esp_timer_get_time();

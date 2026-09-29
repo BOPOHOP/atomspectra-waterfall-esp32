@@ -386,7 +386,7 @@ Outdoor → взяли плату + телефон (+ повербанк) в п�
 | `/api/backup/<имя>/spectrum.json` | GET | Автоснимок (JSON) |
 | `/api/backup/<имя>` | POST | Удалить автоснимок |
 | `/api/device` | GET | Информация о приборе (настройки, калибровка, серийник) |
-| `/api/system` | GET | Здоровье ESP32: `free_heap`/`min_free_heap`, `psram_total`/`psram_free`/`psram_largest` (`#MON-3`, `firmware-v1.2.16+` — общая куча складывает internal и SPIRAM, по ней нельзя судить, влезет ли следующий крупный буфер); `int_free`/`int_largest`/`int_min` — внутренняя RAM, откуда Wi-Fi берёт буферы кадров (`firmware-v1.2.29+`, включают DMA-резерв 32 КБ); `int_dflt_free`/`int_dflt_largest` — внутренняя RAM, доступная обычному `malloc()`; `heap_walk_us` — сколько занял подсчёт `*_largest` (обход кучи), uptime, RSSI, `flash_total`/`flash_used` |
+| `/api/system` | GET | Здоровье ESP32: `free_heap`/`min_free_heap`, `psram_total`/`psram_free`/`psram_largest` (`#MON-3`, `firmware-v1.2.16+` — общая куча складывает internal и SPIRAM, по ней нельзя судить, влезет ли следующий крупный буфер); `int_free`/`int_largest`/`int_min` — внутренняя RAM, откуда Wi-Fi берёт буферы кадров (`firmware-v1.2.29+`, включают DMA-резерв 32 КБ; `int_min` — сумма минимумов по отдельным кучам, а не минимум в один момент); `int_dflt_free`/`int_dflt_largest` — внутренняя RAM, доступная обычному `malloc()`; `heap_walk_us` — сколько занял подсчёт `*_largest` (обход кучи), uptime, RSSI, `flash_total`/`flash_used` |
 | `/api/calibration` | POST | Задать калибровочные коэффициенты вручную |
 | `/api/reboot-device` | POST | Перезагрузить спектрометр (CMD 0xF3) |
 | `/api/reboot-esp` | POST | Перезагрузить ESP32 |

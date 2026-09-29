@@ -14,3 +14,5 @@ jobs:
         run: cd tests/host && make test
       - name: Sanitizer run (ASan + UBSan)
         run: cd tests/host && make asan
+      - name: Mutation acceptance (issue #58 gate, release-gate 1.2.29)
+        run: bash tests/host/mutate_issue58.sh

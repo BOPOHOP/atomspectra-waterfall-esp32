@@ -273,6 +273,44 @@ static void test_u1_timeout_needs_new_stat(void) {
     CHECK(bt);
 }
 
+// Н-1.3: STAT старого поколения с правдоподобным временем гейт не принимает (D2)
+static void test_n13_gate_old_gen_plausible_rejected(void) {
+    bool bt = true;
+    spectrum_reset_gate_t g = { true, 0, 0 };
+    CHECK(!spectrum_reset_gate_step(&g, 5000000, 5, 3, 4, 2, 3, &bt));
+    CHECK(!bt);
+    CHECK(g.reject_since_us == 0);
+}
+
+// Н-1.2: каждый STAT получает новый seq, gen и session на момент постановки
+static void test_n12_stat_tag_stamp(void) {
+    spectrum_stat_tag_t t = { false, 0, 0, 0 };
+    spectrum_stat_tag_stamp(&t, 3, 7);
+    CHECK(t.fresh && t.gen == 3 && t.session == 7 && t.seq == 1);
+    spectrum_stat_tag_stamp(&t, 4, 7);
+    CHECK(t.seq == 2 && t.gen == 4);
+}
+
+// Н-1.1: STAT прошлого сеанса USB и погашенный STAT в коммите не участвуют
+static void test_n11_stat_tag_session(void) {
+    spectrum_stat_tag_t t = { false, 0, 0, 0 };
+    spectrum_stat_tag_stamp(&t, 1, 5);
+    CHECK(spectrum_stat_tag_usable(&t, 5));
+    CHECK(!spectrum_stat_tag_usable(&t, 6));
+    t.fresh = false;
+    CHECK(!spectrum_stat_tag_usable(&t, 5));
+}
+
+// Н-1.2: публикация снимает гейт; перенос опоры — только без подтверждения
+static void test_n12_gate_on_publish(void) {
+    spectrum_reset_gate_t g = { true, 123, 9 };
+    CHECK(spectrum_reset_gate_on_publish(&g, true, false));
+    CHECK(!g.armed && g.reject_since_us == 0);
+    g.armed = true;
+    CHECK(!spectrum_reset_gate_on_publish(&g, true, true));
+    CHECK(!spectrum_reset_gate_on_publish(&g, false, false));
+}
+
 // issue #58: старт без current.bin — первый коммит публикуется, не откладывается
 static void test_issue58_boot_commit_publishes(void) {
     uint32_t base_bins[3] = {0,0,0};
@@ -306,4 +344,8 @@ void spectrum_base_plan_suite(void)
     test_issue58_awf4_race_still_rejected();
     test_u1_old_gen_never_starts_timer();
     test_u1_timeout_needs_new_stat();
+    test_n13_gate_old_gen_plausible_rejected();
+    test_n12_stat_tag_stamp();
+    test_n11_stat_tag_session();
+    test_n12_gate_on_publish();
 }

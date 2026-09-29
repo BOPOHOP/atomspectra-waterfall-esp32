@@ -686,6 +686,11 @@ static void wifi_return_finish(bool entered_by_fallback, const char *ssid)
         note_return_block(found ? "activity" : "ssid_not_found");
         return;
     }
+    // Н-5.2: клиент моста мог подключиться за время блокирующего скана.
+    if (tcp_bridge_client_active(WIFI_RETURN_BRIDGE_IDLE_MS)) {
+        note_return_block("bridge");
+        return;
+    }
 
     ESP_LOGW(TAG, "FIELD-2a: saved SSID '%s' visible again, HTTP quiet -> reboot to STA", ssid);
     // P1: помечаем ПОПЫТКУ до ребута — если STA не удержится и плата опять
@@ -730,9 +735,10 @@ void wifi_manager_try_return_to_sta(void)
         return;
     }
     // AWF-2a (KNOWN_ISSUES): работа ПК-программы через TCP-мост — тоже работа с
-    // платой. Только при подключённом приборе: тогда поток идёт и мёртвый клиент
-    // закрывается по SO_SNDTIMEO (tcp_bridge.c) — вечного блока нет.
-    if (tcp_bridge_client_connected() && usb_host_cdc_is_connected()) {
+    // платой. Н-2/Н-5.1 (release-gate 1.2.29): по обмену данными с клиентом, а не
+    // по факту подключения — пропавший без FIN клиент при молчащем приборе держал
+    // блок вечно (SO_SNDTIMEO клиента не закрывает; теперь его закрывает keepalive).
+    if (tcp_bridge_client_active(WIFI_RETURN_BRIDGE_IDLE_MS)) {
         note_return_block("bridge");
         return;
     }

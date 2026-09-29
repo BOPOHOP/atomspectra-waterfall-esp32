@@ -214,3 +214,37 @@ static inline bool spectrum_reset_gate_step(spectrum_reset_gate_t *g, int64_t no
     *by_timeout = true;
     return true;
 }
+
+// Н-1.1/Н-1.2 (release-gate 1.2.29): метка STAT в staging. seq отличает новый
+// пакет от отклонённого (У-1), gen — поколение сброса (D2), session — сеанс USB:
+// STAT, поставленный до отключения прибора, в коммите нового сеанса не участвует
+// (иначе второй залежавшийся STAT принимался по таймауту, время оседало в базе).
+typedef struct {
+    bool     fresh;
+    uint32_t gen;
+    uint32_t seq;
+    uint32_t session;
+} spectrum_stat_tag_t;
+
+static inline void spectrum_stat_tag_stamp(spectrum_stat_tag_t *t, uint32_t gen, uint32_t session)
+{
+    t->fresh = true;
+    t->gen = gen;
+    t->session = session;
+    t->seq++;
+}
+
+static inline bool spectrum_stat_tag_usable(const spectrum_stat_tag_t *t, uint32_t session)
+{
+    return t->fresh && t->session == session;
+}
+
+// Публикация коммита снимает гейт. true — первая публикация после valid=false
+// без подтверждённого сброса: водопад и монитор переносят опору без строки (У-3).
+static inline bool spectrum_reset_gate_on_publish(spectrum_reset_gate_t *g, bool first_valid,
+                                                  bool reset_confirmed)
+{
+    g->armed = false;
+    g->reject_since_us = 0;
+    return first_valid && !reset_confirmed;
+}

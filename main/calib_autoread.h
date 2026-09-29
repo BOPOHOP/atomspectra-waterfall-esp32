@@ -112,6 +112,14 @@ static inline bool calib_autoread_needed(bool calib_missing, bool serial_missing
     return calib_missing || serial_missing;
 }
 
+// Н-1 (release-gate 1.2.29): авто-«-cal» ради одного серийника (калибровка на
+// плате задана — возможно вручную, прибору она не передаётся) коэффициенты
+// прибора НЕ применяет; ручное «Считать» и запрос при пустой калибровке — да.
+static inline bool calib_apply_coeffs(bool read_success, bool serial_only_request)
+{
+    return read_success && !serial_only_request;
+}
+
 static inline bool calib_autoread_should_request(bool prev_was_run, uint32_t now_ms,
                                                    uint32_t last_request_ms)
 {

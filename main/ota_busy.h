@@ -32,7 +32,7 @@ static inline void ota_busy_release_pure(ota_busy_owner_t *state, ota_busy_owner
 // spectrum_autosave_begin()/spectrum_autosave()) не должен СТАРТОВАТЬ новый цикл,
 // пока идёт запись OTA-образа (ручная или GitHub) -- обе пишут в тот же слот
 // flash/шину, что и autosave. Не мешает уже НАЧАТОМУ автосейву: тот и так
-// прерывается spectrum_autosave_abort() из handle_ota_locked() (web_server.c:619)
+// прерывается spectrum_autosave_abort_keep() из handle_ota_locked() (П-6)
 // в начале приёма.
 static inline bool ota_busy_is_busy_pure(ota_busy_owner_t state)
 {

@@ -520,7 +520,12 @@ static esp_err_t handle_reset(httpd_req_t *req)
     // У-2: sent=false — прибор -rst не получил (не подключён/ошибка USB); сброс
     // платы всё равно выполнен, данные прибора вернутся по таймауту гейта #58.
     bool sent = usb_host_cdc_send(pkt.data, pkt.len) == 0;
-    spectrum_reset();
+    if (sent) {
+        spectrum_reset();
+    } else {
+        spectrum_reset_undelivered();
+        usb_host_cdc_request_rst();   // Н-4: дослать -rst на ближайшем коннекте
+    }
     httpd_resp_sendstr(req, sent ? "{\"ok\":true,\"sent\":true}" : "{\"ok\":true,\"sent\":false}");
     return ESP_OK;
 }
@@ -627,7 +632,7 @@ static esp_err_t handle_ota_locked(httpd_req_t *req)
     // Как spectrum_reset(): прервать автосохранение, НЕ удаляя файлы спектра
     // (writer не должен драться с OTA-write за flash-freeze/шину). Снимок
     // спектра/водопада на flash — не трогаем, OTA его не касается.
-    spectrum_autosave_abort();
+    spectrum_autosave_abort_keep();   // П-6: current.bin не трогать
 
     esp_ota_handle_t ota = 0;
     // D1: OTA_SIZE_UNKNOWN стирает ВЕСЬ слот сразу (не только Content-Length
@@ -1814,7 +1819,7 @@ static esp_err_t handle_system(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "tcp_client", tcp_bridge_client_connected());
     // #PERF-3 (P-014): esp_littlefs_info() не читает готовый счётчик, а ОБХОДИТ
     // раздел — ~290 мс на 112 МБ. Страницы дёргают /api/system каждые 2-5 с, всё
-    // это время флеш занята, кэш обоих ядер заморожен, USB не вычитывается ->
+    // это время флеш занята, кэш обоих ядер заморожен (до XIP из PSRAM, П-3), USB не вычитывается ->
     // FIFO переходника переполняется -> битый CRC -> свип бракуется. Замер:
     // 19,1 % потерянных свипов против 0 % в покое. Значение чисто справочное для
     // UI и меняется медленно (ролловер сегмента раз в сотни секунд), поэтому

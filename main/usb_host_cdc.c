@@ -135,6 +135,7 @@ static void devlog_push(const uint8_t *txt, int len)
 static bool s_boot_autostart_spec = false;
 static bool s_boot_autostart_wf   = false;
 static bool s_boot_clear_spectrum = false;
+static volatile bool s_rst_pending = false;   // Н-4: -rst ждёт ближайшего коннекта
 static bool s_boot_once_done      = false;
 
 // #CMD-1/#AWF-12b: разбор дампа -cal (40 регистров, строки по 8 hex через
@@ -550,32 +551,32 @@ static void try_open_device(void)
     bool first_connect = !s_boot_once_done;
     s_boot_once_done = true;
 
+    // #FW-3 (очистка при старте), Сброс без прибора и Сброс до перезагрузки без
+    // сохранения (reset.mark) — -rst прибору на КАЖДОМ коннекте, пока не уйдёт
+    // (Н-4/Н-3.3/Н-1.4 release-gate 1.2.29; до записи/автозапуска, как раньше).
+    if (first_connect && s_boot_clear_spectrum) s_rst_pending = true;
+    if (s_rst_pending) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        if (usb_host_send_text_command("-rst") == 0) {
+            s_rst_pending = false;
+            ESP_LOGW(TAG, "pending -rst sent to device (FW-3 boot clear / Reset not delivered)");
+        } else {
+            ESP_LOGW(TAG, "pending -rst: send failed, retry on next connect");
+        }
+    }
+
     if (spectrogram_is_recording()) {
         // #REC-6: если на момент (ре)коннекта водопад пишется — возобновить набор
         // спектра на приборе (-sta). Защищает от случайной остановки анализатора и
         // от ситуации «ESP ребутнулся, восстановил запись, но прибор уже не набирает».
         // Запись уже идёт → автозапуск #FW-2 не нужен (намеренно пропускаем).
-        // У-2 (release-gate 1.2.29): очистка при старте #FW-3 обязана дойти до
-        // прибора и здесь — main.c уже взвёл гейт #58; без -rst через 10 с
-        // вернулся бы старый набор, а «очистка при старте» тихо не выполнена.
-        if (first_connect && s_boot_clear_spectrum) {
-            vTaskDelay(pdMS_TO_TICKS(100));
-            usb_host_send_text_command("-rst");
-            ESP_LOGW(TAG, "FW-3: boot clear spectrum — sent -rst to device (recording active)");
-        }
+        // -rst очистки при старте #FW-3 (У-2) ушёл выше, общим путём s_rst_pending.
         vTaskDelay(pdMS_TO_TICKS(100));
         usb_host_send_text_command("-sta");
         ESP_LOGW(TAG, "recording active — resent -sta to resume acquisition");
     } else if (first_connect) {
-        // #FW-3: очистка спектра при старте — сбросить гистограмму прибора тем же
-        // путём, что кнопка «Сброс» (-rst). Локальный spectrum_reset() уже сделан в
-        // main.c на boot; -rst синхронизирует прибор, чтобы первый пакет не «поднял»
-        // обнулённый спектр обратно.
-        if (s_boot_clear_spectrum) {
-            vTaskDelay(pdMS_TO_TICKS(100));
-            usb_host_send_text_command("-rst");
-            ESP_LOGW(TAG, "FW-3: boot clear spectrum — sent -rst to device");
-        }
+        // #FW-3: -rst очистки при старте ушёл выше (s_rst_pending): локальный
+        // spectrum_reset() сделан в main.c на boot, -rst синхронизирует прибор.
         // #FW-2: автозапуск при старте платы (по настройкам NVS, по умолчанию OFF).
         if (s_boot_autostart_wf) {
             vTaskDelay(pdMS_TO_TICKS(100));
@@ -595,6 +596,11 @@ void usb_host_cdc_set_autostart(bool autostart_spectrum, bool autostart_waterfal
     s_boot_autostart_spec = autostart_spectrum;
     s_boot_autostart_wf   = autostart_waterfall;
     s_boot_clear_spectrum = clear_spectrum;
+}
+
+void usb_host_cdc_request_rst(void)
+{
+    s_rst_pending = true;
 }
 
 static void usb_connect_task(void *arg)
@@ -973,10 +979,13 @@ static void usb_host_cdc_calib_autoread_gate(void)
     }
     DIAG_UNLOCK();
     if (!claimed) return;
+    // Н-1: калибровка на плате задана (запрос ради серийника) — её не заменять.
+    spectrum_calib_set_serial_only(!spectrum_calibration_is_missing());
     if (send_text_command_raw("-cal") == 0) {
         ESP_LOGI(TAG, "calibration or serial not set -> requesting -cal before -sta");
         vTaskDelay(pdMS_TO_TICKS(100));
     } else {
+        spectrum_calib_set_serial_only(false);
         ESP_LOGW(TAG, "calibration or serial not set -> -cal send failed, will retry sooner");
         DIAG_LOCK();
         if (s_calib_autoread_last_ms == now) s_calib_autoread_last_ms = 0;
@@ -987,6 +996,8 @@ static void usb_host_cdc_calib_autoread_gate(void)
 int usb_host_send_text_command(const char *cmd)
 {
     if (!cmd) return -1;
+    // Н-1: ручное «Считать» (-cal из UI/API) применяет калибровку прибора всегда.
+    if (strncmp(cmd, "-cal", 4) == 0) spectrum_calib_set_serial_only(false);
     if (cmd_is_acq_start(cmd) &&
         calib_autoread_needed(spectrum_calibration_is_missing(), spectrum_serial_is_missing()))
         usb_host_cdc_calib_autoread_gate();

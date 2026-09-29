@@ -224,7 +224,7 @@ var DICT={
   "confirm.wifiReset":"Сбросить WiFi?",
   "saved.savedAs":"Сохранён #%1","saved.saveErr":"Ошибка сохранения",
   "saved.saveErrNoData":"Нет данных спектра (прибор не подключён/не выдаёт спектр)","saved.saveErrNoSpace":"Мало места на flash — удалите старые снимки",
-  "log.start":"Start sent","log.stop":"Stop sent","log.reset":"Reset sent","log.resetNotSent":"Прибор не получил -rst (USB не подключён?)","log.resetUnconfirmed":"Прибор не выполнил сброс за 10 с — показан его набор","log.info":"Info requested",
+  "log.start":"Start sent","log.stop":"Stop sent","log.reset":"Reset sent","log.resetNotSent":"Прибор не получил -rst (USB не подключён?) — сброс уйдёт при подключении","log.resetUnconfirmed":"Прибор не выполнил сброс за 10 с — показан его набор","log.resetUnconfirmedBoot":"С загрузки платы прибор не выполнил сбросов: {n} — показан его набор","log.info":"Info requested",
   "log.ovlOk":"Overlay loaded: #%1","log.ovlErr":"Overlay error: %1","log.ovlClear":"Overlay cleared",
   "ovl.noTime":" (время не задано — показан счёт, не CPS)",
   "cal.readEmpty":"Прибор вернул пустую калибровку (нули/NaN) — калибровка платы не изменена",
@@ -274,7 +274,7 @@ var DICT={
   "confirm.wifiReset":"Reset WiFi?",
   "saved.savedAs":"Saved #%1","saved.saveErr":"Save error",
   "saved.saveErrNoData":"No spectrum data (device not connected / no spectrum)","saved.saveErrNoSpace":"Low flash space — delete old snapshots",
-  "log.start":"Start sent","log.stop":"Stop sent","log.reset":"Reset sent","log.resetNotSent":"Device did not receive -rst (USB disconnected?)","log.resetUnconfirmed":"Device did not reset within 10 s — showing its data","log.info":"Info requested",
+  "log.start":"Start sent","log.stop":"Stop sent","log.reset":"Reset sent","log.resetNotSent":"Device did not receive -rst (USB disconnected?) — reset will be sent on connect","log.resetUnconfirmed":"Device did not reset within 10 s — showing its data","log.resetUnconfirmedBoot":"Resets not performed by the device since board boot: {n} — showing its data","log.info":"Info requested",
   "log.sent":"Sent: %1","log.ovlOk":"Overlay loaded: #%1","log.ovlErr":"Overlay error: %1","log.ovlClear":"Overlay cleared",
   "ovl.noTime":" (time unknown — showing counts, not CPS)",
   "cal.readEmpty":"Device returned an empty calibration (zeros/NaN) — board calibration unchanged",
@@ -413,7 +413,7 @@ async function update(){
   document.getElementById("ip-chip").textContent=location.hostname;
   lastD=d;
   /* У-2: Reset не выполнен прибором — его набор сохранён (гейт #58, таймаут 10 с) */
-  if(typeof d.reset_unconfirmed==="number"){if(lastRU!==null&&d.reset_unconfirmed>lastRU)lg(tr("log.resetUnconfirmed"));lastRU=d.reset_unconfirmed;}
+  if(typeof d.reset_unconfirmed==="number"){if(lastRU===null){if(d.reset_unconfirmed>0)lg(tr("log.resetUnconfirmedBoot").replace("{n}",d.reset_unconfirmed));}else if(d.reset_unconfirmed>lastRU)lg(tr("log.resetUnconfirmed"));lastRU=d.reset_unconfirmed;}
   acqObserve(d.time);  /* #UI-44 */
   setDeadBanner(!!d.dead);  /* #FW-43 */
   var stEl=document.getElementById("status");

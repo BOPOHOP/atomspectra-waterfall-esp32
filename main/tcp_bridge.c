@@ -3,6 +3,7 @@
 #include "acq_intent.h"      /* P1-a: cmd_is_device_reset() */
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "lwip/sockets.h"
 #include "lwip/inet.h"
 #include "freertos/FreeRTOS.h"
@@ -41,6 +42,9 @@ static SemaphoreHandle_t s_fd_mutex = NULL;
 static StreamBufferHandle_t s_tx_ring = NULL;
 static StaticStreamBuffer_t s_tx_ring_struct;   // во внутренней RAM (маленькая)
 static uint8_t *s_tx_ring_storage = NULL;       // в PSRAM
+// Н-5.1: момент последнего обмена с клиентом (send/recv), мс; uint32 — атомарное чтение.
+static volatile uint32_t s_client_io_ms = 0;
+static inline uint32_t now_ms32(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
 static volatile uint32_t s_bridge_dropped = 0;  // байт потеряно (overflow кольца + send-timeout)
 
 // producer: вызывается из CDC-задачи на каждый де-FTDI'нутый кусок. Не блокирует.
@@ -85,7 +89,7 @@ static void tcp_tx_task(void *arg)
         size_t off = 0;
         while (off < n) {
             int w = send(fd, buf + off, n - off, 0);   // блокирующий (с SO_SNDTIMEO)
-            if (w > 0) { off += (size_t)w; continue; }
+            if (w > 0) { off += (size_t)w; s_client_io_ms = now_ms32(); continue; }
             if (w < 0 && errno == EINTR) continue;
             if (w < 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
                 // send-timeout: клиент тормозит дольше TX_SNDTIMEO_MS. Бросаем
@@ -154,6 +158,7 @@ static void tcp_rx_task(void *arg)
             FD_UNLOCK();
             continue;
         }
+        s_client_io_ms = now_ms32();
         // Прибором управляет внешнее приложение: шлюз не знает, запущен ли набор,
         // и сторож набора не должен перебивать его «Стоп» своим -sta.
         usb_host_cdc_acq_intent_external();
@@ -221,6 +226,17 @@ static void tcp_server_task(void *arg)
         if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &snd_to, sizeof(snd_to)) < 0)
             ESP_LOGW(TAG, "SO_SNDTIMEO failed: errno=%d", errno);
 
+        // Н-5.1 (release-gate 1.2.29): клиент, пропавший без FIN (ноутбук уснул,
+        // ушёл из зоны), при молчащем приборе держал слот моста вечно — данных нет,
+        // повторов нет. Keepalive закрывает его за ~KA_IDLE + KA_INTVL*KA_CNT с.
+        int ka = 1, ka_idle = 30, ka_intvl = 10, ka_cnt = 3;
+        if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof(ka)) < 0 ||
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &ka_idle, sizeof(ka_idle)) < 0 ||
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &ka_intvl, sizeof(ka_intvl)) < 0 ||
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &ka_cnt, sizeof(ka_cnt)) < 0)
+            ESP_LOGW(TAG, "TCP keepalive setup failed: errno=%d", errno);
+        s_client_io_ms = now_ms32();
+
         // Сбрасываем кольцо от хвоста прошлой сессии ДО публикации fd: producer
         // ещё гейтится s_client_fd<0 и не пишет, так что reset без гонки. Если
         // tx_task сейчас заблокирован в receive (reset вернёт fail) — кольцо и
@@ -265,6 +281,14 @@ void tcp_bridge_init(void)
 bool tcp_bridge_client_connected(void)
 {
     return s_client_fd >= 0;
+}
+
+// Н-2/Н-5.1: клиент подключён И обменивался данными (send/recv) не дольше
+// max_idle_ms назад — «работа ПК-программы с платой» для возврата из полевой AP.
+bool tcp_bridge_client_active(uint32_t max_idle_ms)
+{
+    if (s_client_fd < 0) return false;
+    return (uint32_t)(now_ms32() - s_client_io_ms) <= max_idle_ms;   // uint32: перенос безопасен
 }
 
 uint32_t tcp_bridge_dropped_bytes(void)

@@ -390,7 +390,7 @@ that point into a **base**, then shows the analyzer's fresh (zeroed) histogram o
 | `/api/backup/<name>/spectrum.json` | GET | Auto snapshot (JSON) |
 | `/api/backup/<name>` | POST | Delete an auto snapshot |
 | `/api/device` | GET | Instrument info (settings, calibration, serial) |
-| `/api/system` | GET | ESP32 health: `free_heap`/`min_free_heap`, `psram_total`/`psram_free`/`psram_largest` (`#MON-3`, `firmware-v1.2.16+` — the combined heap mixes internal and SPIRAM, so it can't tell whether the next large buffer will fit); `int_free`/`int_largest`/`int_min` — internal RAM that Wi-Fi takes frame buffers from (`firmware-v1.2.29+`, includes the 32 KB DMA reserve); `int_dflt_free`/`int_dflt_largest` — internal RAM available to plain `malloc()`; `heap_walk_us` — time spent computing `*_largest` (a heap walk), uptime, RSSI, `flash_total`/`flash_used` |
+| `/api/system` | GET | ESP32 health: `free_heap`/`min_free_heap`, `psram_total`/`psram_free`/`psram_largest` (`#MON-3`, `firmware-v1.2.16+` — the combined heap mixes internal and SPIRAM, so it can't tell whether the next large buffer will fit); `int_free`/`int_largest`/`int_min` — internal RAM that Wi-Fi takes frame buffers from (`firmware-v1.2.29+`, includes the 32 KB DMA reserve; `int_min` is the sum of per-heap minimums, not a single-moment minimum); `int_dflt_free`/`int_dflt_largest` — internal RAM available to plain `malloc()`; `heap_walk_us` — time spent computing `*_largest` (a heap walk), uptime, RSSI, `flash_total`/`flash_used` |
 | `/api/calibration` | POST | Set calibration coefficients manually |
 | `/api/reboot-device` | POST | Reboot the spectrometer (CMD 0xF3) |
 | `/api/reboot-esp` | POST | Reboot the ESP32 |
