@@ -1256,7 +1256,11 @@ void spectrogram_init(void)
     // #FW-41: параллельное кольцо температур t1 (float, °C). ~1 КБ на 256 строк.
     s_temp = heap_caps_malloc((size_t)s_capacity * sizeof(float), MALLOC_CAP_SPIRAM);
     s_prev = heap_caps_malloc(WF_CHANNELS * sizeof(uint32_t), MALLOC_CAP_SPIRAM);
-    s_pre_rst_bins = heap_caps_malloc(WF_CHANNELS * sizeof(uint32_t), MALLOC_CAP_SPIRAM);   /* #AUD-RST */
+    /* #AUD-RST + #AUD-DUP1: один буфер 32 КБ на две роли. Опора из wf_ref.bin нужна только в restore()
+     * и на первом живом снимке; опора до Сброса захватывается не раньше той же итерации, после
+     * переноса s_ref_bins → s_prev. Гейт 1.2.29 (Codeaudit TH-07): min_free_heap у порога 512 КБ. */
+    if (!s_ref_bins) s_ref_bins = heap_caps_malloc(WF_CHANNELS * sizeof(uint32_t), MALLOC_CAP_SPIRAM);
+    s_pre_rst_bins = s_ref_bins;
     if (!s_pre_rst_bins) ESP_LOGW(TAG, "pre-reset reference alloc failed -- #AUD-RST disabled");   /* F-8 */
     s_row  = heap_caps_malloc(WF_ROW_BYTES, MALLOC_CAP_SPIRAM);
     s_snap     = heap_caps_malloc(sizeof(spectrum_data_t), MALLOC_CAP_SPIRAM);

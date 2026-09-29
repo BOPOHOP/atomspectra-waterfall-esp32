@@ -75,7 +75,7 @@ need spectrogram.c 1 'if (rs == s_wf_resync_seen) s_pre_rst_valid = false;'
 need spectrogram.c 1 'for (int i = 0; i < 200 && s_wf_busy; i++) vTaskDelay(pdMS_TO_TICKS(10));'
 need spectrogram.c 1 's_wf_busy = true;    /* до проверки recording'
 need main.c        1 'if (t_cjson_try) return;'
-# P-03 (Codeaudit): журнал главной страницы существует и показывается (в копии main/ без web/ — пропуск)
+need spectrogram.c 1 's_pre_rst_bins = s_ref_bins;'                        # один PSRAM-буфер на две роли (min_free_heap)# P-03 (Codeaudit): журнал главной страницы существует и показывается (в копии main/ без web/ — пропуск)
 if [ -f ../web/index.html ]; then
     need ../web/index.html 1 '<pre id="log" style="display:none;'
     need ../web/index.html 1 'function lg(m){if(!logEl)return;logEl.style.display="";'
