@@ -143,7 +143,12 @@ static bool tcp_scan_for_reset_cmd(const uint8_t *data, size_t n)
 
 static void tcp_rx_task(void *arg)
 {
-    uint8_t buf[1024];
+    // Гейт 1.2.29 (stack_min_free.tcp_rx = 508 Б после первого клиента): приёмный буфер
+    // не на стеке, а в PSRAM — cdc_acm_host_data_tx_blocking копирует данные в свой буфер.
+    enum { RX_BUF = 1024 };
+    uint8_t *buf = heap_caps_malloc(RX_BUF, MALLOC_CAP_SPIRAM);
+    if (!buf) buf = malloc(RX_BUF);
+    if (!buf) { ESP_LOGE(TAG, "rx buffer alloc failed"); vTaskDelete(NULL); return; }
     while (1) {
         FD_LOCK();
         int fd = s_client_fd;
@@ -153,7 +158,7 @@ static void tcp_rx_task(void *arg)
             continue;
         }
 
-        int n = recv(fd, buf, sizeof(buf), 0);   // блокирующий recv — вне лока
+        int n = recv(fd, buf, RX_BUF, 0);   // блокирующий recv — вне лока
         if (n <= 0) {
             ESP_LOGI(TAG, "Client disconnected");
             FD_LOCK();
@@ -285,7 +290,9 @@ void tcp_bridge_init(void)
     // (кэш/критические секции LWIP), независимо от раскладки приоритетов.
     xTaskCreatePinnedToCore(tcp_server_task, "tcp_srv", 4096, NULL, 5, NULL, 1);
     xTaskCreatePinnedToCore(tcp_tx_task,     "tcp_tx",  4096, NULL, 6, NULL, 1);
-    xTaskCreatePinnedToCore(tcp_rx_task,     "tcp_rx",  4096, NULL, 5, NULL, 1);
+    // 5120: запас на Сброс от клиента (spectrum_reset → запись метки во флеш + лог), замер
+    // этой ветки невозможен без Сброса спектра; стек без приёмного буфера (см. tcp_rx_task).
+    xTaskCreatePinnedToCore(tcp_rx_task,     "tcp_rx",  5120, NULL, 5, NULL, 1);
     ESP_LOGI(TAG, "TCP bridge initialized, port %d (net tasks pinned core 1)", TCP_BRIDGE_PORT);
 }
 

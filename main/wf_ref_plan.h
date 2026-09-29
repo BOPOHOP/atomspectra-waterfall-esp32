@@ -100,3 +100,30 @@ static inline bool wf_ref_first_writes_row(wf_ref_choice_t c)
 {
     return c == WF_REF_USE_FILE;
 }
+
+/* #AUD-RST: Сброс не подтверждён прибором (таймаут гейта #58), набор прибора опубликован.
+ * Если он продолжает опору последней строки до Сброса (ни канал, ни сумма, ни время не
+ * убыли) — прибор данные сохранил, и строка пишется против этой опоры. Иначе — перенос
+ * опоры без строки (У-3): против чужого набора строка дала бы скачок. Строка по этому
+ * правилу никогда не больше настоящего прироста. */
+
+static inline bool wf_rst_keeps_data(const uint32_t *pre, uint32_t pre_total, uint32_t pre_time,
+                                     const uint32_t *cur, uint32_t cur_total, uint32_t cur_time,
+                                     size_t channels)
+{
+    if (pre == NULL || cur == NULL) {
+        return false;
+    }
+
+    if (cur_total < pre_total || cur_time < pre_time) {
+        return false;
+    }
+
+    for (size_t i = 0; i < channels; i++) {
+        if (cur[i] < pre[i]) {
+            return false;
+        }
+    }
+
+    return true;
+}

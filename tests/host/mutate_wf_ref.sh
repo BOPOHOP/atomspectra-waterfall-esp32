@@ -44,5 +44,10 @@ mut W11_clamp_hi 's/if (d > 65535) {/if (0) {/' 'test_row_delta'
 mut W12_clamp_lo 's/if (d < 0) {/if (0) {/' 'test_row_delta'
 mut W13_reset 's/(reset ? 0 : (int64_t)prev)/((int64_t)prev)/' 'test_first_row_device_reset_during_reboot test_row_delta'
 mut W14_sum_bins 's/hash = wf_ref_fnv_u32(hash, bins\[i\]);/(void)bins;/' 'test_pick_rejects'
+# #AUD-RST: R1 = старое поведение (всегда перенос опоры без строки) — обязан краснеть на потере
+mut R1_old_resync 's/if (pre == NULL || cur == NULL) {/if (1) {/' 'test_rst_rejects test_rst_unconfirmed_no_loss'
+mut R2_total 's/if (cur_total < pre_total || cur_time < pre_time) {/if (cur_time < pre_time) {/' 'test_rst_rejects'
+mut R3_time 's/if (cur_total < pre_total || cur_time < pre_time) {/if (cur_total < pre_total) {/' 'test_rst_rejects'
+mut R4_channels 's/if (cur\[i\] < pre\[i\]) {/if (0) {/' 'test_rst_after_device_restart_no_jump test_rst_device_did_reset test_rst_rejects'
 
 rm -f test_runner; exit $RC

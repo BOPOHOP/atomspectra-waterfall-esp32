@@ -11,6 +11,8 @@
 #include "flash_quiet.h"
 #include "http_io_gate.h"  // issue #52: снимок пишется под тем же гейтом, что и «Сохранить»
 #include "esp_log.h"
+#include "esp_heap_caps.h"
+#include "cJSON.h"
 #include "esp_sntp.h"
 #include <inttypes.h>
 #include <sys/time.h>
@@ -32,6 +34,26 @@ static void time_sync_cb(struct timeval *tv)
     spectrogram_time_synced();
 }
 
+// Гейт 1.2.29: int_min (минимум внутренней RAM) падал до 231 Б. Узлы cJSON мелкие
+// (< SPIRAM_MALLOC_ALWAYSINTERNAL) и шли во внутреннюю RAM, которой нужен Wi-Fi (#FW-50):
+// JSON всех ответов — в PSRAM, внутренняя — запасной путь. Отказы аллокации — счётчик.
+static void *cjson_psram_malloc(size_t sz)
+{
+    return heap_caps_malloc_prefer(sz, 2, MALLOC_CAP_SPIRAM, MALLOC_CAP_DEFAULT);
+}
+static volatile uint32_t s_alloc_fail_n, s_alloc_fail_size, s_alloc_fail_caps;
+static void alloc_failed_cb(size_t size, uint32_t caps, const char *fn)
+{
+    (void)fn;
+    s_alloc_fail_n++;
+    s_alloc_fail_size = (uint32_t)size;
+    s_alloc_fail_caps = caps;
+}
+void mem_diag_get(uint32_t *n, uint32_t *last_size, uint32_t *last_caps)
+{
+    *n = s_alloc_fail_n; *last_size = s_alloc_fail_size; *last_caps = s_alloc_fail_caps;
+}
+
 static void init_sntp(void)
 {
     esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
@@ -43,6 +65,9 @@ static void init_sntp(void)
 void app_main(void)
 {
     ESP_LOGI(TAG, "AtomSpectra Gateway starting...");
+    cJSON_Hooks cj_hooks = { .malloc_fn = cjson_psram_malloc, .free_fn = free };
+    cJSON_InitHooks(&cj_hooks);   // до первого cJSON: узлы и буферы печати — в PSRAM
+    heap_caps_register_failed_alloc_callback(alloc_failed_cb);
 
     wifi_manager_init();
 

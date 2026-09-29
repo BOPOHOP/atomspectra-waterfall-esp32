@@ -77,6 +77,11 @@ static uint32_t       *s_ref_bins;      /* PSRAM: опора из wf_ref.bin д�
 static wf_ref_hdr_t    s_ref_hdr;
 static wf_ref_choice_t s_ref_choice = WF_REF_FORCE_RESYNC;
 static bool            s_ref_pending;   /* restore: первый живой снимок ещё не пришёл */
+/* #AUD-RST: опора последней строки до Сброса — на случай, если прибор Сброс не выполнит */
+static uint32_t       *s_pre_rst_bins;  /* PSRAM; NULL — правка выключена, прежнее поведение */
+static uint32_t        s_pre_rst_total, s_pre_rst_time;
+static bool            s_pre_rst_valid; /* опора сохранена, набор после Сброса ещё не опубликован */
+static bool            s_prev_valid;    /* s_prev снят с опубликованного набора (valid) */
 static float            s_dose_k;       // µSv/h per cps из NVS (0.0 → NaN в dose_rate строк)
 static float           *s_dose_lut;     // PSRAM: 8192×float LUT кривой МД (NULL → scalar k)
 static int              s_dose_curve_n; // точек загружено (0 → scalar k)
@@ -1242,6 +1247,7 @@ void spectrogram_init(void)
     // #FW-41: параллельное кольцо температур t1 (float, °C). ~1 КБ на 256 строк.
     s_temp = heap_caps_malloc((size_t)s_capacity * sizeof(float), MALLOC_CAP_SPIRAM);
     s_prev = heap_caps_malloc(WF_CHANNELS * sizeof(uint32_t), MALLOC_CAP_SPIRAM);
+    s_pre_rst_bins = heap_caps_malloc(WF_CHANNELS * sizeof(uint32_t), MALLOC_CAP_SPIRAM);   /* #AUD-RST */
     s_row  = heap_caps_malloc(WF_ROW_BYTES, MALLOC_CAP_SPIRAM);
     s_snap     = heap_caps_malloc(sizeof(spectrum_data_t), MALLOC_CAP_SPIRAM);
     s_wf_snap  = heap_caps_malloc(sizeof(spectrum_data_t), MALLOC_CAP_SPIRAM);
@@ -1472,6 +1478,7 @@ static void wf_task(void *arg)
             s_ref_pending = false;
             memcpy(s_prev, wf_ref_first_prev(s_ref_choice, s_ref_bins, s_wf_snap->bins),
                    WF_CHANNELS * sizeof(uint32_t));
+            s_prev_valid = wf_ref_first_writes_row(s_ref_choice) || s_wf_snap->valid;   /* #AUD-RST */
             if (wf_ref_first_writes_row(s_ref_choice)) {
                 s_prev_total = s_ref_hdr.prev_total;
                 s_prev_time  = s_ref_hdr.prev_time;
@@ -1488,14 +1495,33 @@ static void wf_task(void *arg)
         // У-3: первый коммит после valid=false без подтверждённого сброса (старт без
         // current.bin, Reset не выполнен прибором) несёт ВЕСЬ набор прибора — строкой
         // он дал бы скачок (до 65535 на канал). Переносим опору, строку не пишем.
+        // #AUD-RST: после Сброса до публикации снимок пуст (valid=false) — опору последней
+        // строки сохраняем до того, как нулевая строка ниже её перезапишет.
+        if (!s_wf_snap->valid && s_prev_valid && !s_pre_rst_valid && s_pre_rst_bins) {
+            memcpy(s_pre_rst_bins, s_prev, WF_CHANNELS * sizeof(uint32_t));
+            s_pre_rst_total = s_prev_total;
+            s_pre_rst_time  = s_prev_time;
+            s_pre_rst_valid = true;
+        }
         if (resync_seq != s_wf_resync_seen) {
             s_wf_resync_seen = resync_seq;
-            memcpy(s_prev, s_wf_snap->bins, WF_CHANNELS * sizeof(uint32_t));
-            s_prev_total = s_wf_snap->total_counts;
-            s_prev_time  = s_wf_snap->total_time_sec;
-            ESP_LOGW(TAG, "reference resync (t=%" PRIu32 "s), no row", s_prev_time);
-            continue;
+            bool keep = s_pre_rst_valid && wf_rst_keeps_data(
+                s_pre_rst_bins, s_pre_rst_total, s_pre_rst_time,
+                s_wf_snap->bins, s_wf_snap->total_counts, s_wf_snap->total_time_sec,
+                WF_CHANNELS);
+            s_pre_rst_valid = false;
+            const uint32_t *ref = keep ? s_pre_rst_bins : s_wf_snap->bins;
+            memcpy(s_prev, ref, WF_CHANNELS * sizeof(uint32_t));
+            s_prev_total = keep ? s_pre_rst_total : s_wf_snap->total_counts;
+            s_prev_time  = keep ? s_pre_rst_time  : s_wf_snap->total_time_sec;
+            s_prev_valid = keep || s_wf_snap->valid;
+            if (!keep) {
+                ESP_LOGW(TAG, "reference resync (t=%" PRIu32 "s), no row", s_prev_time);
+                continue;
+            }
+            ESP_LOGW(TAG, "reset not confirmed, device kept its data -- row against the last row before Reset (t=%" PRIu32 "s)", s_prev_time);
         }
+        if (s_wf_snap->valid) s_pre_rst_valid = false;   /* подтверждённый Сброс: опора до него не нужна */
 
         bool reset = (s_wf_snap->total_counts < s_prev_total);
         for (int i = 0; i < WF_CHANNELS; i++) {
@@ -1503,6 +1529,7 @@ static void wf_task(void *arg)
             s_prev[i] = s_wf_snap->bins[i];
         }
         s_prev_total = s_wf_snap->total_counts;
+        s_prev_valid = s_wf_snap->valid;   /* #AUD-RST: пустой снимок после Сброса — не опора */
 
         // #FW-5: реальная длительность среза = дельта живого времени прибора
         // (total_time_sec, целые секунды). reset (счётчики прибора обнулились) →
@@ -1697,6 +1724,8 @@ void spectrogram_restore(void)
     memcpy(s_prev, s_snap->bins, WF_CHANNELS * sizeof(uint32_t));
     s_prev_total          = s_snap->total_counts;
     s_prev_time           = s_snap->total_time_sec;   /* до первого живого снимка гейт времени идёт по автосейву, как раньше */
+    s_prev_valid          = s_snap->valid;            /* #AUD-RST */
+    s_pre_rst_valid       = false;
     s_ref_pending = true;                             /* опору подставит wf_task на первом живом снимке */
     s_head = 0; s_count = 0;
     s_status.ring_count   = 0;
@@ -1772,6 +1801,8 @@ int spectrogram_start(void)
     memcpy(s_prev, s_snap->bins, WF_CHANNELS * sizeof(uint32_t));
     s_prev_total        = s_snap->total_counts;
     s_prev_time         = s_snap->total_time_sec;   // #FW-5: база для дельты длительности
+    s_prev_valid        = s_snap->valid;            // #AUD-RST
+    s_pre_rst_valid     = false;
     s_head              = 0;
     s_count             = 0;
     s_status.ring_count = 0;

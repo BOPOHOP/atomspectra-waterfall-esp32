@@ -58,6 +58,16 @@ d41=$(awk '/spectrogram_prepare_reboot\(\);/{p=FNR} /set_progress\(OTA_GH_ST_DON
 need ota_github_client.c 1 'spectrum_autosave_abort_keep();'
 need web_server.c  4 'if (!json) httpd_resp_set_status(req, "503 Service Unavailable");'
 need wf_offload.c  1 'if (short_rd) { result = -16; goto done; }'
+# #AUD-RST: неподтверждённый Сброс — опора до Сброса сохраняется и проверяется в wf_task
+need spectrogram.c 1 'memcpy(s_pre_rst_bins, s_prev, WF_CHANNELS * sizeof(uint32_t));'
+need spectrogram.c 1 'bool keep = s_pre_rst_valid && wf_rst_keeps_data('
+need spectrogram.c 1 's_prev_valid = s_wf_snap->valid;   /* #AUD-RST: пустой снимок после Сброса — не опора */'
+# Гейт 1.2.29: cJSON в PSRAM, счётчик отказов аллокации, стек tcp_rx без приёмного буфера
+need main.c        1 'cJSON_InitHooks(&cj_hooks);'
+need main.c        1 'heap_caps_register_failed_alloc_callback(alloc_failed_cb);'
+need web_server.c  1 'cJSON_AddNumberToObject(root, "alloc_fail", af_n);'
+need tcp_bridge.c  1 'xTaskCreatePinnedToCore(tcp_rx_task,     "tcp_rx",  5120, NULL, 5, NULL, 1);'
+need tcp_bridge.c  0 'uint8_t buf[1024];'
 # F-09 (класс): результат cJSON_PrintUnformatted проверен на NULL в 3 строках после вызова (все *.c)
 f09=$(awk 'match($0,/char \*[A-Za-z_]+ = cJSON_PrintUnformatted\(/){v=substr($0,RSTART+6,RLENGTH-6); sub(/ =.*/,"",v); k=3; want=FILENAME":"FNR; next}
   k>0 { if (index($0,"!" v) || index($0, v " ?")) k=0; else if (--k==0) print want }' ./*.c)

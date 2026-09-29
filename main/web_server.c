@@ -1849,6 +1849,11 @@ static esp_err_t handle_system(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "int_dflt_free",
                             heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DEFAULT));
     cJSON_AddNumberToObject(root, "int_dflt_largest", dflt_largest);
+    uint32_t af_n, af_size, af_caps;
+    mem_diag_get(&af_n, &af_size, &af_caps);
+    cJSON_AddNumberToObject(root, "alloc_fail", af_n);            // отказы аллокации с загрузки
+    cJSON_AddNumberToObject(root, "alloc_fail_last_size", af_size);
+    cJSON_AddNumberToObject(root, "alloc_fail_last_caps", af_caps);
     // #AUD-DIAG-1 R5 (часть; F-12/C-38/#RB-STK-1): минимум свободного стека за время работы, байт
     // (ESP-IDF: uxTaskGetStackHighWaterMark — в байтах). Нет задачи — поле не пишется.
     cJSON *stk = cJSON_AddObjectToObject(root, "stack_min_free");
