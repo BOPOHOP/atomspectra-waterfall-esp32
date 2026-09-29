@@ -771,8 +771,23 @@ int spectrum_get_tcpot_raw(char *out, size_t outsz, uint32_t *out_seq)
 // прибора, сделанный ПОСЛЕ сброса). false — создать не удалось (errno сохранён).
 #define MARK_DELIVERED 'D'
 #define MARK_PENDING   'P'
+#define RESET_MARK_TMP RESET_MARK_FILE ".tmp"
 static bool reset_mark_create(char state)
 {
+    // F-03: 'P' — во временный файл и rename поверх: при обрыве питания между созданием
+    // файла и записью байта пустая метка читалась бы как 'D' и досылка -rst терялась.
+    // Для 'D' потеря безвредна — пишем напрямую, как раньше.
+    if (state == MARK_PENDING) {
+        FILE *t = fopen(RESET_MARK_TMP, "wb");
+        bool tok = t && (fputc(state, t) != EOF);
+        if (t) tok = (fclose(t) == 0) && tok;
+        if (tok && rename(RESET_MARK_TMP, RESET_MARK_FILE) == 0) {
+            s_mark_present = true;
+            s_mark_state = MARK_PENDING;
+            return true;
+        }
+        unlink(RESET_MARK_TMP);   // не вышло — прежний способ ниже
+    }
     FILE *mark = fopen(RESET_MARK_FILE, "wb");
     if (!mark) return false;
     bool ok = (fputc(state, mark) != EOF);
@@ -1747,7 +1762,9 @@ static bool load_valid_snapshot(const char *path, spectrum_data_t *out)
     if (!f) return false;
     size_t rd = fread(out, 1, sizeof(*out), f);
     fclose(f);
-    return rd == sizeof(*out) && out->valid;
+    if (rd != sizeof(*out) || !out->valid) return false;
+    sanitize_loaded(out);      // F-07: те же гарантии, что для bk_*/spec_NNNN.bin (:1191)
+    return true;
 }
 
 // P0 review fix: один буфер (heap, у вызывающего), не три копии по источникам.
@@ -1812,6 +1829,7 @@ void spectrum_restore_autosave(void)
     // Метка — до malloc: её снятие (reset_mark_clear_if_current) смотрит на
     // s_mark_present, а main.c по ней шлёт прибору -rst (spectrum_reset_mark_undelivered).
     struct stat mark_st;
+    unlink(RESET_MARK_TMP);          // F-03: сирота от обрыва питания до rename
     s_mark_present = (stat(RESET_MARK_FILE, &mark_st) == 0);
     s_mark_state = MARK_DELIVERED;   // пустая/нечитаемая метка — не стирать набор прибора
     if (s_mark_present) {

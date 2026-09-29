@@ -60,7 +60,8 @@ static void usb_to_tcp_cb(const uint8_t *data, size_t len)
         if (put < len) s_bridge_dropped += (uint32_t)(len - put);  // кольцо переполнено
     } else {
         // фоллбэк, если PSRAM-кольцо не выделилось: деградированный прямой режим
-        send(fd, data, len, MSG_DONTWAIT);
+        ssize_t sn = send(fd, data, len, MSG_DONTWAIT);   // C-34: хвост не терять молча
+        if (sn < (ssize_t)len) s_bridge_dropped += (uint32_t)(len - (sn > 0 ? (size_t)sn : 0));
     }
 }
 
@@ -114,10 +115,12 @@ static void tcp_tx_task(void *arg)
 static uint8_t s_pc_cmd_buf[512];
 static shproto_struct s_pc_cmd_decoder;
 static bool s_pc_cmd_decoder_init;
-// Скормить сырые байты клиента декодеру; при полном CMD_TEXT с «-rst» —
-// spectrum_reset(), как от кнопки UI «Сброс».
-static void tcp_scan_for_reset_cmd(const uint8_t *data, size_t n)
+// Скормить сырые байты клиента декодеру; true — в куске был полный CMD_TEXT с «-rst».
+// F-05: сам Сброс платы — у вызывающего и только после доставки прибору (rc==0),
+// как send_text_command_raw (usb_host_cdc.c) и кнопка UI «Сброс».
+static bool tcp_scan_for_reset_cmd(const uint8_t *data, size_t n)
 {
+    bool saw_rst = false;
     if (!s_pc_cmd_decoder_init) {
         shproto_init(&s_pc_cmd_decoder, s_pc_cmd_buf, sizeof(s_pc_cmd_buf));
         s_pc_cmd_decoder_init = true;
@@ -129,13 +132,13 @@ static void tcp_scan_for_reset_cmd(const uint8_t *data, size_t n)
             if (s_pc_cmd_decoder.cmd == CMD_TEXT && s_pc_cmd_decoder.len > 0 &&
                 s_pc_cmd_decoder.data[s_pc_cmd_decoder.len - 1] == '\0' &&
                 cmd_is_device_reset((const char *)s_pc_cmd_decoder.data)) {
-                ESP_LOGW(TAG, "TCP client sent -rst -- clearing base");
-                spectrum_reset();
+                saw_rst = true;
             }
         } else if (s_pc_cmd_decoder.dropped) {
             s_pc_cmd_decoder.dropped = false;
         }
     }
+    return saw_rst;
 }
 
 static void tcp_rx_task(void *arg)
@@ -162,8 +165,16 @@ static void tcp_rx_task(void *arg)
         // Прибором управляет внешнее приложение: шлюз не знает, запущен ли набор,
         // и сторож набора не должен перебивать его «Стоп» своим -sta.
         usb_host_cdc_acq_intent_external();
-        tcp_scan_for_reset_cmd(buf, n);
-        usb_host_cdc_send(buf, n);
+        bool saw_rst = tcp_scan_for_reset_cmd(buf, n);
+        int rc = usb_host_cdc_send(buf, n);
+        if (saw_rst) {
+            if (rc == 0) {
+                ESP_LOGW(TAG, "TCP client sent -rst -- clearing base");
+                spectrum_reset();
+            } else {
+                ESP_LOGW(TAG, "TCP client -rst not delivered to device (rc=%d) -- board base kept", rc);
+            }
+        }
     }
 }
 

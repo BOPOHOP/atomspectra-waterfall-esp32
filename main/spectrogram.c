@@ -6,7 +6,9 @@
 #include "wf_seg_pin.h"         // #REC-12 (sweep-A): пин чтения HTTP-слоем (host-pure)
 #include "wf_seg_seq.h"         // P-042 (sweep-A): seg_seq = max(NVS, шапки flash) (host-pure)
 #include "wf_seg_rebuild_range.h"  // М3: [g0,g1) для leftover после неудачной очистки (host-pure)
-#include "calib_export.h"       // R7 (sweep-A): единый признак «калибровка есть» в шапке
+#include "calib_export.h"
+#include "wf_ref_plan.h"        // #AUD-DUP1: опора первой строки после перезагрузки (host-pure)
+#include "boot_config.h"         // #AUD-DUP1: boot_config_get_session() — опора годна одну загрузку       // R7 (sweep-A): единый признак «калибровка есть» в шапке
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_littlefs.h"
@@ -69,6 +71,12 @@ static bool   s_calib_prev_valid;
 static bool   s_calib_changed;
 static spectrum_data_t *s_wf_snap;  // приватный буфер периодического wf_task (P3-4)
 static uint32_t        *s_baseline;     // PSRAM: 8192×uint32 — снимок накопительного спектра при start()
+#define WF_REF_FILE STORAGE_PATH "/wf_ref.bin"      /* #AUD-DUP1 */
+#define WF_REF_TMP  STORAGE_PATH "/wf_ref.bin.tmp"
+static uint32_t       *s_ref_bins;      /* PSRAM: опора из wf_ref.bin до первого живого снимка */
+static wf_ref_hdr_t    s_ref_hdr;
+static wf_ref_choice_t s_ref_choice = WF_REF_FORCE_RESYNC;
+static bool            s_ref_pending;   /* restore: первый живой снимок ещё не пришёл */
 static float            s_dose_k;       // µSv/h per cps из NVS (0.0 → NaN в dose_rate строк)
 static float           *s_dose_lut;     // PSRAM: 8192×float LUT кривой МД (NULL → scalar k)
 static int              s_dose_curve_n; // точек загружено (0 → scalar k)
@@ -1458,6 +1466,25 @@ static void wf_task(void *arg)
 
         uint32_t resync_seq;
         spectrum_get_snapshot_wf(s_wf_snap, &resync_seq);
+        // #AUD-DUP1: снимок автосейва — не опора первой строки (двойной счёт). Первый живой
+        // снимок после restore: опора последней строки прошлой загрузки или resync без строки.
+        if (s_ref_pending) {
+            s_ref_pending = false;
+            memcpy(s_prev, wf_ref_first_prev(s_ref_choice, s_ref_bins, s_wf_snap->bins),
+                   WF_CHANNELS * sizeof(uint32_t));
+            if (wf_ref_first_writes_row(s_ref_choice)) {
+                s_prev_total = s_ref_hdr.prev_total;
+                s_prev_time  = s_ref_hdr.prev_time;
+                ESP_LOGW(TAG, "restore: first row against the last row of the previous boot (t=%" PRIu32 ")", s_prev_time);
+            } else {
+                s_wf_resync_seen = resync_seq;
+                s_prev_total = s_wf_snap->total_counts;
+                s_prev_time  = s_wf_snap->total_time_sec;
+                if (s_baseline) memcpy(s_baseline, s_wf_snap->bins, WF_CHANNELS * sizeof(uint32_t));
+                ESP_LOGW(TAG, "restore: no saved reference -- reference resync (t=%" PRIu32 "s), no row", s_prev_time);
+                continue;
+            }
+        }
         // У-3: первый коммит после valid=false без подтверждённого сброса (старт без
         // current.bin, Reset не выполнен прибором) несёт ВЕСЬ набор прибора — строкой
         // он дал бы скачок (до 65535 на канал). Переносим опору, строку не пишем.
@@ -1472,9 +1499,7 @@ static void wf_task(void *arg)
 
         bool reset = (s_wf_snap->total_counts < s_prev_total);
         for (int i = 0; i < WF_CHANNELS; i++) {
-            int64_t d = (int64_t)s_wf_snap->bins[i] - (reset ? 0 : (int64_t)s_prev[i]);
-            if (d < 0) d = 0; else if (d > 65535) d = 65535;
-            s_row[i]  = (uint16_t)d;
+            s_row[i]  = wf_row_delta(s_wf_snap->bins[i], s_prev[i], reset);   // host-тест: test_wf_ref_plan.c
             s_prev[i] = s_wf_snap->bins[i];
         }
         s_prev_total = s_wf_snap->total_counts;
@@ -1627,6 +1652,30 @@ void spectrogram_restore(void)
     seg_reconcile();
     FSUNLOCK();
 
+    // #AUD-DUP1: опора последней строки прошлой загрузки (wf_ref.bin) — прочитать и удалить.
+{
+    s_ref_choice = WF_REF_FORCE_RESYNC;
+    s_ref_pending = false;
+    if (s_ref_bins == NULL) {
+        s_ref_bins = heap_caps_malloc(WF_CHANNELS * sizeof(uint32_t), MALLOC_CAP_SPIRAM);
+    }
+
+    FILE *rf = fopen(WF_REF_FILE, "rb");
+    if (rf) {
+        size_t rbytes = fread(&s_ref_hdr, 1, sizeof(s_ref_hdr), rf);
+        if (rbytes == sizeof(s_ref_hdr) && s_ref_bins) {
+            rbytes += fread(s_ref_bins, 1, WF_CHANNELS * sizeof(uint32_t), rf);
+        }
+        if (fgetc(rf) != EOF) rbytes++; /* файл длиннее ожидаемого — не проходит проверку */
+        fclose(rf);
+
+        s_ref_choice = wf_ref_pick(&s_ref_hdr, s_ref_bins, rbytes, WF_CHANNELS, boot_config_get_session());
+        ESP_LOGW(TAG, "restore: wf_ref.bin %s (%u B)", s_ref_choice == WF_REF_USE_FILE ? "accepted" : "rejected", (unsigned)rbytes);
+    }
+
+    unlink(WF_REF_FILE); /* годна ровно на одну загрузку */
+}
+
     FILE *f = fopen(WF_STATE, "rb");
     if (!f) return;                          // нет persist-состояния — чистый старт
     wf_state_t st;
@@ -1637,14 +1686,18 @@ void spectrogram_restore(void)
 
     // Возобновляем запись в НОВЫЙ сегмент (wf_task откроет лениво на первом тике).
     spectrum_get_snapshot_wf(s_snap, &s_wf_resync_seen);   // У-3: опора и счётчик одним снимком
-    // v3: baseline при resume — накопительный спектр на момент восстановления
-    if (s_baseline) {
-        for (int i = 0; i < WF_CHANNELS; i++) s_baseline[i] = s_snap->bins[i];
-    }
+    // v3: baseline при resume — накопительный спектр на момент последней строки прошлой
+    // загрузки (#AUD-DUP1: опора из wf_ref.bin), иначе — снимок; при resync его переставит wf_task.
+    const uint32_t *src = (s_ref_choice == WF_REF_USE_FILE) ? s_ref_bins : s_snap->bins;
+    if (s_baseline && src) {
+        for (int i = 0; i < WF_CHANNELS; i++) s_baseline[i] = src[i];
+    } /* при resync baseline переставит wf_task на первом живом снимке */
+
     LOCK();
     memcpy(s_prev, s_snap->bins, WF_CHANNELS * sizeof(uint32_t));
     s_prev_total          = s_snap->total_counts;
-    s_prev_time           = s_snap->total_time_sec;   // #FW-5: база для дельты длительности
+    s_prev_time           = s_snap->total_time_sec;   /* до первого живого снимка гейт времени идёт по автосейву, как раньше */
+    s_ref_pending = true;                             /* опору подставит wf_task на первом живом снимке */
     s_head = 0; s_count = 0;
     s_status.ring_count   = 0;
     s_status.total_rows   = 0;     // счётчик ТЕКУЩЕЙ сессии записи (с момента возобновления)
@@ -1684,6 +1737,10 @@ void spectrogram_time_synced(void)
 int spectrogram_start(void)
 {
     if (!s_status.ready) return -1;
+    // #AUD-DUP1 (замечание Codeaudit 1): новая сессия — опора прошлой загрузки/подготовки
+    // к ребуту больше не годится (иначе авария до автосейва дала бы двойной счёт).
+    s_ref_pending = false;
+    unlink(WF_REF_FILE);
 
     // #WF-1: остановить producer и дождаться дренажа consumer ДО сброса
     // счётчиков. Иначе consumer в окне между UNLOCK и FSLOCK внутри
@@ -1772,24 +1829,90 @@ int spectrogram_stop(void)
 // write_state НЕ трогаем: на флеше должно остаться active=true, иначе
 // после ребута запись не возобновится (#REC-6).
 // Потерю питания это не закрывает — только штатный путь перезагрузки.
+// #AUD-DUP1: опора последней записанной строки (s_prev) — в файл; restore следующей
+// загрузки берёт её вместо снимка автосейва. Только при штатной перезагрузке.
+static void wf_ref_save(void) {
+    wf_ref_hdr_t h = {0};
+    h.magic        = WF_REF_MAGIC;
+    h.channels     = WF_CHANNELS;
+    h.boot_session = boot_config_get_session();
+
+    LOCK();
+    h.prev_total   = s_prev_total;
+    h.prev_time    = s_prev_time;
+    UNLOCK();
+
+    h.sum = wf_ref_checksum(&h, s_prev, WF_CHANNELS);
+
+    FILE *f = fopen(WF_REF_TMP, "wb");
+    bool ok = (f != NULL);
+    if (ok) {
+        ok = (fwrite(&h, sizeof(h), 1, f) == 1);
+        if (ok && s_prev) {
+            ok = (fwrite(s_prev, sizeof(uint32_t), WF_CHANNELS, f) == WF_CHANNELS);
+        } else {
+            ok = false;
+        }
+        ok = (fclose(f) == 0) && ok;
+    }
+
+    if (ok) {
+        unlink(WF_REF_FILE);
+        ok = (rename(WF_REF_TMP, WF_REF_FILE) == 0);
+    }
+
+    if (!ok) {
+        unlink(WF_REF_TMP);
+        ESP_LOGE(TAG, "prepare_reboot: reference NOT saved (errno=%d)", errno);
+        return;
+    }
+
+    ESP_LOGW(TAG, "prepare_reboot: reference saved (total=%" PRIu32 " t=%" PRIu32 ")", h.prev_total, h.prev_time);
+}
+
 void spectrogram_prepare_reboot(void)
 {
     if (!s_status.ready) return;
-    LOCK(); bool was_rec = s_status.recording; s_status.recording = false; UNLOCK();
+
+    LOCK();
+    bool was_rec = s_status.recording;
+    s_status.recording = false;
+    UNLOCK();
+
     if (was_rec) {
-        if (s_fs_sig) xSemaphoreGive(s_fs_sig);      // подтолкнуть consumer
-        for (int i = 0; i < 30; i++) {               // дренаж, не дольше ~3 с
-            LOCK(); bool drained = (s_fs_flushed >= s_status.total_rows); UNLOCK();
+        vTaskDelay(pdMS_TO_TICKS(100)); /* дать wf_task дописать строку «в полёте» */
+        if (s_fs_sig) xSemaphoreGive(s_fs_sig);
+
+        for (int i = 0; i < 30; i++) {
+            LOCK();
+            bool drained = (s_fs_flushed >= s_status.total_rows);
+            UNLOCK();
             if (drained) break;
             vTaskDelay(pdMS_TO_TICKS(100));
         }
     }
-    FSLOCK();
-    if (s_seg_fp) {
-        ESP_LOGW(TAG, "prepare_reboot: finalizing open segment (%" PRIu32 " rows)", s_seg_rows);
-        seg_finalize();
+
+    bool fin_ok = false;
+    for (int i = 0; i < 6; i++) {
+        if (i) vTaskDelay(pdMS_TO_TICKS(250));
+        if (s_fs_lock && xSemaphoreTake(s_fs_lock, pdMS_TO_TICKS(i ? 1000 : 5000)) != pdTRUE) {
+            ESP_LOGE(TAG, "prepare_reboot: FS lock busy, open segment left as is");
+            break;
+        }
+        if (s_seg_fp) {
+            ESP_LOGW(TAG, "prepare_reboot: finalizing open segment (%" PRIu32 " rows)", s_seg_rows);
+            seg_finalize();
+        }
+        bool left = (s_seg_fp != NULL);
+        FSUNLOCK();
+        if (!left) {
+            fin_ok = true;
+            break;
+        }
     }
-    FSUNLOCK();
+    if (!fin_ok) ESP_LOGE(TAG, "prepare_reboot: open segment NOT finalized");
+
+    if (was_rec) wf_ref_save(); /* #AUD-DUP1: опора последней строки — для первой строки следующей загрузки */
 }
 
 /* #FW-65: leftover after a failed clear — rebuild registry/counters/next

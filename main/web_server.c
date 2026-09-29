@@ -209,7 +209,8 @@ static esp_err_t handle_status(httpd_req_t *req)
 
     char *json = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, json);
+    if (!json) httpd_resp_set_status(req, "503 Service Unavailable");   // F-09: нет памяти на JSON
+    httpd_resp_sendstr(req, json ? json : "{\"ok\":false,\"err\":\"oom\"}");
     free(json);
     cJSON_Delete(root);
     return ESP_OK;
@@ -775,6 +776,9 @@ static esp_err_t handle_ota_locked(httpd_req_t *req)
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, resp);
     ESP_LOGW(TAG, "AWF-4: OTA written %d bytes to '%s', rebooting", received, update->label);
+    // #AUD-F01 (P-016): не терять открытый сегмент. После ответа: httpd однопоточный,
+    // пока идёт финализация, UI (system.html pollOtaReboot) ответа старой прошивки не получит.
+    spectrogram_prepare_reboot();
     // Как handle_reboot_esp/handle_wifi_reset: ответ уже отдан httpd_resp_sendstr
     // (блокирующий send() успел уйти в TCP-буфер), задержка — дать WiFi/LWIP
     // время реально протолкнуть его в эфир до esp_restart().
@@ -1786,7 +1790,8 @@ static esp_err_t handle_device(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "calib_reject_seq", spectrum_get_calib_reject_seq());
     char *json = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, json);
+    if (!json) httpd_resp_set_status(req, "503 Service Unavailable");   // F-09: нет памяти на JSON
+    httpd_resp_sendstr(req, json ? json : "{\"ok\":false,\"err\":\"oom\"}");
     free(json);
     cJSON_Delete(root);
     free(sp);
@@ -1844,6 +1849,15 @@ static esp_err_t handle_system(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "int_dflt_free",
                             heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DEFAULT));
     cJSON_AddNumberToObject(root, "int_dflt_largest", dflt_largest);
+    // #AUD-DIAG-1 R5 (часть; F-12/C-38/#RB-STK-1): минимум свободного стека за время работы, байт
+    // (ESP-IDF: uxTaskGetStackHighWaterMark — в байтах). Нет задачи — поле не пишется.
+    cJSON *stk = cJSON_AddObjectToObject(root, "stack_min_free");
+    static const char *const stk_names[] = { "usb_conn", "tcp_rx", "esp_timer", "sys_evt",
+                                             "httpd", "wf_fs", "wf", "usb_rxw", "tcp_tx" };
+    for (size_t i = 0; stk && i < sizeof(stk_names) / sizeof(stk_names[0]); i++) {
+        TaskHandle_t th = xTaskGetHandle(stk_names[i]);
+        if (th) cJSON_AddNumberToObject(stk, stk_names[i], (double)uxTaskGetStackHighWaterMark(th));
+    }
     cJSON_AddNumberToObject(root, "uptime_sec", (double)(esp_timer_get_time() / 1000000));
     cJSON_AddBoolToObject(root, "usb_connected", usb_host_cdc_is_connected());
     cJSON_AddBoolToObject(root, "wifi_connected", wifi_is_connected());
@@ -1896,7 +1910,8 @@ static esp_err_t handle_system(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "http_heavy_rejects", (double)http_io_gate_reject_count());
     char *json = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, json);
+    if (!json) httpd_resp_set_status(req, "503 Service Unavailable");   // F-09: нет памяти на JSON
+    httpd_resp_sendstr(req, json ? json : "{\"ok\":false,\"err\":\"oom\"}");
     free(json);
     cJSON_Delete(root);
     return ESP_OK;
@@ -1985,7 +2000,8 @@ static esp_err_t handle_usb_diag(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "uptime_ms",             d.uptime_ms);
     char *json = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, json);
+    if (!json) httpd_resp_set_status(req, "503 Service Unavailable");   // F-09: нет памяти на JSON
+    httpd_resp_sendstr(req, json ? json : "{\"ok\":false,\"err\":\"oom\"}");
     free(json);
     cJSON_Delete(root);
     return ESP_OK;

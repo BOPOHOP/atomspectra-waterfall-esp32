@@ -134,9 +134,10 @@ static void devlog_push(const uint8_t *txt, int len)
 // Значения задаёт usb_host_cdc_set_autostart() из main.c (читая boot_config из NVS).
 static bool s_boot_autostart_spec = false;
 static bool s_boot_autostart_wf   = false;
-static bool s_boot_clear_spectrum = false;
 static volatile bool s_rst_pending = false;   // Н-4: -rst ждёт ближайшего коннекта
 static uint32_t s_rst_pending_gen;            // Н-Д1: поколение сброса, который досылаем
+static portMUX_TYPE s_rst_mux = portMUX_INITIALIZER_UNLOCKED; /* C-40: pending и gen — одна пара под spinlock (httpd на ядре 1, usb_conn на ядре 0) */
+static void rst_pending_dispatch(void);
 static bool s_boot_once_done      = false;
 
 // #CMD-1/#AWF-12b: разбор дампа -cal (40 регистров, строки по 8 hex через
@@ -558,18 +559,9 @@ static void try_open_device(void)
     // (Н-4/Н-3.3/Н-1.4 release-gate 1.2.29; до записи/автозапуска, как раньше).
     // Н-Д1: досылать, только пока ТОТ ЖЕ сброс не выполнен — иначе поздний реконнект
     // (через часы) стёр бы набор, принятый по таймауту или начатый новым Сбросом.
-    if (s_rst_pending && !spectrum_reset_still_undelivered(s_rst_pending_gen)) {
-        s_rst_pending = false;
-        ESP_LOGI(TAG, "pending -rst dropped: reset already delivered or superseded");
-    }
     if (s_rst_pending) {
         vTaskDelay(pdMS_TO_TICKS(100));
-        if (usb_host_send_text_command("-rst") == 0) {
-            s_rst_pending = false;
-            ESP_LOGW(TAG, "pending -rst sent to device (FW-3 boot clear / Reset not delivered)");
-        } else {
-            ESP_LOGW(TAG, "pending -rst: send failed, retry on next connect");
-        }
+        rst_pending_dispatch();
     }
 
     if (spectrogram_is_recording()) {
@@ -602,13 +594,50 @@ void usb_host_cdc_set_autostart(bool autostart_spectrum, bool autostart_waterfal
 {
     s_boot_autostart_spec = autostart_spectrum;
     s_boot_autostart_wf   = autostart_waterfall;
-    s_boot_clear_spectrum = clear_spectrum;
+    (void)clear_spectrum;   // F-14: очистка при старте идёт через main.c (#FW-3), флаг здесь не нужен
+}
+
+// C-40/F-06: досылка отложенного -rst — на коннекте и в тике usb_conn (живое соединение).
+// Запрос забирается атомарно; при неудаче возвращается, только если не пришёл новый.
+static void rst_pending_dispatch(void)
+{
+    bool p;
+    uint32_t g;
+    portENTER_CRITICAL(&s_rst_mux);
+    p = s_rst_pending;
+    g = s_rst_pending_gen;
+    s_rst_pending = false;
+    portEXIT_CRITICAL(&s_rst_mux);
+
+    if (!p) return;
+
+    if (!spectrum_reset_still_undelivered(g)) {
+        ESP_LOGI(TAG, "pending -rst dropped: reset already delivered or superseded");
+        return;
+    }
+
+    if (usb_host_send_text_command("-rst") == 0) {
+        ESP_LOGW(TAG, "pending -rst sent to device (FW-3 boot clear / Reset not delivered)");
+        return;
+    }
+
+    portENTER_CRITICAL(&s_rst_mux);
+    if (!s_rst_pending) {
+        s_rst_pending = true;
+        s_rst_pending_gen = g; /* более новый запрос не затирать */
+    }
+    portEXIT_CRITICAL(&s_rst_mux);
+
+    ESP_LOGW(TAG, "pending -rst: send failed, retry in 2 s");
 }
 
 void usb_host_cdc_request_rst(void)
 {
-    s_rst_pending_gen = spectrum_reset_gen();   // поколение ЭТОГО сброса (Н-Д1)
+    uint32_t g = spectrum_reset_gen();
+    portENTER_CRITICAL(&s_rst_mux);
+    s_rst_pending_gen = g;
     s_rst_pending = true;
+    portEXIT_CRITICAL(&s_rst_mux);
 }
 
 static void usb_connect_task(void *arg)
@@ -676,6 +705,7 @@ static void usb_connect_task(void *arg)
                 spectrum_t1_mark_refresh_sent();
         }
 
+        if (s_cdc_dev && s_rst_pending) rst_pending_dispatch();   // F-06: досылка и на живом соединении, не только при коннекте
         try_open_device();
         vTaskDelay(pdMS_TO_TICKS(2000));
     }

@@ -44,6 +44,7 @@ void test_http_404_activity(void);
 void test_http_activity_quiet_model(void);
 // AWF-2a финал: семантика missing-key boot-флага (main/boot_flag_plan.h).
 void test_boot_flag_plan(void);
+void test_wf_ref_plan(void);   // #AUD-DUP1
 // AWF-4: проверка заголовка OTA-образа (main/ota_image_check.h).
 void ota_image_check_suite(void);
 void ota_mark_valid_plan_suite(void);
@@ -265,6 +266,7 @@ int main(void)
     test_http_404_activity();
     test_http_activity_quiet_model();
     test_boot_flag_plan();
+    test_wf_ref_plan();
     ota_image_check_suite();
     ota_mark_valid_plan_suite();
     json_uint_fmt_suite();

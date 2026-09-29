@@ -152,7 +152,8 @@ static esp_err_t handle_setup_scan(httpd_req_t *req)
 
     char *json = cJSON_PrintUnformatted(arr);
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, json);
+    if (!json) httpd_resp_set_status(req, "503 Service Unavailable");   // F-09 (остаток класса): нет памяти на JSON
+    httpd_resp_sendstr(req, json ? json : "{\"ok\":false,\"err\":\"oom\"}");
     free(json);
     cJSON_Delete(arr);
     return ESP_OK;
@@ -351,6 +352,15 @@ static void start_field_ap(void)
 
 /* ---- STA fallback → полевой AP (FIELD-2a, способ A4: ребут+одноразовый флаг) ---- */
 
+static bool s_fb_rebooting;
+
+static void fb_reboot_task(void *arg)
+{
+    (void)arg;
+    spectrogram_prepare_reboot();
+    esp_restart();
+}
+
 static void set_fb_flag_and_reboot(void)
 {
     nvs_handle_t nvs;
@@ -360,7 +370,14 @@ static void set_fb_flag_and_reboot(void)
         nvs_close(nvs);
     }
     ESP_LOGW(TAG, "FIELD-2a: STA no IP -> reboot into field AP");
-    spectrogram_prepare_reboot();   // #FW-55 (P-016): не терять открытый сегмент
+
+    if (s_fb_rebooting) return;
+    s_fb_rebooting = true;
+    /* #RB-STK-1: вызывают esp_timer (стек 3584) и sys_evt (4096) — подготовка с LittleFS и записью опоры идёт в своей задаче */
+    if (xTaskCreate(fb_reboot_task, "fb_reboot", 6144, NULL, 5, NULL) == pdPASS) return;
+
+    ESP_LOGE(TAG, "fb_reboot task create failed -- rebooting from this context");
+    spectrogram_prepare_reboot();
     esp_restart();
 }
 
