@@ -874,7 +874,7 @@ function scheduleDraw(){
 async function backfill(){
  try{
   var hf=window.heavyFetch||fetch;
-  if(!csrfToken)await loadCsrf();var ab=await(await hf.call(window,"/api/waterfall/window",{headers:{"X-CSRF-Token":csrfToken}})).arrayBuffer();
+  if(!csrfToken)await loadCsrf();var ab=await(await hf.call(window,"/api/waterfall/window?rows=64",{headers:{"X-CSRF-Token":csrfToken}})).arrayBuffer();
   if(ab.byteLength<20)return;
   var dv=new DataView(ab);
   var mg=String.fromCharCode(dv.getUint8(0),dv.getUint8(1),dv.getUint8(2),dv.getUint8(3));

@@ -70,7 +70,7 @@ mut M50_tail_nowake     spectrogram.c    '/^    xSemaphoreGive(s_commit_sig);   
 # S-01 (1.2.30): CSRF на тяжёлых GET — плата (3 обработчика) и страницы (токен в заголовке)
 mut M51_s01_check_del   web_server.c     '0,/    if (!csrf_check(req)) return ESP_FAIL;   \/\/ S-01 (1.2.30)/{/    if (!csrf_check(req)) return ESP_FAIL;   \/\/ S-01 (1.2.30)/d}' '// S-01 (1.2.30)'
 mut M52_s01_window_del  web_waterfall.c  '/    if (!web_csrf_check(req)) return ESP_FAIL;   \/\/ S-01 (1.2.30)/d' 'web_csrf_check(req)) return ESP_FAIL;   // S-01'
-mut M53_s01_ui_nohdr    ../web/waterfall.html 's/hf.call(window,"\/api\/waterfall\/window",{headers:{"X-CSRF-Token":csrfToken}})/hf.call(window,"\/api\/waterfall\/window")/' '/api/waterfall/window'
+mut M53_s01_ui_nohdr    ../web/waterfall.html 's/hf.call(window,"\/api\/waterfall\/window?rows=64",{headers:{"X-CSRF-Token":csrfToken}})/hf.call(window,"\/api\/waterfall\/window?rows=64")/' '/api/waterfall/window'
 mut M54_s01_ui_plain    ../web/system.html    's/await gget("\/api\/ota\/github\/check")/await fetch("\/api\/ota\/github\/check")/' 'gget("/api/ota/github/check")'
 # LK-07 (1.2.30): проверка GitHub в фоне — обработчик зовёт async (не sync), задача стартует, состояние переходит в DONE
 mut M55_lk07_sync       web_server.c          's/    ota_gh_check_async(resp, sizeof(resp));/    ota_gh_check(resp, sizeof(resp));/' 'ota_gh_check_async(resp, sizeof(resp));'
@@ -87,4 +87,10 @@ mut M62_wp5_wholecopy   debug_log_ring.c      's/    char \*chunk = malloc(DBGLO
 mut M63_lk09_noalive    web_waterfall.c       '/    if (!alive) { free(a); return; }/d' 'if (!alive) { free(a); return; }'
 mut M64_lk09_always     web_waterfall.c       's/    if (!alive) { free(a); return; }/    if (false) { free(a); return; }/' 'if (!alive) { free(a); return; }'
 mut M65_lk09_inflight   web_waterfall.c       's/#define WS_INFLIGHT_MAX  4 /#define WS_INFLIGHT_MAX  8 /' '#define WS_INFLIGHT_MAX  4'
+# LK-08/P-01 (1.2.30)
+mut M66_lk08_sync_win   web_waterfall.c       's/HTTP_GET,  h_window_async);/HTTP_GET,  h_window);/' 'h_window_async);'
+mut M67_lk08_sync_n42   web_waterfall.c       's/HTTP_GET, h_export_n42_async);/HTTP_GET, h_export_n42);/' 'h_export_n42_async);'
+mut M68_lk08_sync_seg   web_waterfall.c       's/HTTP_GET, h_segment_async);/HTTP_GET, h_segment);/' 'h_segment_async);'
+mut M69_lk08_max8       web_waterfall.c       's/#define WF_DL_MAX         1/#define WF_DL_MAX         8/' '#define WF_DL_MAX         1'
+mut M70_p01_norows      web_waterfall.c       's/if (want >= 1 \&\& want < rows) rows = want;/(void)want;/' 'rows = want;'
 exit $RC

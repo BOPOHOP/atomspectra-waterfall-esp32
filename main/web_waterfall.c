@@ -15,6 +15,7 @@
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -279,6 +280,13 @@ static esp_err_t h_window(httpd_req_t *req)
     }
 
     uint32_t rows = s.ring_count;
+    // P-01 (1.2.30): ?rows=N — только последние N строк (страница не качает всё кольцо, до 4 МБ, на каждый вход)
+    char q[32], qv[12];
+    if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK &&
+        httpd_query_key_value(q, "rows", qv, sizeof(qv)) == ESP_OK) {
+        uint32_t want = (uint32_t)strtoul(qv, NULL, 10);
+        if (want >= 1 && want < rows) rows = want;
+    }
     uint32_t first = (rows <= s.total_rows) ? (s.total_rows - rows) : 0;
     uint8_t pre[20];
     memcpy(pre, "ASWW", 4);
@@ -1274,6 +1282,57 @@ static void reg(httpd_handle_t srv, const char *uri, httpd_method_t m,
         ESP_LOGE(TAG, "issue#52b: register '%s' failed: %s", uri, esp_err_to_name(rerr));
 }
 
+// LK-08 (1.2.30): долгие выдачи (окно, экспорт, сегмент) идут в отдельной задаче через
+// httpd_req_async_handler_begin — поток httpd свободен на время передачи (опросы UI, WS-кадры).
+#define WF_DL_MAX         1      // одновременно одна выдача: внутренняя RAM под стек задачи ограничена
+#define WF_DL_STACK       7168
+static volatile int s_dl_active;
+typedef struct { httpd_req_t *req; esp_err_t (*h)(httpd_req_t *); } wf_dl_job_t;
+
+static void wf_dl_task(void *arg)
+{
+    wf_dl_job_t j = *(wf_dl_job_t *)arg;
+    free(arg);
+    (void)j.h(j.req);
+    httpd_req_async_handler_complete(j.req);
+    __atomic_fetch_sub(&s_dl_active, 1, __ATOMIC_SEQ_CST);
+    vTaskDelete(NULL);
+}
+static esp_err_t wf_dl_busy(httpd_req_t *req)
+{
+    httpd_resp_set_hdr(req, "Retry-After", "2");
+    httpd_resp_send_err(req, HTTPD_503_SERVICE_UNAVAILABLE, "busy");
+    return ESP_OK;
+}
+
+static esp_err_t wf_dl_async(httpd_req_t *req, esp_err_t (*h)(httpd_req_t *))
+{
+    if (__atomic_add_fetch(&s_dl_active, 1, __ATOMIC_SEQ_CST) > WF_DL_MAX) {
+        __atomic_fetch_sub(&s_dl_active, 1, __ATOMIC_SEQ_CST);
+        return wf_dl_busy(req);
+    }
+    httpd_req_t *cp = NULL;
+    wf_dl_job_t *j = malloc(sizeof(*j));
+    if (!j || httpd_req_async_handler_begin(req, &cp) != ESP_OK) {
+        free(j);
+        __atomic_fetch_sub(&s_dl_active, 1, __ATOMIC_SEQ_CST);
+        return wf_dl_busy(req);
+    }
+    j->req = cp; j->h = h;
+    if (xTaskCreate(wf_dl_task, "wf_dl", WF_DL_STACK, j, 5, NULL) != pdPASS) {
+        free(j);
+        (void)wf_dl_busy(cp);
+        httpd_req_async_handler_complete(cp);
+        __atomic_fetch_sub(&s_dl_active, 1, __ATOMIC_SEQ_CST);
+    }
+    return ESP_OK;
+}
+
+static esp_err_t h_window_async(httpd_req_t *req)      { return wf_dl_async(req, h_window); }
+static esp_err_t h_export_aswf_async(httpd_req_t *req) { return wf_dl_async(req, h_export_aswf); }
+static esp_err_t h_export_n42_async(httpd_req_t *req)  { return wf_dl_async(req, h_export_n42); }
+static esp_err_t h_segment_async(httpd_req_t *req)     { return wf_dl_async(req, h_segment); }
+
 void web_waterfall_register(httpd_handle_t server)
 {
     s_server = server;
@@ -1287,12 +1346,12 @@ void web_waterfall_register(httpd_handle_t server)
     reg(server, "/api/waterfall/stop",   HTTP_POST, h_stop);
     reg(server, "/api/waterfall/clear",  HTTP_POST, h_clear);
     reg(server, "/api/waterfall/config", HTTP_POST, h_config);
-    reg(server, "/api/waterfall/window", HTTP_GET,  h_window);
-    reg(server, "/api/waterfall/export.aswf", HTTP_GET, h_export_aswf);
-    reg(server, "/api/waterfall/export.n42",  HTTP_GET, h_export_n42);
+    reg(server, "/api/waterfall/window", HTTP_GET,  h_window_async);
+    reg(server, "/api/waterfall/export.aswf", HTTP_GET, h_export_aswf_async);
+    reg(server, "/api/waterfall/export.n42",  HTTP_GET, h_export_n42_async);
     // #REC-11-A1: листинг и отдача сегментов (СТРОГО read-only).
     reg(server, "/api/waterfall/segments", HTTP_GET, h_segments);
-    reg(server, "/api/waterfall/segment",  HTTP_GET, h_segment);
+    reg(server, "/api/waterfall/segment",  HTTP_GET, h_segment_async);
     // #REC-11 pull: удаление сегмента по ack от PC-клиента (CSRF, только завершённый).
     reg(server, "/api/waterfall/segment/delete", HTTP_POST, h_segment_delete);
     // #REC-11-A2: конфиг/статус автономной выгрузки сегментов.

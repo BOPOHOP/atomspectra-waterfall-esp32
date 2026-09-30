@@ -120,7 +120,7 @@ if [ -f ../web/index.html ]; then
     # S-01 (1.2.30): страницы шлют CSRF-токен на тяжёлых GET
     need ../web/service.html   2 'await gget("/api/settings/backup");'
     need ../web/system.html    1 'await gget("/api/ota/github/check")'
-    need ../web/waterfall.html 1 'hf.call(window,"/api/waterfall/window",{headers:{"X-CSRF-Token":csrfToken}})'
+    need ../web/waterfall.html 1 'hf.call(window,"/api/waterfall/window?rows=64",{headers:{"X-CSRF-Token":csrfToken}})'
 fi
 # S-01 (1.2.30): тяжёлые GET требуют CSRF-токен на стороне платы (отступ: закомментированная строка не считается)
 need web_server.c    2 '    if (!csrf_check(req)) return ESP_FAIL;   // S-01 (1.2.30)'
@@ -139,6 +139,14 @@ need debug_log_ring.c 0 'tmp = malloc(used + 1);'
 need web_waterfall.c 1 '    if (!alive) { free(a); return; }'
 need web_waterfall.c 1 '    for (int i = 0; i < WF_WS_MAX; i++) if (s_ws_fds[i] == a->fd) { alive = true; break; }'
 need web_waterfall.c 1 '#define WS_INFLIGHT_MAX  4'
+# LK-08/P-01 (1.2.30): долгие выдачи — в отдельной задаче (httpd свободен), одна за раз; окно страницы — последние N строк
+need web_waterfall.c 1 '    if (!j || httpd_req_async_handler_begin(req, &cp) != ESP_OK) {'
+need web_waterfall.c 1 '#define WF_DL_MAX         1'
+need web_waterfall.c 1 '    reg(server, "/api/waterfall/window", HTTP_GET,  h_window_async);'
+need web_waterfall.c 1 '    reg(server, "/api/waterfall/export.aswf", HTTP_GET, h_export_aswf_async);'
+need web_waterfall.c 1 '    reg(server, "/api/waterfall/export.n42",  HTTP_GET, h_export_n42_async);'
+need web_waterfall.c 1 '    reg(server, "/api/waterfall/segment",  HTTP_GET, h_segment_async);'
+need web_waterfall.c 1 '        if (want >= 1 && want < rows) rows = want;'
 # LK-05 (1.2.30): httpd ждёт прибор на -inf / -tc_pot? не дольше 1 с на команду (было 2 с)
 need web_server.c 1 '#define SETTINGS_RAW_WAIT_MS 1000'
 need web_server.c 2 '    for (int waited = 0; waited < SETTINGS_RAW_WAIT_MS; waited += 50) {'
