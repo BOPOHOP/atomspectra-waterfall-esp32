@@ -2,6 +2,7 @@
 
 #include "atomspectra.h"
 #include "debug_log_level_filter.h"
+#include "debug_log_chunk_plan.h"   // WP5: выгрузка журнала потоком по кускам (host-pure)
 #include "http_io_gate.h"
 #include "spectrogram.h"   // #FW-64: снимок состояния водопада в heartbeat
 #include "wf_offload.h"    // #FW-64: счётчики выгрузки сегментов
@@ -32,6 +33,7 @@ static size_t             s_cap;
 static size_t             s_head;      // next write offset
 static size_t             s_used;
 static uint32_t           s_next_seq;  // monotonic line sequence
+static uint64_t           s_bytes_total;   // WP5: всего байт записано в кольцо с начала (монотонно, не обнуляется очисткой)
 static uint32_t           s_dropped;    // вытеснено кольцом (место кончилось)
 static uint32_t           s_lost_busy;  // отброшено: мьютекс был занят
 static uint32_t           s_gen;
@@ -108,6 +110,8 @@ static void apply_layer_a(bool enabled, dbglog_level_t level)
     }
 }
 
+#define DBGLOG_CHUNK 8192   // WP5: размер куска потоковой выгрузки журнала (буфер на весь запрос — один кусок)
+
 static void ring_append_locked(const char *data, size_t len)
 {
     if (!s_ring || !s_cap || len == 0) return;
@@ -135,6 +139,7 @@ static void ring_append_locked(const char *data, size_t len)
     if (len > first) memcpy(s_ring, data + first, len - first);
     s_head = (s_head + len) % s_cap;
     s_used += len;
+    s_bytes_total += len;   // WP5: абсолютный счётчик записанных байт (куски выгрузки проверяют, что байты ещё в кольце)
     s_next_seq++;
 }
 
@@ -504,6 +509,28 @@ esp_err_t debug_log_ring_flush(uint32_t upto_seq, uint32_t gen)
     return ESP_OK;
 }
 
+// WP5 (1.2.30): срез для `since` БЕЗ копии кольца (вызывать под s_mtx). Пишет абсолютный диапазон байт [*want, *end);
+// перевод «номер строки → смещение» — прежняя логика (first_seq = next - число строк в кольце), но прямо по кольцу.
+static void dump_slice_locked(uint32_t since, uint64_t *want, uint64_t *end)
+{
+    size_t start = (s_head + s_cap - s_used) % s_cap;
+    size_t n1 = (start + s_used <= s_cap) ? s_used : (s_cap - start), n2 = s_used - n1;
+    uint32_t lines = 0;
+    for (size_t i = 0; i < n1; i++) if (s_ring[start + i] == '\n') lines++;
+    for (size_t i = 0; i < n2; i++) if (s_ring[i] == '\n') lines++;
+    uint32_t first_seq = (s_next_seq >= lines) ? (s_next_seq - lines) : 0;
+    size_t skip_bytes = 0;
+    if (since > first_seq && since < s_next_seq) {
+        uint32_t skip = since - first_seq;
+        while (skip > 0 && skip_bytes < s_used)
+            if (s_ring[(start + skip_bytes++) % s_cap] == '\n') skip--;
+    } else if (since >= s_next_seq) {
+        skip_bytes = s_used;
+    }
+    *want = (s_bytes_total - s_used) + skip_bytes;
+    *end = s_bytes_total;
+}
+
 esp_err_t debug_log_ring_http_dump(httpd_req_t *req, uint32_t since)
 {
     // httpd_resp_set_hdr keeps pointers — must be static storage.
@@ -516,26 +543,14 @@ esp_err_t debug_log_ring_http_dump(httpd_req_t *req, uint32_t since)
     // строки, добавленные во время ожидания — клиент терял их навсегда,
     // продолжив следующий забор с since = устаревшего next.
     uint32_t next = 0, dropped = 0, gen = 0;
-    char *tmp = NULL;
-    size_t used = 0;
+    uint64_t want = 0, end = 0;     // WP5: срез в абсолютных байтах, без копии кольца
     bool have_ring = false;
 
     if (s_enabled && s_ring) {
         if (xSemaphoreTake(s_mtx, pdMS_TO_TICKS(200)) != pdTRUE)
             return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "busy");
         if (s_ring) {                     // мог уйти в free_ring, пока мы ждали
-            used = s_used;
-            size_t start = (s_head + s_cap - used) % s_cap;
-            tmp = malloc(used + 1);
-            if (!tmp) {
-                xSemaphoreGive(s_mtx);
-                return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
-            }
-            size_t first = s_cap - start;
-            if (first > used) first = used;
-            memcpy(tmp, s_ring + start, first);
-            if (used > first) memcpy(tmp + first, s_ring, used - first);
-            tmp[used] = '\0';
+            dump_slice_locked(since, &want, &end);   // WP5: считаем срез по кольцу, malloc на всё кольцо больше нет
             have_ring = true;
         }
         next = s_next_seq;
@@ -555,32 +570,32 @@ esp_err_t debug_log_ring_http_dump(httpd_req_t *req, uint32_t since)
     httpd_resp_set_hdr(req, "X-Log-Dropped", hdr_drop);
     httpd_resp_set_hdr(req, "X-Log-Gen", hdr_gen);
 
-    if (!have_ring) {
-        free(tmp);
-        return httpd_resp_send(req, "", 0);
-    }
+    if (!have_ring || want >= end) return httpd_resp_send(req, "", 0);
 
-    // Skip lines until we've passed `since` worth of line ends counted from
-    // (next - line_count). Approximate: count lines in buffer, skip oldest.
-    uint32_t lines = 0;
-    for (size_t i = 0; i < used; i++) if (tmp[i] == '\n') lines++;
-    uint32_t first_seq = (next >= lines) ? (next - lines) : 0;
-    const char *out = tmp;
-    size_t out_len = used;
-    if (since > first_seq && since < next) {
-        uint32_t skip = since - first_seq;
-        size_t i = 0;
-        while (skip > 0 && i < used) {
-            if (tmp[i++] == '\n') skip--;
+    // WP5: срез отдаётся потоком по DBGLOG_CHUNK байт; буфер — один кусок, а не всё кольцо. Каждый кусок копируется под
+    // мьютексом и только если нужные байты ещё в кольце (dbglog_chunk_plan); затёрли, пока слали, — поток обрывается.
+    char *chunk = malloc(DBGLOG_CHUNK);
+    if (!chunk) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+    esp_err_t err = ESP_OK;
+    for (;;) {
+        size_t off = 0, len = 0;
+        if (xSemaphoreTake(s_mtx, pdMS_TO_TICKS(200)) != pdTRUE) break;
+        dbglog_chunk_res_t cr = (s_ring && s_gen == gen)
+            ? dbglog_chunk_plan(s_bytes_total, s_used, want, end, DBGLOG_CHUNK, &off, &len) : DBGLOG_CHUNK_OVERWRITTEN;
+        if (cr == DBGLOG_CHUNK_OK) {
+            size_t p = ((s_head + s_cap - s_used) % s_cap + off) % s_cap, first = s_cap - p;
+            if (first > len) first = len;
+            memcpy(chunk, s_ring + p, first);
+            if (len > first) memcpy(chunk + first, s_ring, len - first);
         }
-        out = tmp + i;
-        out_len = used - i;
-    } else if (since >= next) {
-        out_len = 0;
+        xSemaphoreGive(s_mtx);
+        if (cr != DBGLOG_CHUNK_OK) break;
+        err = httpd_resp_send_chunk(req, chunk, len);
+        if (err != ESP_OK) break;
+        want += len;
     }
-
-    esp_err_t err = httpd_resp_send(req, out_len ? out : "", out_len);
-    free(tmp);
+    free(chunk);
+    if (err == ESP_OK) err = httpd_resp_send_chunk(req, NULL, 0);
     return err;
 }
 

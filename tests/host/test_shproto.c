@@ -48,6 +48,7 @@ void test_wf_ref_plan(void);   // #AUD-DUP1
 void test_wf_rst_keep(void);   // #AUD-RST
 void test_wf_tail_plan(void);  // #RST-TAIL
 void test_ota_gh_check_state(void);  // LK-07
+void test_debug_log_chunk(void);  // WP5
 // AWF-4: проверка заголовка OTA-образа (main/ota_image_check.h).
 void ota_image_check_suite(void);
 void ota_mark_valid_plan_suite(void);
@@ -273,6 +274,7 @@ int main(void)
     test_wf_rst_keep();
     test_wf_tail_plan();
     test_ota_gh_check_state();
+    test_debug_log_chunk();
     ota_image_check_suite();
     ota_mark_valid_plan_suite();
     json_uint_fmt_suite();

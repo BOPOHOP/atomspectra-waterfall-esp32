@@ -130,6 +130,14 @@ need web_server.c        1 '    ota_gh_check_async(resp, sizeof(resp));'
 need ota_github_client.c 1 '    ota_chk_act_t act = ota_chk_decide(s_chk_state, age_ms, OTA_GH_CHECK_KEEP_MS);'
 need ota_github_client.c 1 '        if (xTaskCreatePinnedToCore(ota_gh_check_task, "ota_gh_chk", 8192, NULL, 3, NULL, 1) != pdPASS) {'
 need ota_github_client.c 1 '    s_chk_state = OTA_CHK_DONE;'
+# WP5 (1.2.30): журнал отладки отдаётся потоком по кускам, без malloc на всё кольцо; счётчик байт растёт при записи
+need debug_log_ring.c 1 '    char *chunk = malloc(DBGLOG_CHUNK);'
+need debug_log_ring.c 1 '? dbglog_chunk_plan(s_bytes_total, s_used, want, end, DBGLOG_CHUNK, &off, &len) : DBGLOG_CHUNK_OVERWRITTEN;'
+need debug_log_ring.c 1 '    s_bytes_total += len;'
+need debug_log_ring.c 0 'tmp = malloc(used + 1);'
+# LK-05 (1.2.30): httpd ждёт прибор на -inf / -tc_pot? не дольше 1 с на команду (было 2 с)
+need web_server.c 1 '#define SETTINGS_RAW_WAIT_MS 1000'
+need web_server.c 2 '    for (int waited = 0; waited < SETTINGS_RAW_WAIT_MS; waited += 50) {'
 # #RST-TAIL (1.2.30): строка водопада перед -rst — вызов в трёх точках отправки (отступ в строке: закомментированный вызов не считается)
 # и ДО передачи команды прибору; wf_task берёт решение из wf_tail_plan.h и отдаёт s_tail_done после оборота.
 need web_server.c   1 '    (void)spectrogram_flush_tail(1200);'

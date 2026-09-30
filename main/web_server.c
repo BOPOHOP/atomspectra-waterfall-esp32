@@ -2150,6 +2150,9 @@ static int kv_get_array(const char *text, const char *key, long *out, int max)
     return n;
 }
 
+// LK-05 (1.2.30): httpd ждёт ответ прибора на -inf и -tc_pot? не дольше SETTINGS_RAW_WAIT_MS на КАЖДУЮ команду (было 2000 мс; ответ здорового
+// прибора — 0,1–0,5 с). Занятый/молчащий прибор — 400 через 1 с вместо 2 с: веб-сервер стоит вдвое меньше.
+#define SETTINGS_RAW_WAIT_MS 1000
 // Общая для /api/settings/backup И /api/settings/snapshot (BUG-AS-08,
 // KNOWN_ISSUES.md:77): read-only -inf/-tc_pot? прибору + ожидание ответа
 // (spectrum_get_info_raw/spectrum_get_tcpot_raw, atomspectra.h). Сама шлёт
@@ -2168,7 +2171,7 @@ static esp_err_t settings_read_raw_or_err(httpd_req_t *req,
 
     spectrum_get_info_raw(line, sizeof(line), &seq_before);
     usb_host_send_text_command("-inf");
-    for (int waited = 0; waited < 2000; waited += 50) {
+    for (int waited = 0; waited < SETTINGS_RAW_WAIT_MS; waited += 50) {
         vTaskDelay(pdMS_TO_TICKS(50));
         spectrum_get_info_raw(line, sizeof(line), &seq_after);
         if (seq_after != seq_before) break;
@@ -2182,7 +2185,7 @@ static esp_err_t settings_read_raw_or_err(httpd_req_t *req,
     spectrum_get_tcpot_raw(line, sizeof(line), &seq_before);
     usb_host_send_text_command("-tc_pot?");
     seq_after = seq_before;
-    for (int waited = 0; waited < 2000; waited += 50) {
+    for (int waited = 0; waited < SETTINGS_RAW_WAIT_MS; waited += 50) {
         vTaskDelay(pdMS_TO_TICKS(50));
         spectrum_get_tcpot_raw(line, sizeof(line), &seq_after);
         if (seq_after != seq_before) break;

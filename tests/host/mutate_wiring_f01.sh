@@ -76,4 +76,11 @@ mut M54_s01_ui_plain    ../web/system.html    's/await gget("\/api\/ota\/github\
 mut M55_lk07_sync       web_server.c          's/    ota_gh_check_async(resp, sizeof(resp));/    ota_gh_check(resp, sizeof(resp));/' 'ota_gh_check_async(resp, sizeof(resp));'
 mut M56_lk07_nodecide   ota_github_client.c   's/    ota_chk_act_t act = ota_chk_decide(s_chk_state, age_ms, OTA_GH_CHECK_KEEP_MS);/    ota_chk_act_t act = OTA_CHK_ACT_START;/' 'ota_chk_decide(s_chk_state'
 mut M57_lk07_nodone     ota_github_client.c   '/^    s_chk_state = OTA_CHK_DONE;/d' 's_chk_state = OTA_CHK_DONE;'
+# LK-05 (1.2.30): предел ожидания прибора в httpd — константа 1000 мс, оба цикла на ней
+mut M58_lk05_const      web_server.c          's/#define SETTINGS_RAW_WAIT_MS 1000/#define SETTINGS_RAW_WAIT_MS 2000/' '#define SETTINGS_RAW_WAIT_MS 1000'
+mut M59_lk05_loop       web_server.c          '0,/    for (int waited = 0; waited < SETTINGS_RAW_WAIT_MS; waited += 50) {/s//    for (int waited = 0; waited < 2000; waited += 50) {/' 'waited < SETTINGS_RAW_WAIT_MS'
+# WP5 (1.2.30): журнал потоком — счётчик байт, куски через план, нет копии всего кольца
+mut M60_wp5_nocount     debug_log_ring.c      '/^    s_bytes_total += len;/d' 's_bytes_total += len;'
+mut M61_wp5_noplan      debug_log_ring.c      's/? dbglog_chunk_plan(s_bytes_total, s_used, want, end, DBGLOG_CHUNK, \&off, \&len) : DBGLOG_CHUNK_OVERWRITTEN;/? DBGLOG_CHUNK_OK : DBGLOG_CHUNK_OVERWRITTEN;/' 'dbglog_chunk_plan(s_bytes_total'
+mut M62_wp5_wholecopy   debug_log_ring.c      's/    char \*chunk = malloc(DBGLOG_CHUNK);/    char *chunk = malloc(s_cap);/' 'char *chunk = malloc(DBGLOG_CHUNK);'
 exit $RC
