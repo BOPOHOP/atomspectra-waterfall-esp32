@@ -1293,9 +1293,11 @@ static void wf_dl_task(void *arg)
 {
     wf_dl_job_t j = *(wf_dl_job_t *)arg;
     free(arg);
-    (void)j.h(j.req);
+    esp_err_t rc = j.h(j.req);
+    __atomic_fetch_sub(j.cnt, 1, __ATOMIC_SEQ_CST);   // до complete: следующий запрос того же клиента не получит ложный 503
+    // ESP_FAIL = обрыв посреди выдачи (контракт синхронных обработчиков): закрыть сессию, клиент увидит разрыв
+    if (rc != ESP_OK) httpd_sess_trigger_close(j.req->handle, httpd_req_to_sockfd(j.req));
     httpd_req_async_handler_complete(j.req);
-    __atomic_fetch_sub(j.cnt, 1, __ATOMIC_SEQ_CST);
     vTaskDelete(NULL);
 }
 static esp_err_t wf_dl_busy(httpd_req_t *req)
@@ -1320,7 +1322,7 @@ static esp_err_t wf_dl_async(httpd_req_t *req, esp_err_t (*h)(httpd_req_t *), vo
         return wf_dl_busy(req);
     }
     j->req = cp; j->h = h; j->cnt = cnt;
-    if (xTaskCreate(wf_dl_task, "wf_dl", WF_DL_STACK, j, 5, NULL) != pdPASS) {
+    if (xTaskCreatePinnedToCore(wf_dl_task, "wf_dl", WF_DL_STACK, j, 5, NULL, 1) != pdPASS) {
         free(j);
         (void)wf_dl_busy(cp);
         httpd_req_async_handler_complete(cp);
@@ -1340,7 +1342,12 @@ static esp_err_t h_segment_async(httpd_req_t *req)     { return wf_dl_async(req,
 static volatile int s_ctl_active;
 static esp_err_t h_start_async(httpd_req_t *req)   { return wf_dl_async(req, h_start, &s_ctl_active, WF_CTL_MAX); }
 static esp_err_t h_stop_async(httpd_req_t *req)    { return wf_dl_async(req, h_stop, &s_ctl_active, WF_CTL_MAX); }
-static esp_err_t h_clear_async(httpd_req_t *req)   { return wf_dl_async(req, h_clear, &s_ctl_active, WF_CTL_MAX); }
+// Очистка не идёт поверх выдачи окна/экспорта/сегмента (раньше их сериализовал один поток httpd): иначе unlink открытого файла → «delete»
+static esp_err_t h_clear_async(httpd_req_t *req)
+{
+    if (s_dl_active) return wf_dl_busy(req);
+    return wf_dl_async(req, h_clear, &s_ctl_active, WF_CTL_MAX);
+}
 static esp_err_t h_segdel_async(httpd_req_t *req)  { return wf_dl_async(req, h_segment_delete, &s_ctl_active, WF_CTL_MAX); }
 
 void web_waterfall_register(httpd_handle_t server)

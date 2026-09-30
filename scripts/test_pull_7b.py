@@ -15,4 +15,13 @@ with tempfile.TemporaryDirectory() as d:
     assert pick_dst_7b(dst, b) is None                     # уже лежит как .dup1
     assert pick_dst_7b(dst, c) == dst + ".dup2"            # третий вариант -> .dup2
     assert open(dst, "rb").read() == a                     # оригинал не тронут
+# режим шва: идентичность сегмента — sha256 байтов, а не пара (имя, размер)
+import hashlib
+from wf_pull_client import Stitcher
+class _S:                                                  # минимум состояния Stitcher для already_ingested
+    state = {"ingested": {"seg_00000.aswf": 64}, "hashes": {"seg_00000.aswf": hashlib.sha256(a).hexdigest()}}
+assert Stitcher.already_ingested(_S, "seg_00000.aswf", a) is True       # те же байты -> вшит, только ack
+assert Stitcher.already_ingested(_S, "seg_00000.aswf", b) is False      # то же имя и размер, другие байты -> вшивать
+_S.state = {"ingested": {"seg_00000.aswf": 64}}                          # старый state без хэшей -> не доверяем
+assert Stitcher.already_ingested(_S, "seg_00000.aswf", a) is False
 print("test_pull_7b: OK")

@@ -7,4 +7,4 @@ set -e
 rm -f sdkconfig.diag
 idf.py -B build-diag-130 -D SDKCONFIG=sdkconfig.diag \
   -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.diag.defaults" build
-echo "DIAG_BUILD_RC=$?"
+echo "DIAG_BUILD_OK"   # set -e: при ошибке сборки скрипт завершился раньше

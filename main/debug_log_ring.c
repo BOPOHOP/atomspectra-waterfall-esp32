@@ -579,7 +579,7 @@ esp_err_t debug_log_ring_http_dump(httpd_req_t *req, uint32_t since)
     esp_err_t err = ESP_OK;
     for (;;) {
         size_t off = 0, len = 0;
-        if (xSemaphoreTake(s_mtx, pdMS_TO_TICKS(200)) != pdTRUE) break;
+        if (xSemaphoreTake(s_mtx, pdMS_TO_TICKS(200)) != pdTRUE) { err = ESP_FAIL; break; }   // обрыв = ESP_FAIL: клиент повторит с тем же since
         dbglog_chunk_res_t cr = (s_ring && s_gen == gen)
             ? dbglog_chunk_plan(s_bytes_total, s_used, want, end, DBGLOG_CHUNK, &off, &len) : DBGLOG_CHUNK_OVERWRITTEN;
         if (cr == DBGLOG_CHUNK_OK) {
@@ -589,7 +589,7 @@ esp_err_t debug_log_ring_http_dump(httpd_req_t *req, uint32_t since)
             if (len > first) memcpy(chunk + first, s_ring, len - first);
         }
         xSemaphoreGive(s_mtx);
-        if (cr != DBGLOG_CHUNK_OK) break;
+        if (cr != DBGLOG_CHUNK_OK) { err = ESP_FAIL; break; }   // затёрли — не «успешный» 200 с X-Log-Next-Seq на конец среза
         err = httpd_resp_send_chunk(req, chunk, len);
         if (err != ESP_OK) break;
         want += len;

@@ -3,7 +3,7 @@
 # Каждый мутант (копия main/ во временном каталоге) обязан дать ровно 1 строку WIRING FAIL; baseline — 0.
 set -u; cd "$(dirname "$0")"; T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; RC=0
 mut() {   # mut <name> <file> <sed-expr> ; "baseline" — без правки
-    rm -rf "$T/main" "$T/web"; cp -r ../../main "$T/main"; cp -r ../../web "$T/web"   # web/ — для need ../web/index.html
+    rm -rf "$T/main" "$T/web" "$T/scripts"; cp -r ../../main "$T/main"; cp -r ../../web "$T/web"; mkdir "$T/scripts"; cp ../../scripts/waterfall_n42.py ../../scripts/wf_pull_client.py "$T/scripts/"   # web/ — для need ../web/index.html
     if [ "$1" != baseline ]; then cp "$T/main/$2" "$T/o"; sed -i "$3" "$T/main/$2"
         cmp -s "$T/o" "$T/main/$2" && { echo "== $1: SED DID NOT APPLY"; RC=1; return; }; fi
     local out n; out=$(bash wiring_check.sh "$T/main"); n=$(grep -c 'WIRING FAIL' <<<"$out")
@@ -87,6 +87,13 @@ mut M62_wp5_wholecopy   debug_log_ring.c      's/    char \*chunk = malloc(DBGLO
 mut M63_lk09_noalive    web_waterfall.c       '/    if (!alive) { free(a); return; }/d' 'if (!alive) { free(a); return; }'
 mut M64_lk09_always     web_waterfall.c       's/    if (!alive) { free(a); return; }/    if (false) { free(a); return; }/' 'if (!alive) { free(a); return; }'
 mut M65_lk09_inflight   web_waterfall.c       's/#define WS_INFLIGHT_MAX  4 /#define WS_INFLIGHT_MAX  8 /' '#define WS_INFLIGHT_MAX  4'
+# Разбор кода 1.2.30
+mut M79_p21_noclose     web_waterfall.c       's/    if (rc != ESP_OK) httpd_sess_trigger_close(j.req->handle, httpd_req_to_sockfd(j.req));//' 'httpd_sess_trigger_close(j.req->handle'
+mut M80_p31_clear_over  web_waterfall.c       's/    if (s_dl_active) return wf_dl_busy(req);//' 'if (s_dl_active) return wf_dl_busy(req);'
+mut M81_p33_unpinned    web_waterfall.c       's/xTaskCreatePinnedToCore(wf_dl_task, "wf_dl", WF_DL_STACK, j, 5, NULL, 1)/xTaskCreate(wf_dl_task, "wf_dl", WF_DL_STACK, j, 5, NULL)/' 'xTaskCreatePinnedToCore(wf_dl_task'
+mut M82_p22_silent200   debug_log_ring.c      's/if (cr != DBGLOG_CHUNK_OK) { err = ESP_FAIL; break; }/if (cr != DBGLOG_CHUNK_OK) break;/' 'err = ESP_FAIL; break; }'
+mut M83_p23_notoken     ../scripts/waterfall_n42.py 's/headers={"X-CSRF-Token": tok}, //' 'headers={"X-CSRF-Token": tok}'
+mut M84_p11_sizeonly    ../scripts/wf_pull_client.py 's/return h is not None and h == hashlib.sha256(blob).hexdigest()/return h is not None/' 'h == hashlib.sha256(blob).hexdigest()'
 # WP10 (1.2.30)
 mut M76_p37_nocut       ../web/index.html     's/if(h0.length>100)h0=/if(h0.length>1000)h0=/' 'if(h0.length>100)h0='
 mut M77_p38_silent      ../web/waterfall.html 's/ }).catch(function(){oflSetMsg(t("ofl.err"),"err");});/ }).catch(function(){});/' 'oflSetMsg(t("ofl.err"),"err");});'

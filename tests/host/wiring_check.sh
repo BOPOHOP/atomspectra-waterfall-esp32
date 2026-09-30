@@ -152,12 +152,20 @@ need web_waterfall.c 1 '    reg(server, "/api/waterfall/start",  HTTP_POST, h_st
 need web_waterfall.c 1 '    reg(server, "/api/waterfall/stop",   HTTP_POST, h_stop_async);'
 need web_waterfall.c 1 '    reg(server, "/api/waterfall/clear",  HTTP_POST, h_clear_async);'
 need web_waterfall.c 1 '    reg(server, "/api/waterfall/segment/delete", HTTP_POST, h_segdel_async);'
-need web_waterfall.c 4 '&s_ctl_active, WF_CTL_MAX); }'
+need web_waterfall.c 3 '&s_ctl_active, WF_CTL_MAX); }'
 # WP10 (1.2.30): P3-7 — сначала обрезка первой строки, потом счётчик «(+N)»; P3-8 — отказ загрузки offload виден; Старт/Стоп показывают не-200
 need ../web/index.html 1 'if(ls.length>3){var h0=ls[0];if(h0.length>100)h0=h0.slice(0,100)+"…";t=h0+"  … (+"+(ls.length-1)+")"}else if(t.length>120)t=t.slice(0,120)+"…";'
 need ../web/waterfall.html 2 ' }).catch(function(){oflSetMsg(t("ofl.err"),"err");});'
 need ../web/waterfall.html 1 'if(!r.ok)lg("start: HTTP "+r.status);'
 need ../web/waterfall.html 1 'if(!r.ok)lg("stop: HTTP "+r.status);'
+# Разбор кода 1.2.30 (release-gate-1.2.30-code.md): P2-1 обрыв → закрыть сессию, P3-1 Очистка не поверх выдачи, P3-2 счётчик до complete, P3-3 ядро 1,
+# P2-2 журнал: обрыв потока = ESP_FAIL (не «успешный» 200), P2-3 клиент окна с токеном, P1-1 режим шва по sha256
+need web_waterfall.c 1 '    if (rc != ESP_OK) httpd_sess_trigger_close(j.req->handle, httpd_req_to_sockfd(j.req));'
+need web_waterfall.c 1 '    if (s_dl_active) return wf_dl_busy(req);'
+need web_waterfall.c 1 '    if (xTaskCreatePinnedToCore(wf_dl_task, "wf_dl", WF_DL_STACK, j, 5, NULL, 1) != pdPASS) {'
+need debug_log_ring.c 2 'err = ESP_FAIL; break; }'
+need ../scripts/waterfall_n42.py 1 'headers={"X-CSRF-Token": tok}'
+need ../scripts/wf_pull_client.py 1 '        return h is not None and h == hashlib.sha256(blob).hexdigest()'
 # LK-05 (1.2.30): httpd ждёт прибор на -inf / -tc_pot? не дольше 1 с на команду (было 2 с)
 need web_server.c 1 '#define SETTINGS_RAW_WAIT_MS 1000'
 need web_server.c 2 '    for (int waited = 0; waited < SETTINGS_RAW_WAIT_MS; waited += 50) {'

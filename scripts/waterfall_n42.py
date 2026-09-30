@@ -175,7 +175,9 @@ def rows_from_payload(blob, channels, stride=None):
 def mode_window(host, out, detector):
     if requests is None:
         sys.exit("pip install requests")
-    r = requests.get("http://%s/api/waterfall/window" % host, timeout=15)
+    # S-01 (1.2.30): тяжёлый GET требует X-CSRF-Token (тот же токен, что для POST)
+    tok = requests.get("http://%s/api/csrf-token" % host, timeout=5).json().get("token", "")
+    r = requests.get("http://%s/api/waterfall/window" % host, headers={"X-CSRF-Token": tok}, timeout=15)
     r.raise_for_status()
     d = r.content
     if d[:4] != b"ASWW":

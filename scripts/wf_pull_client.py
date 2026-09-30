@@ -46,6 +46,7 @@ import time
 import urllib.request
 import urllib.error
 import zlib
+import hashlib
 from array import array
 
 if sys.stdout is not None:
@@ -219,8 +220,11 @@ class Stitcher:
             os.fsync(f.fileno())
         os.replace(tmp, self.state_path)
 
-    def already_ingested(self, name, want_bytes):
-        return self.state["ingested"].get(name) == want_bytes
+    def already_ingested(self, name, blob):
+        """#DATA-7b (режим шва): сегмент считается вшитым только при совпадении байтов (sha256), не пары (имя, размер):
+        после Очистки плата нумерует сегменты заново, и другой сегмент получает то же имя и размер."""
+        h = self.state.get("hashes", {}).get(name)
+        return h is not None and h == hashlib.sha256(blob).hexdigest()
 
     def append_segment(self, name, blob):
         """Дозаписать строки сегмента в единый файл.
@@ -272,7 +276,7 @@ class Stitcher:
             _, fstride, fch = self._file_header()
             if fch != ch or fstride != stride:
                 self._rotate_for_format(ch, stride, fch, fstride)
-                if self.already_ingested(name, len(blob)):
+                if self.already_ingested(name, blob):
                     # уже вшит в новый файл (рестарт после ротации, ack платы не
                     # прошёл) — строки не дублируем, снаружи останется только ack
                     return 0, None, None
@@ -306,6 +310,7 @@ class Stitcher:
                 os.fsync(f.fileno())
 
         self.state["ingested"][name] = len(blob)
+        self.state.setdefault("hashes", {})[name] = hashlib.sha256(blob).hexdigest()
         self.state["rows"] = self.state.get("rows", 0) + n_rows
         self.state["dur_sum"] = self.state.get("dur_sum", 0) + dur
         if hdr.get("started_at"):
@@ -420,19 +425,19 @@ def fetch_one_stitch(host, stitcher, seg, token):
     name = seg["name"]
     want = int(seg["bytes"])
 
-    if not stitcher.already_ingested(name, want):
-        try:
-            blob = http_get(host + "/api/waterfall/segment?name=" + name, binary=True)
-        except (urllib.error.URLError, urllib.error.HTTPError) as e:
-            return f"error:get:{e}", 0, None, None
-        if len(blob) != want:
-            return "sizemismatch", 0, None, None   # не удаляем — заберём в след. проходе
+    try:
+        blob = http_get(host + "/api/waterfall/segment?name=" + name, binary=True)
+    except (urllib.error.URLError, urllib.error.HTTPError) as e:
+        return f"error:get:{e}", 0, None, None
+    if len(blob) != want:
+        return "sizemismatch", 0, None, None       # не удаляем — заберём в след. проходе
+    if not stitcher.already_ingested(name, blob):
         try:
             rows, gap, diag = stitcher.append_segment(name, blob)
         except (ValueError, OSError) as e:
             return f"error:stitch:{e}", 0, None, None
     else:
-        rows, gap, diag = 0, None, None           # уже вшит; остался только ack
+        rows, gap, diag = 0, None, None           # те же байты уже вшиты; остался только ack
 
     try:
         ok = ack_delete(host, name, token)
