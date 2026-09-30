@@ -39,7 +39,7 @@ wait. Found by an external code audit (Codeaudit, 29.09), moved to 1.2.30 by the
 Applies only when the debug log ring is enabled (it is off by default).
 - `GET /api/debug/log` copies the whole filled ring into memory even when only new lines are requested
   (`since`): up to 384 KB, plus the response send buffer (up to 64 KB per the lwIP setting). Measured on
-  30.09 on 1.2.29: a 216 758 B download lowered `min_free_heap` by 308 520 B.
+  30.09 on 1.2.29: a 216 758 B download with 951 068 B free brought the `min_free_heap` mark down to 642 548 B (peak use 308 520 B).
 - If the download coincides with the spectrum autosave or with web interface load, free memory briefly
   drops below 512 KB (measured: 462 632 B). If memory runs out, the request gets 500 `oom`
   (`debug_log_ring.c:532`) and the rest of the board keeps working.
@@ -285,14 +285,14 @@ then a "Reset" was not confirmed, the pulses of that interval are still lost (wi
 - Segment upload to a server (push): a short file read ends the attempt with error `-16` instead of
   sending an incomplete body.
 - The reboot when falling back to the field access point runs in a separate task with enough stack.
-- Firmware update (manual and from GitHub) occasionally rejected a valid image with `set_boot_partition`:
+- Firmware update occasionally rejected a valid image with `set_boot_partition`:
   the image passed the full check in `esp_ota_end()`, but the second check when selecting the boot partition
-  reported `Checksum failed` (1 failure in 25 OTAs in the test logs; repeating the same OTA succeeded). This
+  reported `Checksum failed` (1 failure in 16 OTAs in the test logs, on a manual update; repeating the same OTA succeeded). This
   second check is now retried up to 3 times with a 200 ms pause; an `esp_ota_end()` failure is still final
   (#OTA-VR, `main/ota_busy.h`).
-- Stack headroom of the TCP bridge receive task is 2556 B instead of 508 B. JSON objects moved to PSRAM.
+- Stack headroom of the TCP bridge receive task is 2528–2556 B instead of 508 B. JSON objects moved to PSRAM.
   Allocation failure counter — `alloc_fail` in `/api/system`. The minimum internal RAM (`int_min`) under
-  load still briefly drops to a few hundred bytes (measured 29–30.09: 91–707 B), with no allocation
+  load still briefly drops to tens or hundreds of bytes in some runs (lowest measured 29–30.09: 91–707 B, 3.5–7.6 KB in other runs), with no allocation
   failures (`alloc_fail` = 0).
 
 ### issue #58: spectrum not shown after a reflash or reboot during acquisition — FIXED (v1.2.29)
@@ -302,7 +302,7 @@ shown until the instrument itself reset its acquisition time. A "Reset" that the
 perform (the command did not arrive or was rejected) froze the spectrum the same way.
 
 **Now.** After a "Reset" the board waits for the instrument's confirmation (acquisition time
-restarting from zero) for about 10 s after the first rejected packet, 11–13 s after the command in practice (`SPECTRUM_RESET_CONFIRM_TIMEOUT_S`,
+restarting from zero) for about 10 s after the first rejected packet, 11–13 s after the command by calculation (`SPECTRUM_RESET_CONFIRM_TIMEOUT_S`,
 `main/spectrum_base_plan.h:172`), then shows the instrument's acquisition, increments
 `reset_unconfirmed` (`/api/status`, `/api/spectrum/meta.json`) and writes a line to the main page
 log. The first commit after a reset is accepted only on a time packet received after the reset

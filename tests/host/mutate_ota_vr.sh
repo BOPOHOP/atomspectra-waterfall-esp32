@@ -35,5 +35,6 @@ mut V1_no_break '/if (err != validate_failed) break;/d' 'test_boot_retry_policy'
 mut V2_no_retry 's/\*calls < tries; )/*calls < 1; )/' 'test_boot_retry_policy'
 mut V3_retry_any 's/if (err != validate_failed) break;/if (err == 0) break;/' 'test_boot_retry_policy'
 mut V4_calls_lost 's/        (\*calls)++;/        ;/' 'test_boot_retry_policy'
+mut V5_err_init 's/    int err = validate_failed;/    int err = 0;/' 'test_boot_retry_policy'
 
 rm -f test_runner; exit $RC

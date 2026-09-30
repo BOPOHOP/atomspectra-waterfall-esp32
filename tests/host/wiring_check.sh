@@ -8,6 +8,10 @@ need() {   # need <file> <count> <fixed string>
     local n; n=$(grep -cF -- "$3" "$1")
     if [ "$n" -ne "$2" ]; then echo "WIRING FAIL $1: '$3' x$n (need $2)"; RC=1; fi
 }
+line() {   # line <file> <count> <строка кода целиком, без отступа> — не подстрока и не в комментарии (разбор pass4 P3-1)
+    local n; n=$(awk -v s="$3" '{c=$0; sub(/\r$/,"",c); sub(/^[ \t]+/,"",c)} c == s {n++} END{print n+0}' "$1")
+    if [ "$n" -ne "$2" ]; then echo "WIRING FAIL $1: line '$3' x$n (need $2)"; RC=1; fi
+}
 need spectrum.c    1 'spectrum_stat_tag_stamp(&s_stat_stage.tag, s_reset_gen, s_usb_session);'
 need spectrum.c    1 'spectrum_stat_tag_usable(&s_stat_stage.tag, s_usb_session);'
 need spectrum.c    1 'spectrum_reset_gate_step(&s_reset_gate,'
@@ -60,14 +64,21 @@ need web_server.c  4 'if (!json) httpd_resp_set_status(req, "503 Service Unavail
 need web_waterfall.c 1 'if (!out) httpd_resp_set_status(req, "503 Service Unavailable");'   # pass3 F-09: h_offload_get
 need wf_offload.c  1 'if (short_rd) { result = -16; goto done; }'
 # #OTA-VR: оба пути OTA ставят загрузочный раздел через повтор проверки; отказ esp_ota_end() — окончательный
-need web_server.c  1 'err = ota_set_boot_verified(update);'
+line web_server.c  1 'err = ota_set_boot_verified(update);'
 need web_server.c  0 'esp_ota_set_boot_partition('
-need ota_github_client.c 1 'if (ota_set_boot_verified(update) != ESP_OK) {'
+line ota_github_client.c 1 'if (ota_set_boot_verified(update) != ESP_OK) {'
+line ota_github_client.c 1 'install_fail(0, "set_boot_partition_failed"); goto done;'
 need ota_github_client.c 0 'esp_ota_set_boot_partition('
-need ota_github_client.c 1 'if (esp_ota_end(ota) != ESP_OK) { install_fail(0, "ota_end_failed"); goto done; }'
-need ota_busy.c    1 'ota_boot_retry_pure(set_boot_cb, &b, 3, ESP_ERR_OTA_VALIDATE_FAILED, &calls);'
-oe=$(awk '{c=$0; sub(/\r$/,"",c); sub(/^[ \t]+/,"",c)} p ~ /^err = esp_ota_end\(ota\);/ {n++; if (c == "if (err != ESP_OK) {") a++}
-  {p=c} END{print (n == 1 && a == 1) ? "ok" : "bad " n+0 "/" a+0}' web_server.c)
+line ota_github_client.c 1 'if (esp_ota_end(ota) != ESP_OK) { install_fail(0, "ota_end_failed"); goto done; }'
+line ota_busy.c    1 'esp_err_t err = ota_boot_retry_pure(set_boot_cb, &b, 3, ESP_ERR_OTA_VALIDATE_FAILED, &calls);'
+line ota_busy.c    1 'return esp_ota_set_boot_partition(b->p);'                  # pass4 P2-1: сам вызов IDF
+line ota_busy.c    1 'if (b->n++) vTaskDelay(pdMS_TO_TICKS(200));'               # пауза между повторами
+# отказ esp_ota_end(): сразу за вызовом — if (err != ESP_OK) {, в его теле — return ESP_FAIL; (pass4 P3-1, E4)
+oe=$(awk '{c=$0; sub(/\r$/,"",c); sub(/^[ \t]+/,"",c)}
+  st == 2 && c == "return ESP_FAIL;" {r++}  st == 2 && c == "}" {st = 0}
+  st == 1 {st = (c == "if (err != ESP_OK) {") ? 2 : 0; if (st == 2) a++}
+  c == "err = esp_ota_end(ota);" {n++; st = 1}
+  END{print (n == 1 && a == 1 && r == 1) ? "ok" : "bad " n+0 "/" a+0 "/" r+0}' web_server.c)
 [ "$oe" = ok ] || { echo "WIRING FAIL web_server.c: esp_ota_end() failure is not final (#OTA-VR, $oe)"; RC=1; }
 # #AUD-RST: неподтверждённый Сброс — опора до Сброса сохраняется и проверяется в wf_task
 need spectrogram.c 1 'memcpy(s_pre_rst_bins, s_prev, WF_CHANNELS * sizeof(uint32_t));'

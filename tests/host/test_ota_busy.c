@@ -100,6 +100,10 @@ static void test_boot_retry_policy(void)
     CHECK(run_retry((const int[]){ VF, VF, VF, 0 }, 4, &calls) == VF && calls == 3);
     CHECK(run_retry((const int[]){ OTHER, 0 }, 2, &calls) == OTHER && calls == 1);
     CHECK(run_retry((const int[]){ VF, OTHER }, 2, &calls) == OTHER && calls == 2);
+    // pass4 P3-2: tries = 0 — ни одного вызова, итог «не прошёл проверку» (безопасный отказ); ctx доходит до set()
+    fake_t f0 = { (const int[]){ 0 }, 1, 0 };
+    CHECK(ota_boot_retry_pure(fake_set, &f0, 0, VF, &calls) == VF && calls == 0 && f0.i == 0);
+    CHECK(ota_boot_retry_pure(fake_set, &f0, 3, VF, &calls) == 0 && calls == 1 && f0.i == 1);
 }
 
 void ota_busy_suite(void)

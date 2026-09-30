@@ -6,9 +6,11 @@ mut() {   # mut <name> <file> <sed-expr> ; "baseline" — без правки
     rm -rf "$T/main" "$T/web"; cp -r ../../main "$T/main"; cp -r ../../web "$T/web"   # web/ — для need ../web/index.html
     if [ "$1" != baseline ]; then cp "$T/main/$2" "$T/o"; sed -i "$3" "$T/main/$2"
         cmp -s "$T/o" "$T/main/$2" && { echo "== $1: SED DID NOT APPLY"; RC=1; return; }; fi
-    local n; n=$(bash wiring_check.sh "$T/main" | grep -c 'WIRING FAIL')
+    local out n; out=$(bash wiring_check.sh "$T/main"); n=$(grep -c 'WIRING FAIL' <<<"$out")
     local want=1; [ "$1" = baseline ] && want=0
-    echo "== $1: $n FAIL (need $want)"; [ "$n" -eq "$want" ] || RC=1
+    # 4-й аргумент (pass3 F-03 / pass4 P3-3): подстрока сообщения — краснеть обязана ИМЕННО эта проверка
+    local tag=""; if [ -n "${4:-}" ] && ! grep 'WIRING FAIL' <<<"$out" | grep -qF -- "$4"; then tag=" WRONG CHECK (want: $4)"; RC=1; fi
+    echo "== $1: $n FAIL (need $want)$tag"; [ "$n" -eq "$want" ] || RC=1
 }
 mut baseline         -                    ''
 mut M1_manual_ota    web_server.c         '/spectrogram_prepare_reboot();$/d'
@@ -34,20 +36,26 @@ mut M20_busy_wait    spectrogram.c        's/i < 200 \&\& s_wf_busy; i++/i < 10;
 mut M21_busy_set     spectrogram.c        '/s_wf_busy = true;    \/\* до проверки recording/d'
 mut M22_cjson_try    main.c               '/if (t_cjson_try) return;/d'
 mut M23_rx_delete    tcp_bridge.c         's/retry in 1 s"); vTaskDelay(pdMS_TO_TICKS(1000)); }/"); vTaskDelete(NULL); return; }/'
-mut M24_barrier_set  spectrogram.c        '/s_wf_busy = true;    \/\* до проверки/{n;d}'
-mut M25_barrier_wait spectrogram.c        '$!N;s/ *__sync_synchronize();\n\( *for (int i = 0; i < 200\)/\1/;P;D'
-mut M26_css_log      ../web/index.html    's/\.row + \.row, #log + \.row{/.row + .row{/'
+mut M24_barrier_set  spectrogram.c        '/s_wf_busy = true;    \/\* до проверки/{n;d}' 'Dekker barrier'
+mut M25_barrier_wait spectrogram.c        '$!N;s/ *__sync_synchronize();\n\( *for (int i = 0; i < 200\)/\1/;P;D' 'Dekker barrier'
+mut M26_css_log      ../web/index.html    's/\.row + \.row, #log + \.row{/.row + .row{/' '#log + .row{'
 # #OTA-VR: повтор проверки образа в обоих путях OTA, отказ esp_ota_end() окончателен
-mut M27_web_no_retry web_server.c         's/err = ota_set_boot_verified(update);/err = ESP_OK;/'
-mut M28_web_direct   web_server.c         '$a static void mut28(const esp_partition_t *p) { esp_ota_set_boot_partition(p); }'
-mut M29_gh_no_retry  ota_github_client.c  's/if (ota_set_boot_verified(update) != ESP_OK) {/if (0) {/'
-mut M30_gh_end_soft  ota_github_client.c  's/if (esp_ota_end(ota) != ESP_OK) { install_fail/if (esp_ota_end(ota) != ESP_OK \&\& 0) { install_fail/'
-mut M31_retry_once   ota_busy.c           's/\&b, 3, ESP_ERR_OTA_VALIDATE_FAILED/\&b, 1, ESP_ERR_OTA_VALIDATE_FAILED/'
-mut M32_web_end_soft web_server.c         '/err = esp_ota_end(ota);/{n;s/if (err != ESP_OK) {/if (0) {/}'
+mut M27_web_no_retry web_server.c         's/err = ota_set_boot_verified(update);/err = ESP_OK;/' "line 'err = ota_set_boot_verified(update);'"
+mut M28_web_direct   web_server.c         '$a static void mut28(const esp_partition_t *p) { esp_ota_set_boot_partition(p); }' "'esp_ota_set_boot_partition(' x1"
+mut M29_gh_no_retry  ota_github_client.c  's/if (ota_set_boot_verified(update) != ESP_OK) {/if (0) {/' "line 'if (ota_set_boot_verified(update) != ESP_OK) {'"
+mut M30_gh_end_soft  ota_github_client.c  's/if (esp_ota_end(ota) != ESP_OK) { install_fail/if (esp_ota_end(ota) != ESP_OK \&\& 0) { install_fail/' 'ota_end_failed'
+mut M31_retry_once   ota_busy.c           's/\&b, 3, ESP_ERR_OTA_VALIDATE_FAILED/\&b, 1, ESP_ERR_OTA_VALIDATE_FAILED/' 'ota_boot_retry_pure(set_boot_cb'
+mut M32_web_end_soft web_server.c         '/err = esp_ota_end(ota);/{n;s/if (err != ESP_OK) {/if (0) {/}' 'esp_ota_end() failure is not final'
 # Разбор pass3 F-02 / F-09
-mut M33_busy_clear   spectrogram.c        '/s_wf_busy = false;   \/\* LK-16/d'
-mut M34_ref_pending  spectrogram.c        '/        if (s_ref_pending) {/{n;d}'
-mut M35_alias        spectrogram.c        's/    s_pre_rst_bins = s_ref_bins;/    s_pre_rst_bins = NULL;/'
-mut M36_order        spectrogram.c        '/memcpy(s_pre_rst_bins, s_prev, WF_CHANNELS \* sizeof(uint32_t));/d; /        if (s_ref_pending) {/i\            memcpy(s_pre_rst_bins, s_prev, WF_CHANNELS * sizeof(uint32_t));'
-mut M37_offload_503  web_waterfall.c      '/if (!out) httpd_resp_set_status(req, "503 Service Unavailable");/d'
+mut M33_busy_clear   spectrogram.c        '/s_wf_busy = false;   \/\* LK-16/d' 's_wf_busy = false;'
+mut M34_ref_pending  spectrogram.c        '/        if (s_ref_pending) {/{n;d}' 's_ref_pending not cleared'
+mut M35_alias        spectrogram.c        's/    s_pre_rst_bins = s_ref_bins;/    s_pre_rst_bins = NULL;/' 's_pre_rst_bins = s_ref_bins;'
+mut M36_order        spectrogram.c        '/memcpy(s_pre_rst_bins, s_prev, WF_CHANNELS \* sizeof(uint32_t));/d; /        if (s_ref_pending) {/i\            memcpy(s_pre_rst_bins, s_prev, WF_CHANNELS * sizeof(uint32_t));' 'pre-reset capture precedes'
+mut M37_offload_503  web_waterfall.c      '/if (!out) httpd_resp_set_status(req, "503 Service Unavailable");/d' 'web_waterfall.c'
+# pass4 P2-1 / P3-1: сам вызов IDF и пауза в ota_busy.c; вызов закомментирован; отказ esp_ota_end без return; тело отказа GitHub-ветки
+mut M38_setboot_noop ota_busy.c          's/return esp_ota_set_boot_partition(b->p);/return 0;/' 'return esp_ota_set_boot_partition(b->p);'
+mut M39_no_pause    ota_busy.c           's/if (b->n++) vTaskDelay(pdMS_TO_TICKS(200));/b->n++;/' 'vTaskDelay(pdMS_TO_TICKS(200));'
+mut M40_web_comment web_server.c         's/    err = ota_set_boot_verified(update);/    \/\/ err = ota_set_boot_verified(update);/' "line 'err = ota_set_boot_verified(update);'"
+mut M41_end_no_ret  web_server.c         '/"ota_end: invalid image");/{n;d}' 'esp_ota_end() failure is not final'
+mut M42_gh_fail_nop ota_github_client.c  's/install_fail(0, "set_boot_partition_failed"); goto done;/;/' 'set_boot_partition_failed'
 exit $RC
