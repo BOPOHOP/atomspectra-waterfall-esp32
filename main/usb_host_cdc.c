@@ -966,6 +966,7 @@ static int send_text_command_raw(const char *cmd)
     for (size_t i = 0; i < in_len; i++) shproto_packet_add_data(&pkt, (uint8_t)cmd[i]);
     shproto_packet_add_data(&pkt, '\0');
     shproto_packet_complete(&pkt);
+    if (cmd_is_device_reset(cmd0)) (void)spectrogram_flush_tail(1200);   // #RST-TAIL: хвост строкой водопада, ДО -rst
     int rc = usb_host_cdc_send(pkt.data, pkt.len);
     if (rc == 0) {
         DIAG_LOCK();

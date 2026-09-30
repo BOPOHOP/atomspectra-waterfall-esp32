@@ -551,6 +551,7 @@ static esp_err_t handle_reset(httpd_req_t *req)
     // У-2: sent=false — прибор -rst не получил (не подключён/ошибка USB); сброс
     // платы выполнен. Н-4/Н-Д1: -rst дошлётся на ближайшем коннекте, если к тому
     // времени набор прибора не принят по таймауту гейта #58 и не было нового Сброса.
+    (void)spectrogram_flush_tail(1200);   // #RST-TAIL: хвост с последней строки до Сброса — строкой водопада, ДО -rst
     bool sent = usb_host_cdc_send(pkt.data, pkt.len) == 0;
     if (sent) {
         spectrum_reset();

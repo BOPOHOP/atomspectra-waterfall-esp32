@@ -58,4 +58,13 @@ mut M39_no_pause    ota_busy.c           's/if (b->n++) vTaskDelay(pdMS_TO_TICKS
 mut M40_web_comment web_server.c         's/    err = ota_set_boot_verified(update);/    \/\/ err = ota_set_boot_verified(update);/' "line 'err = ota_set_boot_verified(update);'"
 mut M41_end_no_ret  web_server.c         '/"ota_end: invalid image");/{n;d}' 'esp_ota_end() failure is not final'
 mut M42_gh_fail_nop ota_github_client.c  's/install_fail(0, "set_boot_partition_failed"); goto done;/;/' 'set_boot_partition_failed'
+# #RST-TAIL (1.2.30): вызов перед -rst в трёх точках, порядок до передачи, решение wf_task, отдача done, пробуждение
+mut M43_tail_web_del    web_server.c     '/^    (void)spectrogram_flush_tail(1200);/d' "(void)spectrogram_flush_tail(1200);'"
+mut M44_tail_tcp_del    tcp_bridge.c     '/^        if (saw_rst) (void)spectrogram_flush_tail(1200);/d' 'if (saw_rst) (void)spectrogram_flush_tail(1200);'
+mut M45_tail_usb_del    usb_host_cdc.c   '/^    if (cmd_is_device_reset(cmd0)) (void)spectrogram_flush_tail(1200);/d' 'if (cmd_is_device_reset(cmd0)) (void)spectrogram_flush_tail(1200);'
+mut M46_tail_web_cmt    web_server.c     's/^    (void)spectrogram_flush_tail(1200);/    \/\/ (void)spectrogram_flush_tail(1200);/' "(void)spectrogram_flush_tail(1200);'"
+mut M47_tail_web_after  web_server.c     '/^    (void)spectrogram_flush_tail(1200);/d; /bool sent = usb_host_cdc_send(pkt.data/a\    (void)spectrogram_flush_tail(1200);' 'must precede usb_host_cdc_send in handle_reset'
+mut M48_tail_noforce    spectrogram.c    's/wf_tail_should_row(tail_force, now_time/wf_tail_should_row(false, now_time/' 'wf_tail_should_row(tail_force'
+mut M49_tail_nodone     spectrogram.c    '/^        if (s_tail_inflight) { s_tail_inflight = false;/d' 's_tail_inflight = false; if (s_tail_done)'
+mut M50_tail_nowake     spectrogram.c    '/^    xSemaphoreGive(s_commit_sig);            \/\/ разбудить wf_task вне очереди/d' 'разбудить wf_task вне очереди'
 exit $RC

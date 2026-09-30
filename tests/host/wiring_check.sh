@@ -118,6 +118,21 @@ if [ -f ../web/index.html ]; then
     need ../web/index.html 1 'function lg(m){if(!logEl)return;logEl.style.display="";'
     need ../web/index.html 1 '.row + .row, #log + .row{'                     # pass2 C: pre#log рвал .row + .row
 fi
+# #RST-TAIL (1.2.30): строка водопада перед -rst — вызов в трёх точках отправки (отступ в строке: закомментированный вызов не считается)
+# и ДО передачи команды прибору; wf_task берёт решение из wf_tail_plan.h и отдаёт s_tail_done после оборота.
+need web_server.c   1 '    (void)spectrogram_flush_tail(1200);'
+need tcp_bridge.c   1 '        if (saw_rst) (void)spectrogram_flush_tail(1200);'
+need usb_host_cdc.c 1 '    if (cmd_is_device_reset(cmd0)) (void)spectrogram_flush_tail(1200);'
+need spectrogram.c  1 '        if (!wf_tail_should_row(tail_force, now_time, s_prev_time, iv)) continue;'
+need spectrogram.c  1 '        if (tail_force) { s_tail_force = false; s_tail_inflight = true; }'
+need spectrogram.c  1 '        if (s_tail_inflight) { s_tail_inflight = false; if (s_tail_done) xSemaphoreGive(s_tail_done); }'
+need spectrogram.c  1 '    xSemaphoreGive(s_commit_sig);            // разбудить wf_task вне очереди'
+rt=$(awk '/^    \(void\)spectrogram_flush_tail/{f=FNR} f && FNR==f+1 && /bool sent = usb_host_cdc_send\(pkt\.data/{ok=1} END{print (!f || ok) ? "ok" : "bad"}' web_server.c)
+[ "$rt" = ok ] || { echo "WIRING FAIL web_server.c: spectrogram_flush_tail must precede usb_host_cdc_send in handle_reset ($rt)"; RC=1; }
+rt=$(awk '/^        if \(saw_rst\) \(void\)spectrogram_flush_tail/{f=FNR} f && FNR==f+1 && /int rc = usb_host_cdc_send\(buf, n\);/{ok=1} END{print (!f || ok) ? "ok" : "bad"}' tcp_bridge.c)
+[ "$rt" = ok ] || { echo "WIRING FAIL tcp_bridge.c: spectrogram_flush_tail must precede usb_host_cdc_send ($rt)"; RC=1; }
+rt=$(awk '/^    if \(cmd_is_device_reset\(cmd0\)\) \(void\)spectrogram_flush_tail/{f=FNR} f && FNR==f+1 && /int rc = usb_host_cdc_send\(pkt\.data, pkt\.len\);/{ok=1} END{print (!f || ok) ? "ok" : "bad"}' usb_host_cdc.c)
+[ "$rt" = ok ] || { echo "WIRING FAIL usb_host_cdc.c: spectrogram_flush_tail must precede usb_host_cdc_send ($rt)"; RC=1; }
 # F-09 (класс): результат cJSON_PrintUnformatted проверен на NULL в 3 строках после вызова (все *.c)
 f09=$(awk 'match($0,/char \*[A-Za-z_]+ = cJSON_PrintUnformatted\(/){v=substr($0,RSTART+6,RLENGTH-6); sub(/ =.*/,"",v); k=3; want=FILENAME":"FNR; next}
   k>0 { if (index($0,"!" v) || index($0, v " ?")) k=0; else if (--k==0) print want }' ./*.c)
