@@ -360,6 +360,20 @@ def ack_delete(host, name, token):
     return st == 200
 
 
+def pick_dst_7b(dst, blob):
+    """#DATA-7b: куда писать blob. None — файл с теми же байтами уже есть (писать не нужно).
+    Иначе dst, а если он занят другим содержимым — dst.dup1, dst.dup2, ... (первый свободный/равный)."""
+    cand = dst
+    n = 0
+    while os.path.exists(cand):
+        with open(cand, "rb") as f:
+            if f.read() == blob:
+                return None
+        n += 1
+        cand = f"{dst}.dup{n}"
+    return cand
+
+
 def fetch_one_filemode(host, out_dir, seg, token):
     """Старый режим (--no-stitch): сегмент отдельным файлом в out_dir.
     Возвращает 'ok' | 'sizemismatch' | 'error:<...>'."""
@@ -367,15 +381,18 @@ def fetch_one_filemode(host, out_dir, seg, token):
     want = int(seg["bytes"])
     dst = os.path.join(out_dir, name)
 
-    # идемпотентность: если файл уже забран целиком, повторно не качаем, но ack шлём
-    have = os.path.getsize(dst) if os.path.exists(dst) else -1
-    if have != want:
-        try:
-            blob = http_get(host + "/api/waterfall/segment?name=" + name, binary=True)
-        except (urllib.error.URLError, urllib.error.HTTPError) as e:
-            return f"error:get:{e}"
-        if len(blob) != want:
-            return "sizemismatch"                 # не удаляем на плате — заберём позже
+    # #DATA-7b (1.2.30): совпадение (имя, размер) — не доказательство того же содержимого: после Очистки/
+    # перезапуска плата нумерует сегменты заново, другой сегмент получал то же имя и размер -> «уже забран»,
+    # ack, и плата удаляла непринятые данные. Теперь всегда качаем и сравниваем байты; иное содержимое
+    # пишется в .dupN, ничего не затирается.
+    try:
+        blob = http_get(host + "/api/waterfall/segment?name=" + name, binary=True)
+    except (urllib.error.URLError, urllib.error.HTTPError) as e:
+        return f"error:get:{e}"
+    if len(blob) != want:
+        return "sizemismatch"                     # не удаляем на плате — заберём позже
+    dst = pick_dst_7b(dst, blob)
+    if dst is not None:
         tmp = dst + ".part"
         with open(tmp, "wb") as f:
             f.write(blob)
