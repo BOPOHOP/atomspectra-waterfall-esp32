@@ -111,7 +111,7 @@ Then a future reset can be detected and both snapshots handed to the manufacture
 snapshot" button on the "Service" page — `POST /api/settings/snapshot` saves both replies
 (`-inf` and `-tc_pot?`) to LittleFS with a timestamp; `GET /api/settings/snapshot` returns
 the last saved snapshot WITHOUT re-querying the instrument (important if the DSP tuning is
-broken right now — a POST would not overwrite it with a bad read). `main/web_server.c:2072-2238`
+broken right now — a POST would not overwrite it with a bad read). `main/web_server.c` (`handle_settings_snapshot`)
 (`handle_settings_snapshot`, `handle_settings_snapshot_get`), `web/service.html` and
 `demo/service.html` (button + "Download last snapshot" link). The root defect itself (the
 instrument zeroing its own tuning) remains an instrument limitation — the snapshot only
@@ -136,8 +136,8 @@ The instrument serial number (`serial_number`) stays empty after connection.
 The serial number is parsed EXCLUSIVELY from the `-cal` dump (40 lines: calibration + CRC +
 serial on line 39, 0-indexed) — NOT from `-inf`. `-inf` and `-cal` are told apart by content
 (`-inf` carries the `VERSION ` key, `-cal` does not) and are handled by the same function
-`spectrum_process_info_response()`; the serial branch is `main/spectrum.c:558-573`, gated by
-`if (!is_inf)` — `main/spectrum.c:474`. The empty serial number is caused by the instrument's
+`spectrum_process_info_response()`; the serial branch is `main/spectrum.c`, gated by
+`if (!is_inf)` — `main/spectrum.c`. The empty serial number is caused by the instrument's
 reply to `-cal` (not `-inf`) being shorter than 40 lines; the calibration (lines 0–10 of the
 same dump) is still read correctly.
 
@@ -145,7 +145,7 @@ same dump) is still read correctly.
 acquisition (#AWF-12) sends `-cal` as long as no calibration is set — if it succeeds once,
 the serial number gets filled the same way. The mitigation is one-shot: once
 `spectrum_calibration_is_missing()` turns false, further starts stop requesting `-cal`
-(`main/usb_host_cdc.c:982-983`, `main/calib_autoread.h:99-109`), so the serial number loses
+(`main/usb_host_cdc.c`, `main/calib_autoread.h:99-109`), so the serial number loses
 its automatic chances to update until the calibration is cleared again. Auto-read does not
 fire at all for starts over the TCP bridge (see F3 below). The root cause (an instrument
 that genuinely truncates its `-cal` reply) is not verifiable by static reading — it needs
@@ -219,9 +219,9 @@ arrived" requires `/api/device` (`calib_set`) and the command log.
 `/api/device`; now the "Read" button on the "Spectrum" and "Service" pages compares the
 `calib_reject_seq` counter (`/api/device`) before and ~900 ms after the request, and if it
 grew, logs `cal.readEmpty` ("device returned an empty calibration (zeros/NaN) — board
-calibration unchanged") to the log panel. The counter is `main/spectrum.c:90,548,1196`
+calibration unchanged") to the log panel. The counter is `main/spectrum.c` (`s_calib_reject_seq`)
 (bumped under the same `SPEC_LOCK` as the rejection branch itself), the reply field is
-`main/web_server.c:1746`, the UI read is `web/index.html:690-698`, `web/service.html:337-344`
+`main/web_server.c` (`calib_reject_seq`), the UI read is `web/index.html` (`cal.readEmpty`), `web/service.html`
 (+ demo mirrors). The behavior itself (do not overwrite) is unchanged — only visibility was
 added.
 
@@ -441,12 +441,12 @@ not the one just added — the search would have started in the wrong place (the
 that already cost an incident at the old limit of 45).
 
 As of v1.2.28 all 4 registration sites check the return value and log the failure:
-`ESP_LOGE(TAG, "issue#52b: register '%s' failed: %s", ...)` — `main/web_server.c:2786`,
-`main/web_waterfall.c:1253,1298`, `main/wifi_manager.c:284`. `config.max_uri_handlers` was
+`ESP_LOGE(TAG, "issue#52b: register '%s' failed: %s", ...)` — `main/web_server.c`,
+`main/web_waterfall.c` (`reg()`), `main/wifi_manager.c`. `config.max_uri_handlers` was
 recounted and raised from the old 80 (against 73 actual) to **90** against **79** actual
-routes (headroom +11) — `main/web_server.c:2628,2670` (`WEB_SERVER_URI_MAX`); a
+routes (headroom +11) — `main/web_server.c` (`WEB_SERVER_URI_MAX`); a
 `_Static_assert` there keeps `uris[]` from exceeding the limit at compile time
-(`:2769-2770`).
+см. `WEB_SERVER_URI_MAX`.
 
 ### #AWF-12b: theoretical instrument-response packet sequences (R2/R3) — FIXED (v1.2.28)
 
@@ -494,7 +494,7 @@ As of v1.2.28 (`425b4df`, sweep-A) the n42 export streams FINALIZED flash segmen
 ~760 rows) merged with the current session's ring sections by global row index — the plan is
 built by a pure `wf_exp_plan()` (`main/wf_export_plan.h`), the handler is `h_export_n42`
 (`main/web_waterfall.c:651`), the atomic registry snapshot is
-`spectrogram_export_snapshot` (`main/spectrogram.c:2012`). No row is ever emitted twice;
+`spectrogram_export_snapshot` (`main/spectrogram.c` (`spectrogram_export_snapshot`)). No row is ever emitted twice;
 `?ring=1` keeps the old behavior (ring only, ≤256 rows) — `main/web_waterfall.c:637-658`.
 The export-time cost on a full flash (tens of seconds, httpd fully busy, same class as
 before when serving one segment) and the single current-calibration-per-file limitation
@@ -512,7 +512,7 @@ correctly).
 As of v1.2.28 (`425b4df`, sweep-A) a separate "read pin" was added (`main/wf_seg_pin.h`, a
 4-slot state machine under a spinlock, not under `s_fs_lock`, which the writer holds for
 seconds) — `spectrogram_seg_pin_read()`/`spectrogram_seg_unpin_read()`
-(`main/spectrogram.c:375-382`). `h_segment` (`main/web_waterfall.c:919-971`) pins the
+(`main/spectrogram.c`). `h_segment` (`main/web_waterfall.c:919-971`) pins the
 segment before `fopen` and releases it on every exit path (404, out-of-memory, client
 disconnect, success); a pin failure returns 503 + `Retry-After: 1`. Every deleting path
 (`seg_oldest_completed`, `make_room`, `offload_claim`/`offload_done`, `seg_delete`,
@@ -836,7 +836,7 @@ boot-autostart) runs **before** `init_sntp()`. `spectrogram_start()` latches
 `started_at = time(NULL)` while the RTC is still at epoch 0 (no SNTP reply yet), so
 `started_at` is pinned near 1970. Reconnecting USB/WiFi does not fix the value.
 
-**Fix:** added an SNTP callback `spectrogram_time_synced()` (`main/spectrogram.c:831`).
+**Fix:** added an SNTP callback `spectrogram_time_synced()` (`main/spectrogram.c` (`spectrogram_time_synced`)).
 On the first SNTP reply, if recording is active and `started_at < WF_SANE_EPOCH`,
 `started_at` is recomputed backwards from elapsed time: `started_at = time(NULL) − elapsed`.
 The real recording start is restored retroactively without losing already-written segments.
