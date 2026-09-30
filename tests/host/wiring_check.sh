@@ -153,6 +153,11 @@ need web_waterfall.c 1 '    reg(server, "/api/waterfall/stop",   HTTP_POST, h_st
 need web_waterfall.c 1 '    reg(server, "/api/waterfall/clear",  HTTP_POST, h_clear_async);'
 need web_waterfall.c 1 '    reg(server, "/api/waterfall/segment/delete", HTTP_POST, h_segdel_async);'
 need web_waterfall.c 4 '&s_ctl_active, WF_CTL_MAX); }'
+# WP10 (1.2.30): P3-7 — сначала обрезка первой строки, потом счётчик «(+N)»; P3-8 — отказ загрузки offload виден; Старт/Стоп показывают не-200
+need ../web/index.html 1 'if(ls.length>3){var h0=ls[0];if(h0.length>100)h0=h0.slice(0,100)+"…";t=h0+"  … (+"+(ls.length-1)+")"}else if(t.length>120)t=t.slice(0,120)+"…";'
+need ../web/waterfall.html 2 ' }).catch(function(){oflSetMsg(t("ofl.err"),"err");});'
+need ../web/waterfall.html 1 'if(!r.ok)lg("start: HTTP "+r.status);'
+need ../web/waterfall.html 1 'if(!r.ok)lg("stop: HTTP "+r.status);'
 # LK-05 (1.2.30): httpd ждёт прибор на -inf / -tc_pot? не дольше 1 с на команду (было 2 с)
 need web_server.c 1 '#define SETTINGS_RAW_WAIT_MS 1000'
 need web_server.c 2 '    for (int waited = 0; waited < SETTINGS_RAW_WAIT_MS; waited += 50) {'

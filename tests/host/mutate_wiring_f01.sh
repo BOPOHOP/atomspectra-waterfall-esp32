@@ -87,6 +87,10 @@ mut M62_wp5_wholecopy   debug_log_ring.c      's/    char \*chunk = malloc(DBGLO
 mut M63_lk09_noalive    web_waterfall.c       '/    if (!alive) { free(a); return; }/d' 'if (!alive) { free(a); return; }'
 mut M64_lk09_always     web_waterfall.c       's/    if (!alive) { free(a); return; }/    if (false) { free(a); return; }/' 'if (!alive) { free(a); return; }'
 mut M65_lk09_inflight   web_waterfall.c       's/#define WS_INFLIGHT_MAX  4 /#define WS_INFLIGHT_MAX  8 /' '#define WS_INFLIGHT_MAX  4'
+# WP10 (1.2.30)
+mut M76_p37_nocut       ../web/index.html     's/if(h0.length>100)h0=/if(h0.length>1000)h0=/' 'if(h0.length>100)h0='
+mut M77_p38_silent      ../web/waterfall.html 's/ }).catch(function(){oflSetMsg(t("ofl.err"),"err");});/ }).catch(function(){});/' 'oflSetMsg(t("ofl.err"),"err");});'
+mut M78_start_nolog     ../web/waterfall.html 's/if(!r.ok)lg("start: HTTP "+r.status);//' 'lg("start: HTTP "'
 # LK-02/03/04 (1.2.30)
 mut M71_lk02_sync_start web_waterfall.c       's/HTTP_POST, h_start_async);/HTTP_POST, h_start);/' 'h_start_async);'
 mut M72_lk02_sync_stop  web_waterfall.c       's/HTTP_POST, h_stop_async);/HTTP_POST, h_stop);/' 'h_stop_async);'
