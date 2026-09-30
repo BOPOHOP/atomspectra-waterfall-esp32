@@ -34,6 +34,15 @@ wait. Found by an external code audit (Codeaudit, 29.09), moved to 1.2.30 by the
   token and do not check Origin: a foreign page open in a browser on the same network can trigger them and
   load the board.
 
+### "Reset" does not write the last waterfall row — up to one recording step per reset
+
+The board sends the reset command to the instrument immediately (`handle_reset`, `web_server.c:540`) and does not
+commit a row before it; the instrument zeroes its counters on the command. Pulses accumulated from the last
+written row up to the reset (at most one recording step, 5 s by default) do not reach the waterfall. On a live
+board on 30.09 three resets gave 1, 3 and 5 s (by the instrument's time marks; an estimate, not a direct loss
+measurement). The spectrum is cleared on purpose, but in the waterfall these seconds stay unrecorded. A fix —
+commit a row before sending the command — is planned for 1.2.30.
+
 ### Downloading the debug log temporarily takes up to ~0.5 MB of memory — fix planned for 1.2.30
 
 Applies only when the debug log ring is enabled (it is off by default).
