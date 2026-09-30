@@ -152,7 +152,8 @@ static esp_err_t handle_setup_scan(httpd_req_t *req)
 
     char *json = cJSON_PrintUnformatted(arr);
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, json);
+    if (!json) httpd_resp_set_status(req, "503 Service Unavailable");   // F-09 (остаток класса): нет памяти на JSON
+    httpd_resp_sendstr(req, json ? json : "{\"ok\":false,\"err\":\"oom\"}");
     free(json);
     cJSON_Delete(arr);
     return ESP_OK;
@@ -351,6 +352,15 @@ static void start_field_ap(void)
 
 /* ---- STA fallback → полевой AP (FIELD-2a, способ A4: ребут+одноразовый флаг) ---- */
 
+static bool s_fb_rebooting;
+
+static void fb_reboot_task(void *arg)
+{
+    (void)arg;
+    spectrogram_prepare_reboot();
+    esp_restart();
+}
+
 static void set_fb_flag_and_reboot(void)
 {
     nvs_handle_t nvs;
@@ -360,7 +370,14 @@ static void set_fb_flag_and_reboot(void)
         nvs_close(nvs);
     }
     ESP_LOGW(TAG, "FIELD-2a: STA no IP -> reboot into field AP");
-    spectrogram_prepare_reboot();   // #FW-55 (P-016): не терять открытый сегмент
+
+    if (s_fb_rebooting) return;
+    s_fb_rebooting = true;
+    /* #RB-STK-1: вызывают esp_timer (стек 3584) и sys_evt (4096) — подготовка с LittleFS и записью опоры идёт в своей задаче */
+    if (xTaskCreate(fb_reboot_task, "fb_reboot", 6144, NULL, 5, NULL) == pdPASS) return;
+
+    ESP_LOGE(TAG, "fb_reboot task create failed -- rebooting from this context");
+    spectrogram_prepare_reboot();
     esp_restart();
 }
 
@@ -656,8 +673,9 @@ static bool load_saved_sta_ssid(char *out, size_t out_sz)
     return err == ESP_OK && out[0] != '\0';
 }
 
-// Временно расширяет режим до APSTA (клиентов на AP уже нет — проверено
-// вызывающим), сканирует эфир на конкретный SSID и возвращает AP-only режим.
+// Временно расширяет режим до APSTA (HTTP-активности и обмена по TCP-мосту 10 мин
+// нет — проверено вызывающим; простаивающий клиент моста при смене канала может
+// оборваться), сканирует эфир на конкретный SSID и возвращает AP-only режим.
 // AP на время скана может уйти на другой канал (esp-idf так и работает) —
 // поэтому вызывающий обязан гарантировать отсутствие клиентов заранее.
 static bool scan_for_saved_ssid(const char *ssid)
@@ -684,6 +702,11 @@ static void wifi_return_finish(bool entered_by_fallback, const char *ssid)
     bool quiet_now = web_server_http_activity_quiet(WIFI_RETURN_ACTIVITY_QUIET_MS);
     if (!wifi_return_should_reboot_to_sta(entered_by_fallback, quiet_now, found)) {
         note_return_block(found ? "activity" : "ssid_not_found");
+        return;
+    }
+    // Н-5.2: клиент моста мог подключиться за время блокирующего скана.
+    if (tcp_bridge_client_active(WIFI_RETURN_BRIDGE_IDLE_MS)) {
+        note_return_block("bridge");
         return;
     }
 
@@ -727,6 +750,14 @@ void wifi_manager_try_return_to_sta(void)
     bool quiet = web_server_http_activity_quiet(WIFI_RETURN_ACTIVITY_QUIET_MS);
     if (!wifi_return_scan_allowed(entered_by_fallback, quiet)) {
         note_return_block("activity");
+        return;
+    }
+    // AWF-2a (KNOWN_ISSUES): работа ПК-программы через TCP-мост — тоже работа с
+    // платой. Н-2/Н-5.1 (release-gate 1.2.29): по обмену данными с клиентом, а не
+    // по факту подключения — пропавший без FIN клиент при молчащем приборе держал
+    // блок вечно (SO_SNDTIMEO клиента не закрывает; теперь его закрывает keepalive).
+    if (tcp_bridge_client_active(WIFI_RETURN_BRIDGE_IDLE_MS)) {
+        note_return_block("bridge");
         return;
     }
 

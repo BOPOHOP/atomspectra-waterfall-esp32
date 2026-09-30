@@ -113,7 +113,7 @@ size_t monitor_copy_since(uint32_t since, monitor_sample_t *out, size_t max,
 static void monitor_task(void *arg)
 {
     (void)arg;
-    uint32_t prev_counts = 0, prev_time = 0;
+    uint32_t prev_counts = 0, prev_time = 0, prev_resync = 0;
     bool prev_valid = false;
     for (;;) {
         // Будимся коммитом свипа (паттерн wf_task); 1500 мс — fallback-тик при
@@ -121,13 +121,15 @@ static void monitor_task(void *arg)
         if (s_commit_sig) xSemaphoreTake(s_commit_sig, pdMS_TO_TICKS(1500));
         else vTaskDelay(pdMS_TO_TICKS(1000));
 
-        uint32_t counts = 0, tsec = 0;
-        spectrum_get_totals(&counts, &tsec);
+        uint32_t counts = 0, tsec = 0, resync = 0;
+        spectrum_get_totals(&counts, &tsec, &resync);
 
-        if (!prev_valid) {
-            // Первый замер (в т.ч. restored-autosave) — только опорная точка:
-            // иначе первый сэмпл получил бы весь накопленный столбец разом.
-            prev_counts = counts; prev_time = tsec; prev_valid = true;
+        // Н-8 (release-gate 1.2.29): первый замер (в т.ч. restored-autosave) и
+        // первая публикация без подтверждённого сброса (старт без current.bin,
+        // принятие по таймауту #58) — только опорная точка: иначе сэмпл получил
+        // бы весь накопленный прибором набор разом (как строка водопада, У-3).
+        if (!prev_valid || resync != prev_resync) {
+            prev_counts = counts; prev_time = tsec; prev_resync = resync; prev_valid = true;
             continue;
         }
         if (counts < prev_counts || tsec < prev_time) {

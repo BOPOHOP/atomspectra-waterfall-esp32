@@ -6,74 +6,53 @@ A list of known bugs, limitations, and fixed issues for the AtomSpectra ESP32 Ga
 
 ## Open
 
-### #FW-50: overnight web UI hang (waterfall + monitoring)
+### The default field access point password is public
 
-**Status:** open · diagnostics in `v1.2.3` (PSRAM debug-log ring + Mac pull).
+The default field access point password is given in the README and in the web interface, so everyone knows
+it. The board's web API assumes a trusted network. While the field access point runs with the default
+password, anyone nearby can connect to the board. Set your own password on the "System" tab (when connected
+through the access point with the default password, the tab warns about it). Revisiting the "trusted
+network" threat model is a separate task after 1.2.29.
 
-**Observation (2026-07-27):** a board on the LAN stopped answering overnight with
-waterfall + monitoring enabled; later the dhcp lease from ap expired. AtomSpectra
-USB was not power-cycled — instrument spectrum preserved. Other clients on the same
-network stayed up → not an AP failure. Do **not** confuse with closed **#FW-13**
-(LittleFS autosave freeze / UART CDC blocking — already fixed) or closed
-**#FW-8 residual** (histogram drops from autosave — sliced quiet write, 2026-08-12).
+### The web interface freezes during heavy operations — fix planned for 1.2.30
 
-**Tooling:** Service → Debug log (NVS `dbglog`); 384 KiB PSRAM ring; the dump is pulled by an
-external collector (ours is a launchd job on a Mac every 5 min). Default **off**.
+The board's web server is single-threaded: while one request runs a long operation, other tabs and clients
+wait. Found by an external code audit (Codeaudit, 29.09), moved to 1.2.30 by the project owner.
+- LK-02: start/stop/clear requests wait for the waterfall file lock without a timeout while writing is in
+  progress. A reboot waits for it with a timeout: up to 5 s, and up to ~11 s in total if the open segment
+  did not close on the first try (`spectrogram.c:1957-1959`). Segment deletion is queued and does not wait
+  for the lock inside the request (#HTTP-FS1 below).
+- LK-03: "Clear" waterfall deletes up to ~11 segments directly in the web server task.
+- LK-04: waterfall recording Start/Stop wait for pending rows (up to 60 s) and for the segment to close
+  inside the request.
+- LK-05: `/api/settings/backup` and `/snapshot` poll the instrument for up to ~4 s inside the request.
+- LK-07: `/api/ota/github/check` calls GitHub over HTTPS inside the request, up to 15 s.
+- LK-08, P-01: waterfall window (up to 4 MB), export and segment downloads hold the web server for the whole
+  transfer; every visit or F5 on the waterfall page downloads the whole ring again.
+- LK-09: 16 KB WebSocket frames are sent with a wait of up to 3 s; a slow client delays everyone.
+- S-01: heavy GETs (`/api/ota/github/check`, `/api/settings/backup`, `/api/waterfall/window`) need no CSRF
+  token and do not check Origin: a foreign page open in a browser on the same network can trigger them and
+  load the board.
 
-**Flash cost** (ESP-IDF 5.4.2, `esp32s3`, clean `sdkconfig` regenerated from
-`sdkconfig.defaults`, `atomspectra_gw.bin` measured):
+### "Reset" does not write the last waterfall row — up to one recording step per reset
 
-| Build | Size | Δ vs base |
-|---|---|---|
-| base (`v1.2.2`) | 1,486,112 B | — |
-| ring without `CONFIG_LOG_MAXIMUM_LEVEL_DEBUG` | 1,494,128 B | **+8,016 B** (≈7.8 KiB) |
-| ring as shipped (`v1.2.3`) | 1,530,848 B | **+44,736 B** (≈43.7 KiB) |
+The board sends the reset command to the instrument immediately (`handle_reset`, `web_server.c:540`) and does not
+commit a row before it; the instrument zeroes its counters on the command. Pulses accumulated from the last
+written row up to the reset (at most one recording step, 5 s by default) do not reach the waterfall. On a live
+board on 30.09 three resets gave 1, 3 and 5 s (by the instrument's time marks; an estimate, not a direct loss
+measurement). The spectrum is cleared on purpose, but in the waterfall these seconds stay unrecorded. A fix —
+commit a row before sending the command — is planned for 1.2.30.
 
-So the ring code itself costs ≈8 KiB; the other ≈36 KiB are the `ESP_LOGD` strings
-across ESP-IDF that the compiler stops stripping once
-`CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y`. Without that flag the ring still builds, but it
-would never capture a DEBUG line — and those are exactly what the #FW-50 hypotheses
-need. The app partition is 3 MiB; 51% stays free after the change. The 384 KiB ring
-itself lives in PSRAM and does not touch flash.
+### Downloading the debug log temporarily takes up to ~0.5 MB of memory — fix planned for 1.2.30
 
-**Ring endpoint contract:**
-
-| Endpoint | CSRF | Why |
-|---|---|---|
-| `GET /api/debug/log/meta` | no | ring counters/settings only (`enabled`, `level`, `next_seq`, `dropped`, `lost_busy`, `gen`, `fill_pct`) — no `fw_version`/uptime/heap; hygiene, not auth (`/api/system` nearby is still open) |
-| `GET /api/debug/log?since=N` | **yes** | the dump exposes SSID, IP and offload URL |
-| `POST /api/debug/log/flush` | **yes** | mutating request |
-| `GET/POST /api/debug/log/config` | POST — yes | same as other settings |
-
-Requiring the header on a `GET` is deliberate: a third-party page open in the same browser
-cannot read the token (same-origin policy), so it cannot pull the log from the user's
-address either. Any external collector should do:
-
-```sh
-TOKEN=$(curl -s http://<board>/api/csrf-token | sed 's/.*"token":"\([^"]*\)".*/\1/')
-curl -s -H "X-CSRF-Token: $TOKEN" "http://<board>/api/debug/log?since=0"
-```
-
-**Levels (`level` setting) — a ladder over tag scope, not just depth:**
-
-| Level | What reaches the ring |
-|---|---|
-| `standard` | `*` = WARN + own tags (`main`, `wf`, `web`, `http_io`, …) at INFO |
-| `detailed` | same + system networking tags at INFO (`httpd*`, `wifi*`, `dhcpc`/`dhcps`, `lwip`) |
-| `debug` | same + DEBUG for the hottest own tags (`usb_cdc`, `spectrum`, `wf_ofl`) |
-
-**What the ring will NOT catch.** The buffer lives in PSRAM and does not survive
-a reboot: after a panic, a WDT reset or power loss the dump is empty and `gen`
-restarts. The tool targets the soft-lock hypothesis specifically — the board is
-alive and answers over HTTP while the UI is dead; for a "panicked and rebooted"
-scenario you need a coredump, not this ring. Lines dropped because the ring
-mutex was busy are counted separately from lines evicted by wraparound and show
-up as `busy=` next to `drop=` (Service → Debug log) and as `lost_busy` in
-`/api/debug/log/meta`: "there were no logs" and "logs were lost at the
-interesting moment" are different outcomes and must not be conflated when
-analysing a hang.
-
----
+Applies only when the debug log ring is enabled (it is off by default).
+- `GET /api/debug/log` copies the whole filled ring into memory even when only new lines are requested
+  (`since`): up to 384 KB, plus the response send buffer (up to 64 KB per the lwIP setting). Measured on
+  30.09 on 1.2.29: a 216 758 B download with 951 068 B free brought the `min_free_heap` mark down to 642 548 B (peak use 308 520 B).
+- If the download coincides with the spectrum autosave or with web interface load, free memory briefly
+  drops below 512 KB (measured: 462 632 B). If memory runs out, the request gets 500 `oom`
+  (`debug_log_ring.c:532`) and the rest of the board keeps working.
+- The download code has not changed since 1.2.21. Fix (chunked download, copying only new lines) — in 1.2.30.
 
 ### BUG-AS-08: ⚠ The gateway does not back up the instrument's factory DSP tuning
 
@@ -140,7 +119,16 @@ speeds up recovery through the manufacturer, it does not remove the cause.
 
 ### BUG-AS-03: Serial number is not read
 
-**Status:** open (diagnostics — needs confirmation on live hardware).
+**Status:** mitigated in v1.2.29 (the root cause — a truncated instrument reply to `-cal` — is not confirmed on a live instrument).
+
+**v1.2.29.** `-cal` is requested before an acquisition start while the calibration OR the
+serial number is empty (`calib_autoread_needed`, `main/calib_autoread.h:110-113`), so the
+1.2.28 mitigation is no longer one-shot. If the board already has a calibration (including a
+manually entered one), the reply to such a request only updates the serial number; the
+instrument's coefficients are not applied (`calib_apply_coeffs`, `main/calib_autoread.h:118-121`;
+request flag — `main/usb_host_cdc.c:1021`, valid for 5 s). A manual "Read" still applies the
+instrument's calibration. The "Mitigated… in v1.2.28" paragraph below describes the previous
+behaviour.
 
 The instrument serial number (`serial_number`) stays empty after connection.
 
@@ -206,17 +194,6 @@ The watchdog stays silent whenever the gateway cannot tell whether acquisition i
 
 Acquisition started by anything other than the gateway is not guarded either.
 
-### AWF-2a: the TCP bridge does not count as "using the board"
-
-**Status:** limitation (v1.2.24)
-
-The "Fall back to the field access point when Wi-Fi is lost" setting (off by default), when on,
-returns the board to the router only after 10 minutes without Web UI use. Working through the PC
-app (AtomSpectra/BecqMoni) over the TCP bridge does not count toward that. If the setting is on
-and you're using the TCP bridge while the board sits in the field AP, the link can drop from a
-reboot before you're done. Workaround: keep the setting off (the default), or open the board's
-web page occasionally.
-
 ### AWF-3: rare double-count or delay around an instrument reset
 
 **Status:** limitation (v1.2.24)
@@ -262,6 +239,198 @@ corrupt the PC app's protocol.
 ---
 
 ## Fixed
+
+### A firmware update over Wi-Fi lost up to a minute of waterfall rows — FIXED (v1.2.29)
+
+**Before.** A firmware update (manual or from GitHub) rebooted the board without closing the open waterfall
+segment. Rows written after the segment's last flush to flash (every 60 s) were lost: the segment survived
+but was shorter. The other planned reboots did close the segment.
+
+**Now.** Before rebooting after an update the board closes the segment the same way as on other planned
+reboots. If the flash is busy it retries up to 6 times and logs an error if it still fails. The "System" tab
+reports the end of the installation only after this step. Measured with an update in the middle of the
+one-minute window: 10 rows lost before the fix, 0 after.
+
+### The first waterfall row after a board reboot counted pulses twice — FIXED (v1.2.29)
+
+**Before.** After a reboot during recording, the first waterfall row was computed from the spectrum
+autosave, which can be up to a minute older than the last row. Pulses already written into the last rows
+before the reboot were counted again in the first row (measured: 5905 extra pulses in one row).
+
+**Now.** Before a planned reboot the board saves the reference of the last row (`/storage/wf_ref.bin`) and
+computes the first row after boot from it. The file is valid for the next boot only and is checked by a
+checksum. Without the file (power loss, crash) no first row is written; the reference moves to the first
+live snapshot. Measured after the fix: a difference of −170 pulses, within noise.
+
+### A "Reset" not performed by the instrument lost pulses in the waterfall — FIXED (v1.2.29)
+
+**Before.** If the instrument did not perform a "Reset", after about 10 s the board showed the instrument's data
+set, and the waterfall moved its reference without writing a row. Pulses between the last row before the
+"Reset" and that moment were lost (4718 and 2826 pulses observed).
+
+**Now.** If the instrument's data set continues the last row (no channel, total or time decreased), the
+instrument kept its data, and the board writes a row against the last row before the "Reset". Otherwise the
+reference moves without a row as before: against an unrelated data set a row would be a spike. Covered by
+the host test `tests/host/test_wf_rst_keep.c`; not reproduced live, as that needs a spectrum "Reset".
+
+**Remaining.** If the instrument restarted during this session (the board keeps the pre-restart base) and
+then a "Reset" was not confirmed, the pulses of that interval are still lost (without a spike).
+
+### Minor reliability fixes — FIXED (v1.2.29)
+
+- The message log on the main page is visible again (below the Start/Stop/Reset buttons). It used to be
+  hidden, so messages — for example, that the instrument did not perform a "Reset" — were not shown.
+- A deferred `-rst` is also re-sent on a live connection, not only on connect; a new "Reset" is not
+  overwritten by a retry of the old one.
+- A `-rst` from a PC program through the TCP bridge clears the board spectrum only if it reached the
+  instrument.
+- The "Reset not delivered" mark is written via a temporary file: a power loss while writing leaves no broken mark (losing the mark of a delivered "Reset" is harmless).
+- The spectrum autosave is sanity-checked on boot.
+- An update from GitHub aborts the autosave without deleting the spectrum files.
+- When there is no memory to print a JSON response the board answers `503 {"ok":false,"err":"oom"}` instead of
+  cutting the response (no memory for the response object itself — `500 oom`). Server upload settings
+  (`GET /api/waterfall/offload`) used to come back empty (`{}` with 200) in this case and the waterfall page
+  cleared the form fields; now it is the same 503 and the page leaves the fields as they are.
+- Segment upload to a server (push): a short file read ends the attempt with error `-16` instead of
+  sending an incomplete body.
+- The reboot when falling back to the field access point runs in a separate task with enough stack.
+- Firmware update occasionally rejected a valid image with `set_boot_partition`:
+  the image passed the full check in `esp_ota_end()`, but the second check when selecting the boot partition
+  reported `Checksum failed` (one failure in the test logs, on a manual update; repeating the same OTA succeeded). This
+  second check is now retried up to 3 times with a 200 ms pause; an `esp_ota_end()` failure is still final
+  (#OTA-VR, `main/ota_busy.h`).
+- Stack headroom of the TCP bridge receive task is 2528–2556 B instead of 508 B. JSON objects moved to PSRAM.
+  Allocation failure counter — `alloc_fail` in `/api/system`. The minimum internal RAM (`int_min`) under
+  load still briefly drops to tens or hundreds of bytes in some runs (lowest measured 29–30.09: 91–707 B, 3.5–7.6 KB in other runs), with no allocation
+  failures (`alloc_fail` = 0).
+
+### issue #58: spectrum not shown after a reflash or reboot during acquisition — FIXED (v1.2.29)
+
+**Before.** After the board was reflashed or rebooted during an acquisition, the spectrum was not
+shown until the instrument itself reset its acquisition time. A "Reset" that the instrument did not
+perform (the command did not arrive or was rejected) froze the spectrum the same way.
+
+**Now.** After a "Reset" the board waits for the instrument's confirmation (acquisition time
+restarting from zero) for about 10 s after the first rejected packet, 11–13 s after the command by calculation (`SPECTRUM_RESET_CONFIRM_TIMEOUT_S`,
+`main/spectrum_base_plan.h:172`), then shows the instrument's acquisition, increments
+`reset_unconfirmed` (`/api/status`, `/api/spectrum/meta.json`) and writes a line to the main page
+log. The first commit after a reset is accepted only on a time packet received after the reset
+within the same USB session (`spectrum_stat_tag_usable`, `main/spectrum_base_plan.h`). The
+waterfall and the "Monitoring" chart no longer get a point holding the instrument's whole
+accumulated acquisition. Mutation-tested: `tests/host/mutate_issue58.sh`, 15 mutants.
+
+### "Reset" followed by a reboot within ~1 min brought back the pre-reset spectrum; "Reset" with the instrument unplugged — FIXED (v1.2.29)
+
+**Before.** If the board rebooted or lost power after a "Reset" but before the next autosave (about
+a minute), it restored the spectrum acquired before the reset (from an automatic snapshot or an
+unfinished `.tmp`). A "Reset" with the instrument unplugged cleared only the board.
+
+**Now.** "Reset" creates a `reset.mark` marker (`reset_mark_create`, `main/spectrum.c:775`); while
+the marker exists, restore after boot brings nothing back, and the first autosave of the new
+acquisition removes the marker. If the `-rst` command did not reach the instrument, the marker is
+flagged "not delivered" and the board repeats `-rst` on the next instrument connection — including
+after its own reboot (`main/usb_host_cdc.c:564`, function — `:602`). The repeat is dropped if another "Reset"
+happened in the meantime.
+
+### #HTTP-FS1: the web UI froze for up to 5 s when a collector acknowledged a segment — FIXED (v1.2.29)
+
+**Before (v1.2.28 and earlier).** The segment acknowledgement (`POST /api/waterfall/segment/delete`, sent by a
+pull collector after downloading) ran inside the web server task: it waited for a flash-write window (about
+1 s per call), and up to 5 s if the board was closing and opening a segment at that moment. The web server is
+single-threaded, so every open tab froze for that time.
+
+**Now.** The handler queues the segment and answers immediately (`{"ok":true,"queued":true}`); the waterfall
+writer task performs the deletion. Same reproduction (one delete per second, 11 min): before — up to
+4,980 ms, 132 of 632 requests slower than 0.8 s; after — up to 1,275 ms, 2 of 660.
+
+**Remaining.** While a collector downloads a segment (~1 MB), other requests wait about a second — a limit of
+the single-threaded web server.
+
+### #FW-50: web UI hang (waterfall + monitoring) — FIXED (v1.2.29)
+
+**Cause.** Wi-Fi and TCP/IP stack buffers were allocated in internal RAM; under load (several tabs,
+waterfall, monitoring) it was exhausted down to hundreds of bytes and the web UI stopped answering
+while total free heap was ≈700 KB (almost all of it PSRAM).
+
+**Fix.** `CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y` in `sdkconfig.defaults` — the buffers go to
+PSRAM; the Wi-Fi buffer counts are pinned in `sdkconfig.defaults` so that a clean build matches
+the tested one. `/api/system` gained internal-RAM fields: `int_free`, `int_largest`, `int_min`,
+`int_dflt_free`, `int_dflt_largest`, `heap_walk_us`. A/B test under load: without the option 0 of
+56 responses, with it 2224 of 2224.
+
+**Observation (2026-07-27):** a board on the LAN stopped answering overnight with
+waterfall + monitoring enabled; later the dhcp lease from ap expired. AtomSpectra
+USB was not power-cycled — instrument spectrum preserved. Other clients on the same
+network stayed up → not an AP failure. Do **not** confuse with closed **#FW-13**
+(LittleFS autosave freeze / UART CDC blocking) or closed
+**#FW-8 residual** (histogram drops from autosave — sliced quiet write, 2026-08-12).
+
+**Diagnostic tool (stays in the firmware):** Service → Debug log (NVS `dbglog`); 384 KiB PSRAM
+ring; the dump is pulled by an external collector. Default **off**.
+
+**Flash cost** (ESP-IDF 5.4.2, `esp32s3`, clean `sdkconfig` regenerated from
+`sdkconfig.defaults`, `atomspectra_gw.bin` measured):
+
+| Build | Size | Δ vs base |
+|---|---|---|
+| base (`v1.2.2`) | 1,486,112 B | — |
+| ring without `CONFIG_LOG_MAXIMUM_LEVEL_DEBUG` | 1,494,128 B | **+8,016 B** (≈7.8 KiB) |
+| ring as shipped (`v1.2.3`) | 1,530,848 B | **+44,736 B** (≈43.7 KiB) |
+
+So the ring code itself costs ≈8 KiB; the other ≈36 KiB are the `ESP_LOGD` strings
+across ESP-IDF that the compiler stops stripping once
+`CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y`. Without that flag the ring still builds, but it
+would never capture a DEBUG line. The 384 KiB ring itself lives in PSRAM and does not
+touch flash.
+
+**Ring endpoint contract:**
+
+| Endpoint | CSRF | Why |
+|---|---|---|
+| `GET /api/debug/log/meta` | no | ring counters/settings only (`enabled`, `level`, `next_seq`, `dropped`, `lost_busy`, `gen`, `fill_pct`) — no `fw_version`/uptime/heap; hygiene, not auth (`/api/system` nearby is still open) |
+| `GET /api/debug/log?since=N` | **yes** | the dump exposes SSID, IP and offload URL |
+| `POST /api/debug/log/flush` | **yes** | mutating request |
+| `GET/POST /api/debug/log/config` | POST — yes | same as other settings |
+
+Requiring the header on a `GET` is deliberate: a third-party page open in the same browser
+cannot read the token (same-origin policy), so it cannot pull the log from the user's
+address either. Any external collector should do:
+
+```sh
+TOKEN=$(curl -s http://<board>/api/csrf-token | sed 's/.*"token":"\([^"]*\)".*/\1/')
+curl -s -H "X-CSRF-Token: $TOKEN" "http://<board>/api/debug/log?since=0"
+```
+
+**Levels (`level` setting) — a ladder over tag scope, not just depth:**
+
+| Level | What reaches the ring |
+|---|---|
+| `standard` | `*` = WARN + own tags (`main`, `wf`, `web`, `http_io`, …) at INFO |
+| `detailed` | same + system networking tags at INFO (`httpd*`, `wifi*`, `dhcpc`/`dhcps`, `lwip`) |
+| `debug` | same + DEBUG for the hottest own tags (`usb_cdc`, `spectrum`, `wf_ofl`) |
+
+**What the ring will NOT catch.** The buffer lives in PSRAM and does not survive
+a reboot: after a panic, a WDT reset or power loss the dump is empty and `gen`
+restarts. The tool targets the soft-lock hypothesis specifically — the board is
+alive and answers over HTTP while the UI is dead; for a "panicked and rebooted"
+scenario you need a coredump, not this ring. Lines dropped because the ring
+mutex was busy are counted separately from lines evicted by wraparound and show
+up as `busy=` next to `drop=` (Service → Debug log) and as `lost_busy` in
+`/api/debug/log/meta`: "there were no logs" and "logs were lost at the
+interesting moment" are different outcomes and must not be conflated when
+analysing a hang.
+
+### AWF-2a: the TCP bridge did not count as "using the board" — FIXED (v1.2.29)
+
+**Before (v1.2.24–v1.2.28).** The "Fall back to the field access point when Wi-Fi is lost" setting
+returned the board to the router after 10 minutes without Web UI use; PC-app traffic
+(AtomSpectra/BecqMoni) over the TCP bridge did not count, so the link could drop from a reboot.
+
+**Now.** TCP-bridge traffic within the last 10 minutes (`WIFI_RETURN_BRIDGE_IDLE_MS`,
+`main/wifi_return_plan.h:16`) also blocks the return (`main/wifi_manager.c:708`, `:759`). So that
+a client that vanished without disconnecting cannot hold the board forever, TCP keepalive is
+enabled on the bridge socket (`main/tcp_bridge.c:252`): such a client is released in about a
+minute.
 
 ### issue #52b: URI handler table overflow stayed silent — FIXED (v1.2.28)
 

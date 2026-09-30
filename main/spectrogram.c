@@ -6,7 +6,9 @@
 #include "wf_seg_pin.h"         // #REC-12 (sweep-A): пин чтения HTTP-слоем (host-pure)
 #include "wf_seg_seq.h"         // P-042 (sweep-A): seg_seq = max(NVS, шапки flash) (host-pure)
 #include "wf_seg_rebuild_range.h"  // М3: [g0,g1) для leftover после неудачной очистки (host-pure)
-#include "calib_export.h"       // R7 (sweep-A): единый признак «калибровка есть» в шапке
+#include "calib_export.h"
+#include "wf_ref_plan.h"        // #AUD-DUP1: опора первой строки после перезагрузки (host-pure)
+#include "boot_config.h"         // #AUD-DUP1: boot_config_get_session() — опора годна одну загрузку       // R7 (sweep-A): единый признак «калибровка есть» в шапке
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_littlefs.h"
@@ -59,6 +61,7 @@ static uint32_t         s_prev_total;
 static uint16_t        *s_dur;       // #FW-5: кольцо реальных длительностей строк (сек), параллельно s_ring
 static float           *s_temp;      // #FW-41: кольцо t1 детектора (°C), параллельно s_ring (NaN пока -inf не прочитан)
 static uint32_t         s_prev_time; // #FW-5: предыдущее device total_time_sec (дельта = живое время среза)
+static uint32_t         s_wf_resync_seen; // У-3: последний учтённый spectrum resync_seq
 static spectrum_data_t *s_snap;     // start()/seg_header_build() (serial/calib для шапки)
 // #FW-62: калибровка предыдущего сегмента — чтобы в шапке отметить факт её смены.
 // Сравниваются сами коэффициенты, а не флаг «прибор что-то присылал»: -inf приходит
@@ -68,6 +71,26 @@ static bool   s_calib_prev_valid;
 static bool   s_calib_changed;
 static spectrum_data_t *s_wf_snap;  // приватный буфер периодического wf_task (P3-4)
 static uint32_t        *s_baseline;     // PSRAM: 8192×uint32 — снимок накопительного спектра при start()
+#define WF_REF_FILE STORAGE_PATH "/wf_ref.bin"      /* #AUD-DUP1 */
+#define WF_REF_TMP  STORAGE_PATH "/wf_ref.bin.tmp"
+static uint32_t       *s_ref_bins;      /* PSRAM: опора из wf_ref.bin до первого живого снимка */
+static wf_ref_hdr_t    s_ref_hdr;
+static wf_ref_choice_t s_ref_choice = WF_REF_FORCE_RESYNC;
+static bool            s_ref_pending;   /* restore: первый живой снимок ещё не пришёл */
+/* #AUD-RST: опора последней строки до Сброса — на случай, если прибор Сброс не выполнит */
+static uint32_t       *s_pre_rst_bins;  /* PSRAM; NULL — правка выключена, прежнее поведение */
+static uint32_t        s_pre_rst_total, s_pre_rst_time;
+static bool            s_pre_rst_valid; /* опора сохранена, набор после Сброса ещё не опубликован */
+static bool            s_prev_valid;    /* s_prev снят с опубликованного набора (valid) и без базы AWF-3 */
+static volatile bool   s_wf_busy;       /* LK-16: wf_task внутри итерации (после проверки recording) */
+/* F-3 (разбор 1c57e98): при базе AWF-3 ≠ 0 опора = база+прибор, набор после Сброса — только прибор;
+ * строка против такой опоры недосчитала бы базу — правило #AUD-RST не применяем (прежний перенос). */
+static bool wf_base_zero(void)
+{
+    uint32_t bt = 0, bc = 0;
+    spectrum_get_base_info(&bt, &bc, NULL);
+    return bt == 0 && bc == 0;
+}
 static float            s_dose_k;       // µSv/h per cps из NVS (0.0 → NaN в dose_rate строк)
 static float           *s_dose_lut;     // PSRAM: 8192×float LUT кривой МД (NULL → scalar k)
 static int              s_dose_curve_n; // точек загружено (0 → scalar k)
@@ -250,6 +273,11 @@ static void reg_clear_all(void)
 // в кольцо и будит wf_fs_task (consumer), который пишет сегменты в своём темпе —
 // латентность стирания флеша (1МБ unlink на границе ~31с) больше НЕ тормозит такт.
 static SemaphoreHandle_t s_fs_sig;     // будит consumer на новую строку
+static QueueHandle_t     s_del_q;      // #HTTP-FS1: pull-ack удаления для wf_fs_task
+#define WF_DEL_Q_LEN 8
+// epoch = s_wf_epoch на момент ack: start/clear его меняют (clear обнуляет нумерацию),
+// и ack прежней сессии не должен удалить новый сегмент с тем же индексом.
+typedef struct { uint32_t idx; uint32_t epoch; } wf_del_req_t;
 // #FW-13 фикс №2: коммит свипа спектра (конец USB-burst) будит producer — снапшот
 // и flash-запись строки уходят в тихое окно, а не в случайную фазу 1-с тика.
 static SemaphoreHandle_t s_commit_sig;
@@ -1228,6 +1256,12 @@ void spectrogram_init(void)
     // #FW-41: параллельное кольцо температур t1 (float, °C). ~1 КБ на 256 строк.
     s_temp = heap_caps_malloc((size_t)s_capacity * sizeof(float), MALLOC_CAP_SPIRAM);
     s_prev = heap_caps_malloc(WF_CHANNELS * sizeof(uint32_t), MALLOC_CAP_SPIRAM);
+    /* #AUD-RST + #AUD-DUP1: один буфер 32 КБ на две роли. Опора из wf_ref.bin нужна только в restore()
+     * и на первом живом снимке; опора до Сброса захватывается не раньше той же итерации, после
+     * переноса s_ref_bins → s_prev. Гейт 1.2.29 (Codeaudit TH-07): min_free_heap у порога 512 КБ. */
+    if (!s_ref_bins) s_ref_bins = heap_caps_malloc(WF_CHANNELS * sizeof(uint32_t), MALLOC_CAP_SPIRAM);
+    s_pre_rst_bins = s_ref_bins;
+    if (!s_pre_rst_bins) ESP_LOGW(TAG, "pre-reset reference alloc failed -- #AUD-RST disabled");   /* F-8 */
     s_row  = heap_caps_malloc(WF_ROW_BYTES, MALLOC_CAP_SPIRAM);
     s_snap     = heap_caps_malloc(sizeof(spectrum_data_t), MALLOC_CAP_SPIRAM);
     s_wf_snap  = heap_caps_malloc(sizeof(spectrum_data_t), MALLOC_CAP_SPIRAM);
@@ -1253,6 +1287,8 @@ void spectrogram_init(void)
     // #FW-6: семафор-будильник consumer'а создаём ДО запуска producer'а.
     s_fs_sig = xSemaphoreCreateBinary();
     if (!s_fs_sig) { ESP_LOGE(TAG, "fs sig create failed"); s_status.ready = false; return; }
+    s_del_q = xQueueCreate(WF_DEL_Q_LEN, sizeof(wf_del_req_t));   // NULL → delete_async отвечает 503
+    if (!s_del_q) ESP_LOGE(TAG, "seg delete queue create failed");
     // #FW-13 фикс №2: подписка producer'а на коммиты свипов (NULL — останется 1-с тик).
     s_commit_sig = xSemaphoreCreateBinary();
     if (s_commit_sig) spectrum_add_commit_listener(s_commit_sig);
@@ -1439,25 +1475,85 @@ static void wf_task(void *arg)
         // #FW-13 фикс №2: будимся коммитом свипа (= конец USB-burst), чтобы снапшот
         // и запись строки легли в тихое окно. Таймаут 1500 мс — fallback-тик при
         // молчащем/отключённом приборе (прежнее поведение).
+        s_wf_busy = false;   /* LK-16: вне итерации — prepare_reboot может читать s_prev */
         if (s_commit_sig) xSemaphoreTake(s_commit_sig, pdMS_TO_TICKS(1500));
         else vTaskDelay(pdMS_TO_TICKS(1000));
 
+        s_wf_busy = true;    /* до проверки recording: пара с prepare_reboot (Деккер) */
+        __sync_synchronize();
         if (!s_status.recording) continue;
         uint32_t iv = s_status.interval_sec;
         if (iv < WF_INTERVAL_MIN) iv = WF_INTERVAL_MIN;
+        // F-4 (разбор 1c57e98): Сброс подтверждён (набор снова valid, переноса опоры нет) —
+        // опора до него больше не нужна; иначе она дожила бы до следующего Сброса.
+        if (s_pre_rst_valid && spectrum_get_current()->valid) {
+            uint32_t rs = 0;
+            spectrum_get_totals(NULL, NULL, &rs);
+            if (rs == s_wf_resync_seen) s_pre_rst_valid = false;
+        }
         uint32_t now_time = spectrum_get_current()->total_time_sec;
         if (now_time >= s_prev_time && now_time - s_prev_time < iv) continue;
 
-        spectrum_get_snapshot(s_wf_snap);
+        uint32_t resync_seq;
+        spectrum_get_snapshot_wf(s_wf_snap, &resync_seq);
+        // #AUD-DUP1: снимок автосейва — не опора первой строки (двойной счёт). Первый живой
+        // снимок после restore: опора последней строки прошлой загрузки или resync без строки.
+        if (s_ref_pending) {
+            s_ref_pending = false;
+            memcpy(s_prev, wf_ref_first_prev(s_ref_choice, s_ref_bins, s_wf_snap->bins),
+                   WF_CHANNELS * sizeof(uint32_t));
+            s_prev_valid = (wf_ref_first_writes_row(s_ref_choice) || s_wf_snap->valid) && wf_base_zero();   /* #AUD-RST */
+            if (wf_ref_first_writes_row(s_ref_choice)) {
+                s_prev_total = s_ref_hdr.prev_total;
+                s_prev_time  = s_ref_hdr.prev_time;
+                ESP_LOGW(TAG, "restore: first row against the last row of the previous boot (t=%" PRIu32 ")", s_prev_time);
+            } else {
+                s_wf_resync_seen = resync_seq;
+                s_prev_total = s_wf_snap->total_counts;
+                s_prev_time  = s_wf_snap->total_time_sec;
+                if (s_baseline) memcpy(s_baseline, s_wf_snap->bins, WF_CHANNELS * sizeof(uint32_t));
+                ESP_LOGW(TAG, "restore: no saved reference -- reference resync (t=%" PRIu32 "s), no row", s_prev_time);
+                continue;
+            }
+        }
+        // У-3: первый коммит после valid=false без подтверждённого сброса (старт без
+        // current.bin, Reset не выполнен прибором) несёт ВЕСЬ набор прибора — строкой
+        // он дал бы скачок (до 65535 на канал). Переносим опору, строку не пишем.
+        // #AUD-RST: после Сброса до публикации снимок пуст (valid=false) — опору последней
+        // строки сохраняем до того, как нулевая строка ниже её перезапишет.
+        if (!s_wf_snap->valid && s_prev_valid && !s_pre_rst_valid && s_pre_rst_bins) {
+            memcpy(s_pre_rst_bins, s_prev, WF_CHANNELS * sizeof(uint32_t));
+            s_pre_rst_total = s_prev_total;
+            s_pre_rst_time  = s_prev_time;
+            s_pre_rst_valid = true;
+        }
+        if (resync_seq != s_wf_resync_seen) {
+            s_wf_resync_seen = resync_seq;
+            bool keep = s_pre_rst_valid && wf_rst_keeps_data(
+                s_pre_rst_bins, s_pre_rst_total, s_pre_rst_time,
+                s_wf_snap->bins, s_wf_snap->total_counts, s_wf_snap->total_time_sec,
+                WF_CHANNELS);
+            s_pre_rst_valid = false;
+            const uint32_t *ref = keep ? s_pre_rst_bins : s_wf_snap->bins;
+            memcpy(s_prev, ref, WF_CHANNELS * sizeof(uint32_t));
+            s_prev_total = keep ? s_pre_rst_total : s_wf_snap->total_counts;
+            s_prev_time  = keep ? s_pre_rst_time  : s_wf_snap->total_time_sec;
+            s_prev_valid = (keep || s_wf_snap->valid) && wf_base_zero();
+            if (!keep) {
+                ESP_LOGW(TAG, "reference resync (t=%" PRIu32 "s), no row", s_prev_time);
+                continue;
+            }
+            ESP_LOGW(TAG, "reset not confirmed, device kept its data -- row against the last row before Reset (t=%" PRIu32 "s)", s_prev_time);
+        }
+        if (s_wf_snap->valid) s_pre_rst_valid = false;   /* подтверждённый Сброс: опора до него не нужна */
 
         bool reset = (s_wf_snap->total_counts < s_prev_total);
         for (int i = 0; i < WF_CHANNELS; i++) {
-            int64_t d = (int64_t)s_wf_snap->bins[i] - (reset ? 0 : (int64_t)s_prev[i]);
-            if (d < 0) d = 0; else if (d > 65535) d = 65535;
-            s_row[i]  = (uint16_t)d;
+            s_row[i]  = wf_row_delta(s_wf_snap->bins[i], s_prev[i], reset);   // host-тест: test_wf_ref_plan.c
             s_prev[i] = s_wf_snap->bins[i];
         }
         s_prev_total = s_wf_snap->total_counts;
+        s_prev_valid = s_wf_snap->valid && wf_base_zero();   /* #AUD-RST: пустой снимок после Сброса — не опора */
 
         // #FW-5: реальная длительность среза = дельта живого времени прибора
         // (total_time_sec, целые секунды). reset (счётчики прибора обнулились) →
@@ -1525,6 +1621,17 @@ static void wf_fs_task(void *arg)
                 seg_write_row(s_fs_buf, s_fs_dur, s_fs_temp);
             }
             LOCK(); s_fs_flushed++; UNLOCK();
+        }
+        // #HTTP-FS1: удаления по pull-ack — здесь, а не в задаче httpd (см. spectrogram_seg_delete_async).
+        // Не больше ОДНОГО за проход: удаление стоит секунды (quiet_unlink_path), запись строк
+        // и финализация не должны ждать всю очередь; остаток — следующим проходом (сигнал ниже).
+        wf_del_req_t dr;
+        if (s_del_q && xQueueReceive(s_del_q, &dr, 0) == pdTRUE) {
+            if (dr.epoch != s_wf_epoch)
+                ESP_LOGW(TAG, "seg_delete: seg_%05" PRIu32 " ack of previous session dropped", dr.idx);
+            else if (!spectrogram_seg_delete(dr.idx))
+                ESP_LOGW(TAG, "seg_delete: seg_%05" PRIu32 " not deleted (open/pinned/absent)", dr.idx);
+            if (uxQueueMessagesWaiting(s_del_q)) xSemaphoreGive(s_fs_sig);
         }
         // #FW-14: финализация по возрасту — 64 строки ИЛИ 10 мин (WATERFALL.md),
         // чтобы при больших интервалах файл не висел открытым часами и приёмник
@@ -1596,6 +1703,30 @@ void spectrogram_restore(void)
     seg_reconcile();
     FSUNLOCK();
 
+    // #AUD-DUP1: опора последней строки прошлой загрузки (wf_ref.bin) — прочитать и удалить.
+{
+    s_ref_choice = WF_REF_FORCE_RESYNC;
+    s_ref_pending = false;
+    if (s_ref_bins == NULL) {
+        s_ref_bins = heap_caps_malloc(WF_CHANNELS * sizeof(uint32_t), MALLOC_CAP_SPIRAM);
+    }
+
+    FILE *rf = fopen(WF_REF_FILE, "rb");
+    if (rf) {
+        size_t rbytes = fread(&s_ref_hdr, 1, sizeof(s_ref_hdr), rf);
+        if (rbytes == sizeof(s_ref_hdr) && s_ref_bins) {
+            rbytes += fread(s_ref_bins, 1, WF_CHANNELS * sizeof(uint32_t), rf);
+        }
+        if (fgetc(rf) != EOF) rbytes++; /* файл длиннее ожидаемого — не проходит проверку */
+        fclose(rf);
+
+        s_ref_choice = wf_ref_pick(&s_ref_hdr, s_ref_bins, rbytes, WF_CHANNELS, boot_config_get_session());
+        ESP_LOGW(TAG, "restore: wf_ref.bin %s (%u B)", s_ref_choice == WF_REF_USE_FILE ? "accepted" : "rejected", (unsigned)rbytes);
+    }
+
+    unlink(WF_REF_FILE); /* годна ровно на одну загрузку */
+}
+
     FILE *f = fopen(WF_STATE, "rb");
     if (!f) return;                          // нет persist-состояния — чистый старт
     wf_state_t st;
@@ -1605,15 +1736,22 @@ void spectrogram_restore(void)
     if (!st.active || !st.persist) return;   // запись была остановлена — не возобновляем
 
     // Возобновляем запись в НОВЫЙ сегмент (wf_task откроет лениво на первом тике).
-    spectrum_get_snapshot(s_snap);
-    // v3: baseline при resume — накопительный спектр на момент восстановления
-    if (s_baseline) {
-        for (int i = 0; i < WF_CHANNELS; i++) s_baseline[i] = s_snap->bins[i];
-    }
+    spectrum_get_snapshot_wf(s_snap, &s_wf_resync_seen);   // У-3: опора и счётчик одним снимком
+    // v3: baseline при resume — накопительный спектр на момент последней строки прошлой
+    // загрузки (#AUD-DUP1: опора из wf_ref.bin), иначе — снимок; при resync его переставит wf_task.
+    const uint32_t *src = (s_ref_choice == WF_REF_USE_FILE) ? s_ref_bins : s_snap->bins;
+    if (s_baseline && src) {
+        for (int i = 0; i < WF_CHANNELS; i++) s_baseline[i] = src[i];
+    } /* при resync baseline переставит wf_task на первом живом снимке */
+
+    bool b0 = wf_base_zero();   /* F-3: SPEC_LOCK — не под LOCK() */
     LOCK();
     memcpy(s_prev, s_snap->bins, WF_CHANNELS * sizeof(uint32_t));
     s_prev_total          = s_snap->total_counts;
-    s_prev_time           = s_snap->total_time_sec;   // #FW-5: база для дельты длительности
+    s_prev_time           = s_snap->total_time_sec;   /* до первого живого снимка гейт времени идёт по автосейву, как раньше */
+    s_prev_valid          = s_snap->valid && b0;   /* #AUD-RST */
+    s_pre_rst_valid       = false;
+    s_ref_pending = true;                             /* опору подставит wf_task на первом живом снимке */
     s_head = 0; s_count = 0;
     s_status.ring_count   = 0;
     s_status.total_rows   = 0;     // счётчик ТЕКУЩЕЙ сессии записи (с момента возобновления)
@@ -1653,6 +1791,10 @@ void spectrogram_time_synced(void)
 int spectrogram_start(void)
 {
     if (!s_status.ready) return -1;
+    // #AUD-DUP1 (замечание Codeaudit 1): новая сессия — опора прошлой загрузки/подготовки
+    // к ребуту больше не годится (иначе авария до автосейва дала бы двойной счёт).
+    s_ref_pending = false;
+    unlink(WF_REF_FILE);
 
     // #WF-1: остановить producer и дождаться дренажа consumer ДО сброса
     // счётчиков. Иначе consumer в окне между UNLOCK и FSLOCK внутри
@@ -1672,18 +1814,21 @@ int spectrogram_start(void)
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
-    spectrum_get_snapshot(s_snap);
+    spectrum_get_snapshot_wf(s_snap, &s_wf_resync_seen);   // У-3: опора и счётчик одним снимком
     // v3: снимок накопительного спектра → baseline секция каждого сегмента
     if (s_baseline) {
         for (int i = 0; i < WF_CHANNELS; i++) s_baseline[i] = s_snap->bins[i];
     }
 
+    bool b0 = wf_base_zero();              // F-3: SPEC_LOCK — не под FSLOCK/LOCK
     FSLOCK();
     if (s_seg_fp) seg_finalize();          // закрыть огрызок от прошлой записи
     LOCK();
     memcpy(s_prev, s_snap->bins, WF_CHANNELS * sizeof(uint32_t));
     s_prev_total        = s_snap->total_counts;
     s_prev_time         = s_snap->total_time_sec;   // #FW-5: база для дельты длительности
+    s_prev_valid        = s_snap->valid && b0;   // #AUD-RST
+    s_pre_rst_valid     = false;
     s_head              = 0;
     s_count             = 0;
     s_status.ring_count = 0;
@@ -1741,24 +1886,94 @@ int spectrogram_stop(void)
 // write_state НЕ трогаем: на флеше должно остаться active=true, иначе
 // после ребута запись не возобновится (#REC-6).
 // Потерю питания это не закрывает — только штатный путь перезагрузки.
+// #AUD-DUP1: опора последней записанной строки (s_prev) — в файл; restore следующей
+// загрузки берёт её вместо снимка автосейва. Только при штатной перезагрузке.
+static void wf_ref_save(void) {
+    wf_ref_hdr_t h = {0};
+    h.magic        = WF_REF_MAGIC;
+    h.channels     = WF_CHANNELS;
+    h.boot_session = boot_config_get_session();
+
+    LOCK();
+    h.prev_total   = s_prev_total;
+    h.prev_time    = s_prev_time;
+    UNLOCK();
+
+    h.sum = wf_ref_checksum(&h, s_prev, WF_CHANNELS);
+
+    FILE *f = fopen(WF_REF_TMP, "wb");
+    bool ok = (f != NULL);
+    if (ok) {
+        ok = (fwrite(&h, sizeof(h), 1, f) == 1);
+        if (ok && s_prev) {
+            ok = (fwrite(s_prev, sizeof(uint32_t), WF_CHANNELS, f) == WF_CHANNELS);
+        } else {
+            ok = false;
+        }
+        ok = (fclose(f) == 0) && ok;
+    }
+
+    if (ok) {
+        unlink(WF_REF_FILE);
+        ok = (rename(WF_REF_TMP, WF_REF_FILE) == 0);
+    }
+
+    if (!ok) {
+        unlink(WF_REF_TMP);
+        ESP_LOGE(TAG, "prepare_reboot: reference NOT saved (errno=%d)", errno);
+        return;
+    }
+
+    ESP_LOGW(TAG, "prepare_reboot: reference saved (total=%" PRIu32 " t=%" PRIu32 ")", h.prev_total, h.prev_time);
+}
+
 void spectrogram_prepare_reboot(void)
 {
     if (!s_status.ready) return;
-    LOCK(); bool was_rec = s_status.recording; s_status.recording = false; UNLOCK();
+
+    LOCK();
+    bool was_rec = s_status.recording;
+    s_status.recording = false;
+    UNLOCK();
+
     if (was_rec) {
-        if (s_fs_sig) xSemaphoreGive(s_fs_sig);      // подтолкнуть consumer
-        for (int i = 0; i < 30; i++) {               // дренаж, не дольше ~3 с
-            LOCK(); bool drained = (s_fs_flushed >= s_status.total_rows); UNLOCK();
+        /* LK-16/LK-14 (Codeaudit): дождаться выхода wf_task из итерации — wf_ref_save ниже
+         * читает s_prev без LOCK; прежние 100 мс держались только на времени итерации. */
+        __sync_synchronize();
+        for (int i = 0; i < 200 && s_wf_busy; i++) vTaskDelay(pdMS_TO_TICKS(10));
+        if (s_wf_busy) ESP_LOGW(TAG, "prepare_reboot: wf_task still in iteration after 2 s");
+        if (s_fs_sig) xSemaphoreGive(s_fs_sig);
+
+        for (int i = 0; i < 30; i++) {
+            LOCK();
+            bool drained = (s_fs_flushed >= s_status.total_rows);
+            UNLOCK();
             if (drained) break;
             vTaskDelay(pdMS_TO_TICKS(100));
         }
     }
-    FSLOCK();
-    if (s_seg_fp) {
-        ESP_LOGW(TAG, "prepare_reboot: finalizing open segment (%" PRIu32 " rows)", s_seg_rows);
-        seg_finalize();
+
+    bool fin_ok = false;
+    for (int i = 0; i < 6; i++) {
+        if (i) vTaskDelay(pdMS_TO_TICKS(250));
+        if (s_fs_lock && xSemaphoreTake(s_fs_lock, pdMS_TO_TICKS(i ? 1000 : 5000)) != pdTRUE) {
+            ESP_LOGE(TAG, "prepare_reboot: FS lock busy, open segment left as is");
+            break;
+        }
+        if (s_seg_fp) {
+            ESP_LOGW(TAG, "prepare_reboot: finalizing open segment (%" PRIu32 " rows)", s_seg_rows);
+            seg_finalize();
+        }
+        bool left = (s_seg_fp != NULL);
+        FSUNLOCK();
+        if (!left) {
+            fin_ok = true;
+            break;
+        }
     }
-    FSUNLOCK();
+    if (!fin_ok) ESP_LOGE(TAG, "prepare_reboot: open segment NOT finalized");
+
+    if (was_rec) wf_ref_save(); /* #AUD-DUP1: опора последней строки — для первой строки следующей загрузки */
 }
 
 /* #FW-65: leftover after a failed clear — rebuild registry/counters/next
@@ -2210,6 +2425,25 @@ bool spectrogram_seg_delete(uint32_t idx)
     }
     FSUNLOCK();
     return ok;
+}
+
+// #HTTP-FS1: httpd однопоточный — синхронное удаление держало ВСЕХ HTTP-клиентов на время
+// http_io_gate (~1 с до тихого окна), FSLOCK (закрытие+открытие сегмента, до 5 с) и unlink.
+// Замер до фикса: raw-1229/httpfs1-repro-before.csv (4961/4980 мс на смене сегмента).
+// 1 — в очереди; 0 — не завершённый сегмент реестра (открытый/неизвестный: прежний синхронный
+// not-deletable); -1 — очередь не создана или полна (клиент повторит). Предпроверка по RAM-реестру
+// под LOCK (без FSLOCK и flash); окончательная проверка — в spectrogram_seg_delete под FSLOCK.
+int spectrogram_seg_delete_async(uint32_t idx)
+{
+    LOCK();
+    int i = reg_find(idx);
+    bool fin = (i >= 0 && s_seg_reg[i].finalized);
+    wf_del_req_t r = { .idx = idx, .epoch = s_wf_epoch };
+    UNLOCK();
+    if (!fin) return 0;
+    if (!s_del_q || xQueueSend(s_del_q, &r, 0) != pdTRUE) return -1;
+    if (s_fs_sig) xSemaphoreGive(s_fs_sig);
+    return 1;
 }
 
 // v3: дозовый коэффициент µSv/h per cps. Сохраняется в NVS как IEEE-754 bits.

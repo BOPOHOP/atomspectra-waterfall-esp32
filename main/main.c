@@ -11,6 +11,8 @@
 #include "flash_quiet.h"
 #include "http_io_gate.h"  // issue #52: снимок пишется под тем же гейтом, что и «Сохранить»
 #include "esp_log.h"
+#include "esp_heap_caps.h"
+#include "cJSON.h"
 #include "esp_sntp.h"
 #include <inttypes.h>
 #include <sys/time.h>
@@ -32,6 +34,38 @@ static void time_sync_cb(struct timeval *tv)
     spectrogram_time_synced();
 }
 
+// Гейт 1.2.29: int_min (минимум внутренней RAM) падал до 231 Б. Узлы cJSON мелкие
+// (< SPIRAM_MALLOC_ALWAYSINTERNAL) и шли во внутреннюю RAM, которой нужен Wi-Fi (#FW-50):
+// JSON всех ответов — в PSRAM, внутренняя — запасной путь. Отказы аллокации — счётчик.
+static uint32_t s_cjson_spill, s_alloc_fail_n, s_alloc_fail_size, s_alloc_fail_caps;
+static __thread bool t_cjson_try;   // промах PSRAM у cJSON — не отказ: есть запасной путь
+static void *cjson_psram_malloc(size_t sz)
+{
+    t_cjson_try = true;
+    void *p = heap_caps_malloc(sz, MALLOC_CAP_SPIRAM);
+    t_cjson_try = false;
+    if (!p) {   // F-7: уход во внутреннюю RAM считаем отдельно
+        __atomic_fetch_add(&s_cjson_spill, 1, __ATOMIC_RELAXED);
+        p = heap_caps_malloc(sz, MALLOC_CAP_DEFAULT);
+    }
+    return p;
+}
+static void alloc_failed_cb(size_t size, uint32_t caps, const char *fn)
+{
+    (void)fn;
+    if (t_cjson_try) return;   // колбэк зовётся в контексте той же задачи
+    __atomic_fetch_add(&s_alloc_fail_n, 1, __ATOMIC_RELAXED);   // F-7: два ядра
+    __atomic_store_n(&s_alloc_fail_size, (uint32_t)size, __ATOMIC_RELAXED);
+    __atomic_store_n(&s_alloc_fail_caps, caps, __ATOMIC_RELAXED);
+}
+void mem_diag_get(uint32_t *n, uint32_t *last_size, uint32_t *last_caps, uint32_t *cjson_spill)
+{
+    *n = __atomic_load_n(&s_alloc_fail_n, __ATOMIC_RELAXED);
+    *last_size = __atomic_load_n(&s_alloc_fail_size, __ATOMIC_RELAXED);   // пара size/caps — последнего
+    *last_caps = __atomic_load_n(&s_alloc_fail_caps, __ATOMIC_RELAXED);   // отказа, без гарантии пары
+    *cjson_spill = __atomic_load_n(&s_cjson_spill, __ATOMIC_RELAXED);
+}
+
 static void init_sntp(void)
 {
     esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
@@ -43,6 +77,9 @@ static void init_sntp(void)
 void app_main(void)
 {
     ESP_LOGI(TAG, "AtomSpectra Gateway starting...");
+    cJSON_Hooks cj_hooks = { .malloc_fn = cjson_psram_malloc, .free_fn = free };
+    cJSON_InitHooks(&cj_hooks);   // до первого cJSON: узлы и буферы печати — в PSRAM
+    heap_caps_register_failed_alloc_callback(alloc_failed_cb);
 
     wifi_manager_init();
 
@@ -75,10 +112,16 @@ void app_main(void)
     spectrum_load_calibration();
     // #FW-3: очистка накопленного спектра при старте — после restore, до того как
     // спектрограмма снимет baseline. -rst прибору пошлётся на первом USB-коннекте.
-    if (bc.clear_spectrum) {
-        spectrum_reset();
+    // Н-3.3 (release-gate 1.2.29): метка reset.mark 'P' — Сброс до перезагрузки, а
+    // -rst до прибора не дошёл. Сброс повторяется, как FW-3: гейт #58 взведён,
+    // -rst уйдёт на первом коннекте.
+    bool reset_mark = spectrum_reset_mark_undelivered();
+    if (bc.clear_spectrum || reset_mark) {
+        spectrum_reset_undelivered();
         spectrum_autosave_consume_abort();
-        ESP_LOGW(TAG, "FW-3: accumulated spectrum cleared on boot");
+        usb_host_cdc_request_rst();   // FW-3 и метка 'P': -rst на первом коннекте
+        ESP_LOGW(TAG, "%s: accumulated spectrum cleared on boot",
+                 bc.clear_spectrum ? "FW-3" : "reset.mark");
     }
     // #FW-50: PSRAM log ring — after spectrum_init, before spectrogram (reserve before WF).
     debug_log_ring_boot();
@@ -223,7 +266,7 @@ void app_main(void)
                     ESP_LOGI(TAG, "LittleFS autosave tick skipped: OTA in progress");
                 } else if (!usb_host_cdc_is_connected() || spectrum_autosave_fail_streak() >= 5) {
                     if (spectrum_autosave_in_progress())
-                        spectrum_autosave_abort();
+                        spectrum_autosave_abort_keep();   // П-6: current.bin не трогать
                     spectrum_autosave_consume_abort();
                     hist_drop_diag_autosave_begin(true);
                     int64_t t0 = esp_timer_get_time();

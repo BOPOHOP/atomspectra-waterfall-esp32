@@ -93,6 +93,9 @@ void usb_host_cdc_request_recover(void);
 // #FW-2/#FW-3: настройки автозапуска/очистки при старте платы. Вызвать ОДИН раз
 // ДО usb_host_cdc_init() — флаги применяются однократно при первом USB-коннекте.
 void usb_host_cdc_set_autostart(bool autostart_spectrum, bool autostart_waterfall, bool clear_spectrum);
+// Н-4/Н-3.3: -rst не дошёл до прибора (Сброс без прибора, отказ USB) — послать его
+// на ближайшем коннекте; держится, пока отправка не пройдёт.
+void usb_host_cdc_request_rst(void);
 
 // #FIELD-1: три сетевых режима работы платы.
 typedef enum {
@@ -131,6 +134,8 @@ void web_server_note_request_activity(const char *uri);
 
 void tcp_bridge_init(void);
 bool tcp_bridge_client_connected(void);
+// Н-2/Н-5.1: клиент моста подключён и обменивался данными не дольше max_idle_ms назад.
+bool tcp_bridge_client_active(uint32_t max_idle_ms);
 uint32_t tcp_bridge_dropped_bytes(void);
 uint32_t usb_host_cdc_rx_errors(void);  // #TCP-4
 uint32_t usb_host_cdc_rx_ring_drops(void);  // #BRIDGE-1: RX-кольцо переполнение
@@ -246,6 +251,9 @@ void spectrum_process_tcpot_response(const char *text);
 int spectrum_get_info_raw(char *out, size_t outsz, uint32_t *out_seq);
 int spectrum_get_tcpot_raw(char *out, size_t outsz, uint32_t *out_seq);
 void spectrum_reset(void);
+// Н-4: то же, но -rst до прибора ещё не дошёл — метка reset.mark помнит это
+// через перезагрузку (spectrum_reset_mark_undelivered).
+void spectrum_reset_undelivered(void);
 const spectrum_data_t *spectrum_get_current(void);
 
 // #PERF-4: снимок метаданных БЕЗ bins[8192]. Для потребителей, которым нужны
@@ -258,9 +266,22 @@ bool spectrum_get_meta(spectrum_data_t *out);
 // ЧАНКИ гистограммы и в разы больше — это разные величины.
 void spectrum_get_sweep_stats(uint32_t *commits, uint32_t *drops);
 bool spectrum_get_snapshot(spectrum_data_t *out);
+// У-3: снимок + счётчик переноса опоры водопада (под одним локом).
+bool spectrum_get_snapshot_wf(spectrum_data_t *out, uint32_t *resync_seq);
+// У-2: сколько Reset с боота прибор не выполнил (данные прибора сохранены по таймауту).
+uint32_t spectrum_reset_unconfirmed_count(void);
 // #MON-1: атомарная пара (total_counts, total_time_sec) под коммит-локом —
 // для монитора CPS; НЕ копирует 32 КБ bins (в отличие от spectrum_get_snapshot).
-void spectrum_get_totals(uint32_t *counts, uint32_t *time_sec);
+// resync_seq (может быть NULL) — счётчик переноса опоры У-3/Н-8.
+void spectrum_get_totals(uint32_t *counts, uint32_t *time_sec, uint32_t *resync_seq);
+// Н-3.3: метка reset.mark на flash и -rst до прибора не дошёл (Сброс без прибора
+// до перезагрузки, спектр после него не сохранён). Вызывать после spectrum_restore_autosave().
+bool spectrum_reset_mark_undelivered(void);
+// Н-Д1: поколение сброса (для досылки -rst) и «тот же сброс ещё не выполнен».
+uint32_t spectrum_reset_gen(void);
+bool spectrum_reset_still_undelivered(uint32_t pending_gen);
+// Н-Д2: новый сеанс USB (вызывать в задаче разбора при сбросе RX-пути).
+void spectrum_usb_session_bump(void);
 const device_info_t   *spectrum_get_device_info(void);
 int  spectrum_save_to_flash(void);  // >=0 idx; -1 нет валидного спектра; -2 мало места; -3 ошибка FS (#FW-24)
 int  spectrum_load_from_flash(int index, spectrum_data_t *out);
@@ -294,6 +315,9 @@ void spectrum_load_calibration(void);
 // #AWF-12: «калибровка не задана» = невалидна ИЛИ все коэффициенты — точный
 // 0.0 (main/calib_autoread.h: calib_is_missing). Снимок читается под SPEC_LOCK.
 bool spectrum_calibration_is_missing(void);
+bool spectrum_serial_is_missing(void);
+// Н-1: true — ближайший ответ -cal применить только как серийник (калибровка платы задана).
+void spectrum_calib_set_serial_only(bool serial_only);
 // F12/RO1 (release-gate-1.2.28-code-fixes.md:128): счётчик -cal дампов,
 // отвергнутых при валидном CRC (все нули/NaN) — калибровка платы не тронута.
 uint32_t spectrum_get_calib_reject_seq(void);
@@ -305,7 +329,8 @@ bool spectrum_autosave_in_progress(void);
 /** Write slices until quiet budget exhausted or file complete (rename to current.bin). */
 void spectrum_autosave_pump(void);
 /** Request hard cancel from any task (flag only — does not fclose/free). */
-void spectrum_autosave_abort(void);
+void spectrum_autosave_abort(void);        // Сброс: прервать запись и удалить current.bin
+void spectrum_autosave_abort_keep(void);   // П-6: OTA и др. — прервать, current.bin оставить
 /** Main-task only: fclose/free/unlink tmp + current.bin after abort(). */
 void spectrum_autosave_consume_abort(void);
 /** Soft yield: close FP, keep tmp+offset for resume (commit-wait timeout). */
@@ -324,3 +349,6 @@ void spectrum_get_base_info(uint32_t *base_time, uint32_t *base_counts, uint32_t
 // F4 (итоговое ревью 25.09): повтор отложенной записи base.bin (http_io_gate
 // был занят) — вызывать раз в main-тик, no-op если нечего повторять.
 void spectrum_base_save_retry_tick(void);
+// Гейт 1.2.29: отказы аллокации с загрузки (heap_caps_register_failed_alloc_callback), main.c.
+// cjson_spill — сколько раз узел/буфер cJSON не влез в PSRAM и ушёл во внутреннюю RAM.
+void mem_diag_get(uint32_t *n, uint32_t *last_size, uint32_t *last_caps, uint32_t *cjson_spill);

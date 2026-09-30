@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# release-gate 1.2.29 (разбор дельты, мутанты MA–MF): host-тесты не компилируют
+# spectrum.c/usb_host_cdc.c/tcp_bridge.c/..., поэтому удаление вызова чистой функции
+# проходило незамеченным. Проверка: каждая строка-вызов есть в файле ровно N раз.
+cd "${1:-$(dirname "$0")/../../main}" || exit 2   # $1 — другой каталог (проверка на копии)
+RC=0
+need() {   # need <file> <count> <fixed string>
+    local n; n=$(grep -cF -- "$3" "$1")
+    if [ "$n" -ne "$2" ]; then echo "WIRING FAIL $1: '$3' x$n (need $2)"; RC=1; fi
+}
+line() {   # line <file> <count> <строка кода целиком, без отступа> — не подстрока и не в комментарии (разбор pass4 P3-1)
+    local n; n=$(awk -v s="$3" '{c=$0; sub(/\r$/,"",c); sub(/^[ \t]+/,"",c)} c == s {n++} END{print n+0}' "$1")
+    if [ "$n" -ne "$2" ]; then echo "WIRING FAIL $1: line '$3' x$n (need $2)"; RC=1; fi
+}
+need spectrum.c    1 'spectrum_stat_tag_stamp(&s_stat_stage.tag, s_reset_gen, s_usb_session);'
+need spectrum.c    1 'spectrum_stat_tag_usable(&s_stat_stage.tag, s_usb_session);'
+need spectrum.c    1 'spectrum_reset_gate_step(&s_reset_gate,'
+need spectrum.c    1 'if (spectrum_reset_gate_on_publish(&s_reset_gate, first_valid, reset_confirmed))'
+need spectrum.c    1 'if (calib_apply_coeffs(calib_read_is_success(cc == ce, coeffs, CALIB_COEFFS), serial_only)) {'
+need usb_host_cdc.c 1 'spectrum_usb_session_bump();'
+# C-40/F-06: досылка -rst — атомарный забор под spinlock, возврат без затирания нового, тик на живом соединении
+need usb_host_cdc.c 1 'if (!spectrum_reset_still_undelivered(g)) {'
+need usb_host_cdc.c 1 'if (!s_rst_pending) {'
+need usb_host_cdc.c 1 'if (s_cdc_dev && s_rst_pending) rst_pending_dispatch();'
+need usb_host_cdc.c 1 'spectrum_calib_set_serial_only(!spectrum_calibration_is_missing());'
+need wifi_manager.c 2 'if (tcp_bridge_client_active(WIFI_RETURN_BRIDGE_IDLE_MS)) {'
+need tcp_bridge.c  1 'setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof(ka)) < 0 ||'
+need monitor.c     1 'if (!prev_valid || resync != prev_resync) {'
+# #HTTP-FS1: pull-ack удаление — только через очередь wf_fs_task, не синхронно в httpd
+need web_waterfall.c 1 'int q = spectrogram_seg_delete_async(idx);'
+need web_waterfall.c 0 'spectrogram_seg_delete(idx)'
+need spectrogram.c 1 'if (s_del_q && xQueueReceive(s_del_q, &dr, 0) == pdTRUE) {'
+need spectrogram.c 1 'if (dr.epoch != s_wf_epoch)'
+need spectrogram.c 1 'bool fin = (i >= 0 && s_seg_reg[i].finalized);'
+# #AUD-DIAG-1 R1/R2: причина сброса, номер загрузки и SHA ELF в /api/status
+need web_server.c  1 'cJSON_AddStringToObject(root, "reset_reason", reset_reason_str(rr));'
+need web_server.c  1 'cJSON_AddNumberToObject(root, "boot_count", boot_config_get_session());'
+need web_server.c  1 'cJSON_AddStringToObject(root, "elf_sha", elf_sha);'
+# #AUD-F01 (класс P-016): каждый вызов esp_restart() (*.c/*.h, все подкаталоги, в любом месте строки) —
+# среди 3 предыдущих строк КОДА (комментарии и пустые не в счёт) есть spectrogram_prepare_reboot();
+F01_AWK='FNR==1{w1=w2=w3=""} {c=$0; sub(/\r$/,"",c); sub(/\/\/.*/,"",c)} c ~ /^[ \t]*(\*|\/\*)/ {next}
+  c ~ /(^|[^A-Za-z0-9_])esp_restart[ \t]*\(/ { n++; if ((w1 w2 w3) !~ /spectrogram_prepare_reboot[ \t]*\([ \t]*\)[ \t]*;/) print FILENAME":"FNR }
+  c ~ /[^ \t]/ {w3=w2; w2=w1; w1=c} END{print "N=" n+0}'
+f01=$(find . -name '*.[ch]' -print0 | xargs -0 awk "$F01_AWK")
+nr=$(awk -F= '/^N=/{s+=$2} END{print s+0}' <<<"$f01"); bad=$(grep -v '^N=' <<<"$f01")
+[ "${nr:-0}" -gt 0 ] || { echo "WIRING FAIL: esp_restart() calls not found (x0)"; RC=1; }
+[ -z "$bad" ] || { echo "WIRING FAIL esp_restart() without spectrogram_prepare_reboot(): $bad"; RC=1; }
+# разбор F01 D1-1/D1-2: FSLOCK с таймаутом и громкий отказ финализации; D4-1: DONE после подготовки
+need spectrogram.c 1 'if (s_fs_lock && xSemaphoreTake(s_fs_lock, pdMS_TO_TICKS(i ? 1000 : 5000)) != pdTRUE) {'
+need spectrogram.c 1 'if (!fin_ok) ESP_LOGE(TAG, "prepare_reboot: open segment NOT finalized");'
+# #AUD-DUP1: опора последней строки сохраняется при штатной перезагрузке, restore подставляет её или делает resync
+need spectrogram.c 1 'if (was_rec) wf_ref_save();'
+need spectrogram.c 1 'if (s_ref_pending) {'
+need spectrogram.c 1 'memcpy(s_prev, wf_ref_first_prev(s_ref_choice, s_ref_bins, s_wf_snap->bins),'
+need spectrogram.c 1 's_row[i]  = wf_row_delta(s_wf_snap->bins[i], s_prev[i], reset);'
+need spectrogram.c 3 'unlink(WF_REF_FILE);'   # wf_ref_save (перед rename), restore, start
+# #RB-STK-1: перезагрузка из esp_timer/sys_evt — в своей задаче
+need wifi_manager.c 1 'if (xTaskCreate(fb_reboot_task, "fb_reboot", 6144, NULL, 5, NULL) == pdPASS) return;'
+d41=$(awk '/spectrogram_prepare_reboot\(\);/{p=FNR} /set_progress\(OTA_GH_ST_DONE/{d=FNR} END{print (p && d > p) ? "ok" : "bad"}' ota_github_client.c)
+[ "$d41" = ok ] || { echo "WIRING FAIL ota_github_client.c: OTA_GH_ST_DONE before spectrogram_prepare_reboot()"; RC=1; }
+# Codeaudit F-08/F-09/F-10
+need ota_github_client.c 1 'spectrum_autosave_abort_keep();'
+need web_server.c  4 'if (!json) httpd_resp_set_status(req, "503 Service Unavailable");'
+need web_waterfall.c 1 'if (!out) httpd_resp_set_status(req, "503 Service Unavailable");'   # pass3 F-09: h_offload_get
+need wf_offload.c  1 'if (short_rd) { result = -16; goto done; }'
+# #OTA-VR: оба пути OTA ставят загрузочный раздел через повтор проверки; отказ esp_ota_end() — окончательный
+line web_server.c  1 'err = ota_set_boot_verified(update);'
+need web_server.c  0 'esp_ota_set_boot_partition('
+line ota_github_client.c 1 'if (ota_set_boot_verified(update) != ESP_OK) {'
+line ota_github_client.c 1 'install_fail(0, "set_boot_partition_failed"); goto done;'
+need ota_github_client.c 0 'esp_ota_set_boot_partition('
+line ota_github_client.c 1 'if (esp_ota_end(ota) != ESP_OK) { install_fail(0, "ota_end_failed"); goto done; }'
+line ota_busy.c    1 'esp_err_t err = ota_boot_retry_pure(set_boot_cb, &b, 3, ESP_ERR_OTA_VALIDATE_FAILED, &calls);'
+line ota_busy.c    1 'return esp_ota_set_boot_partition(b->p);'                  # pass4 P2-1: сам вызов IDF
+line ota_busy.c    1 'if (b->n++) vTaskDelay(pdMS_TO_TICKS(200));'               # пауза между повторами
+# отказ esp_ota_end(): сразу за вызовом — if (err != ESP_OK) {, в его теле — return ESP_FAIL; (pass4 P3-1, E4)
+oe=$(awk '{c=$0; sub(/\r$/,"",c); sub(/^[ \t]+/,"",c)}
+  st == 2 && c == "return ESP_FAIL;" {r++}  st == 2 && c == "}" {st = 0}
+  st == 1 {st = (c == "if (err != ESP_OK) {") ? 2 : 0; if (st == 2) a++}
+  c == "err = esp_ota_end(ota);" {n++; st = 1}
+  END{print (n == 1 && a == 1 && r == 1) ? "ok" : "bad " n+0 "/" a+0 "/" r+0}' web_server.c)
+[ "$oe" = ok ] || { echo "WIRING FAIL web_server.c: esp_ota_end() failure is not final (#OTA-VR, $oe)"; RC=1; }
+# #AUD-RST: неподтверждённый Сброс — опора до Сброса сохраняется и проверяется в wf_task
+need spectrogram.c 1 'memcpy(s_pre_rst_bins, s_prev, WF_CHANNELS * sizeof(uint32_t));'
+need spectrogram.c 1 'bool keep = s_pre_rst_valid && wf_rst_keeps_data('
+need spectrogram.c 1 's_prev_valid = s_wf_snap->valid && wf_base_zero();   /* #AUD-RST: пустой снимок после Сброса — не опора */'
+# Гейт 1.2.29: cJSON в PSRAM, счётчик отказов аллокации, стек tcp_rx без приёмного буфера
+need main.c        1 'cJSON_InitHooks(&cj_hooks);'
+need main.c        1 'heap_caps_register_failed_alloc_callback(alloc_failed_cb);'
+need web_server.c  1 'cJSON_AddNumberToObject(root, "alloc_fail", af_n);'
+need tcp_bridge.c  1 'xTaskCreatePinnedToCore(tcp_rx_task,     "tcp_rx",  5120, NULL, 5, NULL, 1);'
+need tcp_bridge.c  0 'uint8_t buf[1024];'
+need tcp_bridge.c  0 'vTaskDelete(NULL); return; }'                        # F-5: отказ буфера не убивает задачу
+# Разбор 1c57e98 / Codeaudit 19:49: база AWF-3, устаревшая опора (F-4), рукопожатие wf_task↔prepare_reboot (LK-16)
+need spectrogram.c 3 '&& wf_base_zero();'
+need spectrogram.c 1 'if (rs == s_wf_resync_seen) s_pre_rst_valid = false;'
+need spectrogram.c 1 'for (int i = 0; i < 200 && s_wf_busy; i++) vTaskDelay(pdMS_TO_TICKS(10));'
+need spectrogram.c 1 's_wf_busy = true;    /* до проверки recording'
+need main.c        1 'if (t_cjson_try) return;'
+need spectrogram.c 1 's_pre_rst_bins = s_ref_bins;'                        # один PSRAM-буфер на две роли (min_free_heap)
+# Разбор 45cc8ae..5859f53 pass3 F-02: сброс флага итерации; опора файла потребляется один раз и РАНЬШЕ захвата опоры до Сброса
+need spectrogram.c 1 's_wf_busy = false;   /* LK-16'
+rp=$(awk '{c=$0; sub(/\r$/,"",c); sub(/^[ \t]+/,"",c)} p == "if (s_ref_pending) {" {n++; if (c == "s_ref_pending = false;") a++}
+  {p=c} END{print (n == 0 || (n == 1 && a == 1)) ? "ok" : "bad " n+0 "/" a+0}' spectrogram.c)
+[ "$rp" = ok ] || { echo "WIRING FAIL spectrogram.c: s_ref_pending not cleared when the file reference is consumed ($rp)"; RC=1; }
+ord=$(awk '/if \(s_ref_pending\) \{/ && !a {a=FNR} /memcpy\(s_pre_rst_bins, s_prev, WF_CHANNELS/ && !b {b=FNR}
+  END{print (!a || !b || a < b) ? "ok" : "bad " a "/" b}' spectrogram.c)
+[ "$ord" = ok ] || { echo "WIRING FAIL spectrogram.c: pre-reset capture precedes file-reference consume (shared buffer, $ord)"; RC=1; }
+# Разбор 54194aa pass2: барьеры Деккера — сразу после s_wf_busy = true и сразу перед ожиданием в prepare_reboot
+dk=$(awk '{c=$0; sub(/\r$/,"",c); sub(/^[ \t]+/,"",c)}
+  p ~ /^s_wf_busy = true;/ {n++; if (c ~ /^__sync_synchronize\(\);/) a++}
+  c ~ /^for \(int i = 0; i < / && p ~ /^__sync_synchronize\(\);/ {b++}
+  {p=c} END{print (a == n && b == 1) ? "ok" : "bad " n+0 "/" a+0 "/" b+0}' spectrogram.c)
+[ "$dk" = ok ] || { echo "WIRING FAIL spectrogram.c: Dekker barrier around s_wf_busy missing ($dk)"; RC=1; }
+# P-03 (Codeaudit): журнал главной страницы существует и показывается (в копии main/ без web/ — пропуск)
+if [ -f ../web/index.html ]; then
+    need ../web/index.html 1 '<pre id="log" style="display:none;'
+    need ../web/index.html 1 'function lg(m){if(!logEl)return;logEl.style.display="";'
+    need ../web/index.html 1 '.row + .row, #log + .row{'                     # pass2 C: pre#log рвал .row + .row
+fi
+# F-09 (класс): результат cJSON_PrintUnformatted проверен на NULL в 3 строках после вызова (все *.c)
+f09=$(awk 'match($0,/char \*[A-Za-z_]+ = cJSON_PrintUnformatted\(/){v=substr($0,RSTART+6,RLENGTH-6); sub(/ =.*/,"",v); k=3; want=FILENAME":"FNR; next}
+  k>0 { if (index($0,"!" v) || index($0, v " ?")) k=0; else if (--k==0) print want }' ./*.c)
+[ -z "$f09" ] || { echo "WIRING FAIL cJSON_PrintUnformatted without NULL check: $f09"; RC=1; }
+[ "$RC" -eq 0 ] && echo "wiring: OK"
+exit $RC
