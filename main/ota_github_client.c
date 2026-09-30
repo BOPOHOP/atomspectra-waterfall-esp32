@@ -4,6 +4,8 @@
 #include "ota_github_parse.h"
 #include "ota_github_sha256sums.h"
 #include "ota_github_decision.h"
+#include "ota_gh_check_state.h"          // LK-07: проверка релиза в фоне, не в httpd (host-pure)
+#include "esp_timer.h"
 #include "ota_github_redirect.h"
 #include "ota_busy.h"
 #include "ota_github_download_retry.h"   // P3 №7 (sweep-B задача 5)
@@ -48,6 +50,12 @@ static SemaphoreHandle_t s_lock;            // защищает s_progress и s_
 static ota_gh_progress_t s_progress;
 static ota_gh_cache_t    s_cache;
 static TaskHandle_t      s_install_task;    // NULL, когда задача не идёт
+
+// LK-07 (1.2.30): фоновая проверка релиза; состояние и готовый ответ — под s_lock.
+#define OTA_GH_CHECK_KEEP_MS 10000
+static ota_chk_state_t s_chk_state;
+static int64_t         s_chk_done_us;
+static char            s_chk_json[512];
 
 void ota_gh_client_init(void)
 {
@@ -304,6 +312,41 @@ esp_err_t ota_gh_check(char *out_json, size_t out_cap)
         "\"installable\":%s,\"reason\":\"%s\",\"html_url\":\"%s\"}",
         cur_str, latest_str, newer ? "true" : "false",
         installable ? "true" : "false", reason, html_url_buf);
+    return ESP_OK;
+}
+
+static void ota_gh_check_task(void *arg)
+{
+    char tmp[sizeof(s_chk_json)];
+    ota_gh_check(tmp, sizeof(tmp));
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    memcpy(s_chk_json, tmp, sizeof(tmp));
+    s_chk_done_us = esp_timer_get_time();
+    s_chk_state = OTA_CHK_DONE;
+    xSemaphoreGive(s_lock);
+    vTaskDelete(NULL);
+}
+// LK-07 (1.2.30): не блокирует (зовётся из httpd). Пишет либо {"state":"checking"}, либо готовый ответ проверки с полем
+// "state":"done" первым. Первый вызов (или после протухшего результата, OTA_GH_CHECK_KEEP_MS) запускает фоновую задачу.
+esp_err_t ota_gh_check_async(char *out_json, size_t out_cap)
+{
+    static const char k_fail[] = "{\"current\":\"?\",\"latest\":\"\",\"newer\":false,"
+                                 "\"installable\":false,\"reason\":\"network_error\",\"html_url\":\"\"}";
+    if (!s_lock) { snprintf(out_json, out_cap, "{\"state\":\"done\",%s", k_fail + 1); return ESP_OK; }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    uint32_t age_ms = (uint32_t)((esp_timer_get_time() - s_chk_done_us) / 1000);
+    ota_chk_act_t act = ota_chk_decide(s_chk_state, age_ms, OTA_GH_CHECK_KEEP_MS);
+    if (act == OTA_CHK_ACT_START) {
+        s_chk_state = OTA_CHK_RUNNING;
+        if (xTaskCreatePinnedToCore(ota_gh_check_task, "ota_gh_chk", 8192, NULL, 3, NULL, 1) != pdPASS) {
+            s_chk_state = OTA_CHK_IDLE;
+            act = OTA_CHK_ACT_SERVE;     // не запустилось — честный отказ сети, не вечное «checking»
+            snprintf(s_chk_json, sizeof(s_chk_json), "%s", k_fail);
+        }
+    }
+    if (act == OTA_CHK_ACT_SERVE) snprintf(out_json, out_cap, "{\"state\":\"done\",%s", s_chk_json + 1);
+    else snprintf(out_json, out_cap, "{\"state\":\"checking\"}");
+    xSemaphoreGive(s_lock);
     return ESP_OK;
 }
 

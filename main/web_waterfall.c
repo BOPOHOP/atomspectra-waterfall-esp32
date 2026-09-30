@@ -256,6 +256,7 @@ static bool wf_window_emit(void *ctx, const uint16_t *row, size_t bytes)
 
 static esp_err_t h_window(httpd_req_t *req)
 {
+    if (!web_csrf_check(req)) return ESP_FAIL;   // S-01 (1.2.30): тяжёлый GET (до 4 МБ) — токен обязателен
     if (!http_io_gate_enter_or_503(req)) return ESP_OK;
     /* Потоковая отдача всего кольца (до 256 строк) через единственный 16-КБ
        bounce-буфер: НЕ держим второй 4-МБ буфер в PSRAM рядом с ring → нет

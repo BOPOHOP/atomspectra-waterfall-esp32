@@ -117,7 +117,19 @@ if [ -f ../web/index.html ]; then
     need ../web/index.html 1 '<pre id="log" style="display:none;'
     need ../web/index.html 1 'function lg(m){if(!logEl)return;logEl.style.display="";'
     need ../web/index.html 1 '.row + .row, #log + .row{'                     # pass2 C: pre#log рвал .row + .row
+    # S-01 (1.2.30): страницы шлют CSRF-токен на тяжёлых GET
+    need ../web/service.html   2 'await gget("/api/settings/backup");'
+    need ../web/system.html    1 'await gget("/api/ota/github/check")'
+    need ../web/waterfall.html 1 'hf.call(window,"/api/waterfall/window",{headers:{"X-CSRF-Token":csrfToken}})'
 fi
+# S-01 (1.2.30): тяжёлые GET требуют CSRF-токен на стороне платы (отступ: закомментированная строка не считается)
+need web_server.c    2 '    if (!csrf_check(req)) return ESP_FAIL;   // S-01 (1.2.30)'
+need web_waterfall.c 1 '    if (!web_csrf_check(req)) return ESP_FAIL;   // S-01 (1.2.30)'
+# LK-07 (1.2.30): проверка релиза GitHub — не в задаче httpd; решение запуск/ожидание/готовое — ota_gh_check_state.h
+need web_server.c        1 '    ota_gh_check_async(resp, sizeof(resp));'
+need ota_github_client.c 1 '    ota_chk_act_t act = ota_chk_decide(s_chk_state, age_ms, OTA_GH_CHECK_KEEP_MS);'
+need ota_github_client.c 1 '        if (xTaskCreatePinnedToCore(ota_gh_check_task, "ota_gh_chk", 8192, NULL, 3, NULL, 1) != pdPASS) {'
+need ota_github_client.c 1 '    s_chk_state = OTA_CHK_DONE;'
 # #RST-TAIL (1.2.30): строка водопада перед -rst — вызов в трёх точках отправки (отступ в строке: закомментированный вызов не считается)
 # и ДО передачи команды прибору; wf_task берёт решение из wf_tail_plan.h и отдаёт s_tail_done после оборота.
 need web_server.c   1 '    (void)spectrogram_flush_tail(1200);'

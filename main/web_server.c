@@ -567,8 +567,9 @@ static esp_err_t handle_reset(httpd_req_t *req)
 // Ответ строит ota_gh_check() (main/ota_github_client.c).
 static esp_err_t handle_ota_gh_check(httpd_req_t *req)
 {
-    char resp[512];   // #AWF-6: +html_url (до 200 Б) поверх прежних полей — 256 стало тесно
-    ota_gh_check(resp, sizeof(resp));
+    if (!csrf_check(req)) return ESP_FAIL;   // S-01 (1.2.30): тяжёлый GET — токен обязателен (drive-by с чужой страницы)
+    char resp[560];   // #AWF-6: +html_url (до 200 Б) поверх прежних полей; LK-07: +"state"
+    ota_gh_check_async(resp, sizeof(resp));   // LK-07: проверка в фоне, httpd не ждёт GitHub
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, resp);
     return ESP_OK;
@@ -2198,6 +2199,7 @@ static esp_err_t settings_read_raw_or_err(httpd_req_t *req,
 // на скачивание. #FW-17: static 2048Б — не на стеке httpd-воркера.
 static esp_err_t handle_settings_backup(httpd_req_t *req)
 {
+    if (!csrf_check(req)) return ESP_FAIL;   // S-01 (1.2.30): тяжёлый GET — токен обязателен
     static char info_line[2048];
     char tcpot_line[700];
     if (settings_read_raw_or_err(req, info_line, sizeof(info_line),

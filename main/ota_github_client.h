@@ -43,6 +43,10 @@ esp_err_t ota_gh_prerelease_channel_set(bool enabled);
 // для последующего ota_gh_install_start().
 esp_err_t ota_gh_check(char *out_json, size_t out_cap);
 
+// LK-07 (1.2.30): НЕ блокирует — для httpd-обработчика. Пишет {"state":"checking"} либо готовый ответ ota_gh_check()
+// с полем "state":"done" первым; первый вызов запускает фоновую задачу, готовый ответ живёт 10 с.
+esp_err_t ota_gh_check_async(char *out_json, size_t out_cap);
+
 // Запускает фоновую задачу установки (идемпотентно). Использует кэш
 // последнего ota_gh_check(); если кэша нет -- задача сама перезапросит check.
 esp_err_t ota_gh_install_start(void);

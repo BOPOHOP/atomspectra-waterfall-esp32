@@ -67,4 +67,13 @@ mut M47_tail_web_after  web_server.c     '/^    (void)spectrogram_flush_tail(120
 mut M48_tail_noforce    spectrogram.c    's/wf_tail_should_row(tail_force, now_time/wf_tail_should_row(false, now_time/' 'wf_tail_should_row(tail_force'
 mut M49_tail_nodone     spectrogram.c    '/^        if (s_tail_inflight) { s_tail_inflight = false;/d' 's_tail_inflight = false; if (s_tail_done)'
 mut M50_tail_nowake     spectrogram.c    '/^    xSemaphoreGive(s_commit_sig);            \/\/ разбудить wf_task вне очереди/d' 'разбудить wf_task вне очереди'
+# S-01 (1.2.30): CSRF на тяжёлых GET — плата (3 обработчика) и страницы (токен в заголовке)
+mut M51_s01_check_del   web_server.c     '0,/    if (!csrf_check(req)) return ESP_FAIL;   \/\/ S-01 (1.2.30)/{/    if (!csrf_check(req)) return ESP_FAIL;   \/\/ S-01 (1.2.30)/d}' '// S-01 (1.2.30)'
+mut M52_s01_window_del  web_waterfall.c  '/    if (!web_csrf_check(req)) return ESP_FAIL;   \/\/ S-01 (1.2.30)/d' 'web_csrf_check(req)) return ESP_FAIL;   // S-01'
+mut M53_s01_ui_nohdr    ../web/waterfall.html 's/hf.call(window,"\/api\/waterfall\/window",{headers:{"X-CSRF-Token":csrfToken}})/hf.call(window,"\/api\/waterfall\/window")/' '/api/waterfall/window'
+mut M54_s01_ui_plain    ../web/system.html    's/await gget("\/api\/ota\/github\/check")/await fetch("\/api\/ota\/github\/check")/' 'gget("/api/ota/github/check")'
+# LK-07 (1.2.30): проверка GitHub в фоне — обработчик зовёт async (не sync), задача стартует, состояние переходит в DONE
+mut M55_lk07_sync       web_server.c          's/    ota_gh_check_async(resp, sizeof(resp));/    ota_gh_check(resp, sizeof(resp));/' 'ota_gh_check_async(resp, sizeof(resp));'
+mut M56_lk07_nodecide   ota_github_client.c   's/    ota_chk_act_t act = ota_chk_decide(s_chk_state, age_ms, OTA_GH_CHECK_KEEP_MS);/    ota_chk_act_t act = OTA_CHK_ACT_START;/' 'ota_chk_decide(s_chk_state'
+mut M57_lk07_nodone     ota_github_client.c   '/^    s_chk_state = OTA_CHK_DONE;/d' 's_chk_state = OTA_CHK_DONE;'
 exit $RC

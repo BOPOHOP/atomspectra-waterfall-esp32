@@ -545,7 +545,8 @@ async function ghCheck(){
  st.className="mut";st.textContent=t("ghota.checking");if(btn)btn.disabled=true;
  ibtn.disabled=true;ghInstallable=false;
  try{
-  var r=await(await fetch("/api/ota/github/check")).json();
+  var r;for(var i=0;i<45;i++){r=await(await gget("/api/ota/github/check")).json();if(r.state!=="checking")break;await new Promise(function(z){setTimeout(z,1000)});}  /* LK-07: плата проверяет в фоне, опрашиваем до готового ответа */
+  if(!r||r.state==="checking")throw 0;
   ghLatestTag=r.latest||"";
   if(r.installable){
    ghInstallable=true;st.className="err";st.innerHTML=tfmt("ghota.available",r.latest)+ghLinkHtml(r.html_url);
@@ -618,6 +619,8 @@ function ghPollReboot(){
 function ac(){return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#34d3c0';}
 
 async function loadCsrf(){try{var r=await(await fetch("/api/csrf-token")).json();csrfToken=r.token||""}catch(e){}}
+/* S-01 (1.2.30): тяжёлые GET требуют CSRF-токен; токен меняется при каждом старте платы — на 403 берём новый и повторяем один раз. */
+async function gget(url,opts){opts=opts||{};if(!csrfToken)await loadCsrf();var f=function(){return fetch(url,Object.assign({},opts,{headers:{"X-CSRF-Token":csrfToken}}))};var r=await f();if(r.status===403){await loadCsrf();r=await f();}return r;}
 /* CSRF-1: токен меняется при каждом старте платы — вкладка, открытая до перезагрузки, получала 403 молча. На 403 берём новый токен и повторяем один раз. */
 async function post(url,opts){opts=opts||{};opts.method="POST";var h=opts.headers||{};opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});var r=await fetch(url,opts);if(r.status===403){await loadCsrf();opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});r=await fetch(url,opts)}return r}
 
