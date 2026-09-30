@@ -144,6 +144,9 @@ static bool build_json_full(const spectrum_data_t *sp, char **out, size_t *out_l
     // включает кнопку идентификации нуклидов по нему (nucBtnEnable).
     if (!append_fmt(&buf, &len, &cap, ",\"calib_set\":%s",
         calib_is_missing(sp->calibration, CALIB_COEFFS, sp->calib_valid) ? "false" : "true")) goto fail;
+    // У-2: главная страница пишет в журнал, когда счётчик растёт (Reset не выполнен прибором).
+    if (!append_fmt(&buf, &len, &cap, ",\"reset_unconfirmed\":%" PRIu32,
+        spectrum_reset_unconfirmed_count())) goto fail;
     if (!append_fmt(&buf, &len, &cap, "}")) goto fail;
     *out = buf;
     *out_len = len;
@@ -189,6 +192,9 @@ static bool build_json_meta(const spectrum_data_t *sp, char **out, size_t *out_l
     // #AWF-12b F2: тот же признак, что build_json_full выше и /api/device.
     if (!append_fmt(&buf, &len, &cap, ",\"calib_set\":%s",
         calib_is_missing(sp->calibration, CALIB_COEFFS, sp->calib_valid) ? "false" : "true")) goto fail;
+    // У-2: главная страница пишет в журнал, когда счётчик растёт (Reset не выполнен прибором).
+    if (!append_fmt(&buf, &len, &cap, ",\"reset_unconfirmed\":%" PRIu32,
+        spectrum_reset_unconfirmed_count())) goto fail;
     if (!append_fmt(&buf, &len, &cap, "}")) goto fail;
     *out = buf;
     *out_len = len;

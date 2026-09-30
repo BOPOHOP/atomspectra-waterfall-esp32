@@ -7,3 +7,5 @@ demo/*.gz binary
 *.html text eol=lf
 *.js text eol=lf
 *.css text eol=lf
+# shell scripts run in WSL/Linux CI: with CRLF bash sees a stray CR on every line
+*.sh text eol=lf

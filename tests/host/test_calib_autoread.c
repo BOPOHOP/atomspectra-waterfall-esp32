@@ -101,4 +101,16 @@ void calib_autoread_suite(void)
         CHECK(calib_order_in_range(-1, 5) == false);   // отрицательный (битый файл)
         CHECK(calib_order_in_range(1000, 5) == false); // явный мусор
     }
+    // BUG-AS-03: калибровка задана, серийник пуст — -cal всё равно нужен.
+    {
+        CHECK(calib_autoread_needed(false, true) == true);
+        CHECK(calib_autoread_needed(true, false) == true);
+        CHECK(calib_autoread_needed(false, false) == false);
+    }
+    // Н-1: -cal ради серийника калибровку платы не заменяет; ручной — заменяет.
+    {
+        CHECK(calib_apply_coeffs(true, false) == true);
+        CHECK(calib_apply_coeffs(true, true) == false);
+        CHECK(calib_apply_coeffs(false, false) == false);
+    }
 }

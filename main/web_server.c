@@ -126,14 +126,46 @@ static int parse_saved_index(const char *uri)
     return atoi(p + 11);
 }
 
+// #AUD-DIAG-1 R1: причина последнего сброса. Только имена, что есть во всех IDF 5.x;
+// прочее — "OTHER" + числовой reset_reason_code рядом.
+static const char *reset_reason_str(esp_reset_reason_t r)
+{
+    switch (r) {
+    case ESP_RST_POWERON:   return "POWERON";
+    case ESP_RST_EXT:       return "EXT";
+    case ESP_RST_SW:        return "SW";
+    case ESP_RST_PANIC:     return "PANIC";
+    case ESP_RST_INT_WDT:   return "INT_WDT";
+    case ESP_RST_TASK_WDT:  return "TASK_WDT";
+    case ESP_RST_WDT:       return "WDT";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT:  return "BROWNOUT";
+    case ESP_RST_SDIO:      return "SDIO";
+    case ESP_RST_UNKNOWN:   return "UNKNOWN";
+    default:                return "OTHER";
+    }
+}
+
 // AWF-3 (#7): наблюдаемость слияния база+прибор в /api/status.
 static void status_add_base_info(cJSON *root)
 {
+    // #AUD-DIAG-1 R1/R2: причина сброса, номер загрузки (сессия платы, +1 за загрузку,
+    // issue #52), время работы и SHA256 ELF — версия "1.2.29" разные сборки не различает.
+    esp_reset_reason_t rr = esp_reset_reason();
+    cJSON_AddStringToObject(root, "reset_reason", reset_reason_str(rr));
+    cJSON_AddNumberToObject(root, "reset_reason_code", (int)rr);
+    cJSON_AddNumberToObject(root, "boot_count", boot_config_get_session());
+    cJSON_AddNumberToObject(root, "uptime_s", (double)(esp_timer_get_time() / 1000000));
+    char elf_sha[17];
+    esp_app_get_elf_sha256(elf_sha, sizeof(elf_sha));
+    cJSON_AddStringToObject(root, "elf_sha", elf_sha);
     uint32_t base_time = 0, base_counts = 0, dev_resets = 0;
     spectrum_get_base_info(&base_time, &base_counts, &dev_resets);
     cJSON_AddNumberToObject(root, "base_time", base_time);
     cJSON_AddNumberToObject(root, "base_counts", base_counts);
     cJSON_AddNumberToObject(root, "dev_resets", dev_resets);
+    // У-2: Reset, которые прибор не выполнил (его набор сохранён по таймауту гейта #58).
+    cJSON_AddNumberToObject(root, "reset_unconfirmed", spectrum_reset_unconfirmed_count());
 }
 
 static esp_err_t handle_status(httpd_req_t *req)
@@ -177,7 +209,8 @@ static esp_err_t handle_status(httpd_req_t *req)
 
     char *json = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, json);
+    if (!json) httpd_resp_set_status(req, "503 Service Unavailable");   // F-09: нет памяти на JSON
+    httpd_resp_sendstr(req, json ? json : "{\"ok\":false,\"err\":\"oom\"}");
     free(json);
     cJSON_Delete(root);
     return ESP_OK;
@@ -515,9 +548,17 @@ static esp_err_t handle_reset(httpd_req_t *req)
     for (int i = 0; cmd[i]; i++) shproto_packet_add_data(&pkt, cmd[i]);
     shproto_packet_add_data(&pkt, '\0');
     shproto_packet_complete(&pkt);
-    usb_host_cdc_send(pkt.data, pkt.len);
-    spectrum_reset();
-    httpd_resp_sendstr(req, "{\"ok\":true}");
+    // У-2: sent=false — прибор -rst не получил (не подключён/ошибка USB); сброс
+    // платы выполнен. Н-4/Н-Д1: -rst дошлётся на ближайшем коннекте, если к тому
+    // времени набор прибора не принят по таймауту гейта #58 и не было нового Сброса.
+    bool sent = usb_host_cdc_send(pkt.data, pkt.len) == 0;
+    if (sent) {
+        spectrum_reset();
+    } else {
+        spectrum_reset_undelivered();
+        usb_host_cdc_request_rst();   // Н-4: дослать -rst на ближайшем коннекте
+    }
+    httpd_resp_sendstr(req, sent ? "{\"ok\":true,\"sent\":true}" : "{\"ok\":true,\"sent\":false}");
     return ESP_OK;
 }
 
@@ -620,10 +661,10 @@ static esp_err_t handle_ota_locked(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Image too large for partition");
         return ESP_FAIL;
     }
-    // Как spectrum_reset(): прервать автосохранение, НЕ удаляя файлы спектра
+    // В отличие от spectrum_reset(): прервать автосохранение, НЕ удаляя файлы спектра (П-6)
     // (writer не должен драться с OTA-write за flash-freeze/шину). Снимок
     // спектра/водопада на flash — не трогаем, OTA его не касается.
-    spectrum_autosave_abort();
+    spectrum_autosave_abort_keep();   // П-6: current.bin не трогать
 
     esp_ota_handle_t ota = 0;
     // D1: OTA_SIZE_UNKNOWN стирает ВЕСЬ слот сразу (не только Content-Length
@@ -722,7 +763,9 @@ static esp_err_t handle_ota_locked(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ota_end: invalid image");
         return ESP_FAIL;
     }
-    err = esp_ota_set_boot_partition(update);
+    // #OTA-VR (ota_busy.h): образ уже прошёл полную проверку в esp_ota_end() выше; повторная проверка
+    // внутри set_boot изредка ложно отказывает — до 3 попыток. Отказ esp_ota_end() остаётся окончательным.
+    err = ota_set_boot_verified(update);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "AWF-4: esp_ota_set_boot_partition: %s", esp_err_to_name(err));
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "set_boot_partition");
@@ -735,6 +778,9 @@ static esp_err_t handle_ota_locked(httpd_req_t *req)
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, resp);
     ESP_LOGW(TAG, "AWF-4: OTA written %d bytes to '%s', rebooting", received, update->label);
+    // #AUD-F01 (P-016): не терять открытый сегмент. После ответа: httpd однопоточный,
+    // пока идёт финализация, UI (system.html pollOtaReboot) ответа старой прошивки не получит.
+    spectrogram_prepare_reboot();
     // Как handle_reboot_esp/handle_wifi_reset: ответ уже отдан httpd_resp_sendstr
     // (блокирующий send() успел уйти в TCP-буфер), задержка — дать WiFi/LWIP
     // время реально протолкнуть его в эфир до esp_restart().
@@ -1746,7 +1792,8 @@ static esp_err_t handle_device(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "calib_reject_seq", spectrum_get_calib_reject_seq());
     char *json = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, json);
+    if (!json) httpd_resp_set_status(req, "503 Service Unavailable");   // F-09: нет памяти на JSON
+    httpd_resp_sendstr(req, json ? json : "{\"ok\":false,\"err\":\"oom\"}");
     free(json);
     cJSON_Delete(root);
     free(sp);
@@ -1784,18 +1831,48 @@ static esp_err_t handle_system(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "min_free_heap", esp_get_minimum_free_heap_size());
     // #MON-3: PSRAM отдельной строкой. Общая куча складывает internal и SPIRAM, по
     // ней нельзя судить, влезет ли следующее крупное кольцо: решение «расширить
-    // историю мониторинга» до сих пор принималось по косвенной цифре. Значения
-    // берутся из heap_caps напрямую, дешёвые (счётчики аллокатора, не обход).
+    // историю мониторинга» до сих пор принималось по косвенной цифре. *_free и
+    // *_min — счётчики аллокатора; *_largest — ОБХОД блоков кучи в критической
+    // секции (У-4): его цена публикуется в heap_walk_us.
+    int64_t walk_t0 = esp_timer_get_time();
+    size_t psram_largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+    size_t int_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    size_t dflt_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DEFAULT);
+    cJSON_AddNumberToObject(root, "heap_walk_us", (double)(esp_timer_get_time() - walk_t0));
     cJSON_AddNumberToObject(root, "psram_total", heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
     cJSON_AddNumberToObject(root, "psram_free", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-    cJSON_AddNumberToObject(root, "psram_largest", heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+    cJSON_AddNumberToObject(root, "psram_largest", psram_largest);
+    // Wi-Fi берёт буферы кадров из internal (#FW-50). int_* включают DMA-резерв
+    // SPIRAM_MALLOC_RESERVE_INTERNAL (32 КБ), недоступный malloc()/cJSON/httpd (У-5);
+    // int_dflt_* — только то, что доступно обычному malloc().
+    cJSON_AddNumberToObject(root, "int_free", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    cJSON_AddNumberToObject(root, "int_largest", int_largest);
+    cJSON_AddNumberToObject(root, "int_min", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+    cJSON_AddNumberToObject(root, "int_dflt_free",
+                            heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DEFAULT));
+    cJSON_AddNumberToObject(root, "int_dflt_largest", dflt_largest);
+    uint32_t af_n, af_size, af_caps, cj_spill;
+    mem_diag_get(&af_n, &af_size, &af_caps, &cj_spill);
+    cJSON_AddNumberToObject(root, "cjson_spill", cj_spill);      // cJSON ушёл из PSRAM во внутреннюю
+    cJSON_AddNumberToObject(root, "alloc_fail", af_n);            // отказы аллокации с загрузки
+    cJSON_AddNumberToObject(root, "alloc_fail_last_size", af_size);
+    cJSON_AddNumberToObject(root, "alloc_fail_last_caps", af_caps);
+    // #AUD-DIAG-1 R5 (часть; F-12/C-38/#RB-STK-1): минимум свободного стека за время работы, байт
+    // (ESP-IDF: uxTaskGetStackHighWaterMark — в байтах). Нет задачи — поле не пишется.
+    cJSON *stk = cJSON_AddObjectToObject(root, "stack_min_free");
+    static const char *const stk_names[] = { "usb_conn", "tcp_rx", "esp_timer", "sys_evt",
+                                             "httpd", "wf_fs", "wf", "usb_rxw", "tcp_tx" };
+    for (size_t i = 0; stk && i < sizeof(stk_names) / sizeof(stk_names[0]); i++) {
+        TaskHandle_t th = xTaskGetHandle(stk_names[i]);
+        if (th) cJSON_AddNumberToObject(stk, stk_names[i], (double)uxTaskGetStackHighWaterMark(th));
+    }
     cJSON_AddNumberToObject(root, "uptime_sec", (double)(esp_timer_get_time() / 1000000));
     cJSON_AddBoolToObject(root, "usb_connected", usb_host_cdc_is_connected());
     cJSON_AddBoolToObject(root, "wifi_connected", wifi_is_connected());
     cJSON_AddBoolToObject(root, "tcp_client", tcp_bridge_client_connected());
     // #PERF-3 (P-014): esp_littlefs_info() не читает готовый счётчик, а ОБХОДИТ
     // раздел — ~290 мс на 112 МБ. Страницы дёргают /api/system каждые 2-5 с, всё
-    // это время флеш занята, кэш обоих ядер заморожен, USB не вычитывается ->
+    // это время флеш занята, кэш обоих ядер заморожен (до XIP из PSRAM, П-3), USB не вычитывается ->
     // FIFO переходника переполняется -> битый CRC -> свип бракуется. Замер:
     // 19,1 % потерянных свипов против 0 % в покое. Значение чисто справочное для
     // UI и меняется медленно (ролловер сегмента раз в сотни секунд), поэтому
@@ -1841,7 +1918,8 @@ static esp_err_t handle_system(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "http_heavy_rejects", (double)http_io_gate_reject_count());
     char *json = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, json);
+    if (!json) httpd_resp_set_status(req, "503 Service Unavailable");   // F-09: нет памяти на JSON
+    httpd_resp_sendstr(req, json ? json : "{\"ok\":false,\"err\":\"oom\"}");
     free(json);
     cJSON_Delete(root);
     return ESP_OK;
@@ -1930,7 +2008,8 @@ static esp_err_t handle_usb_diag(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "uptime_ms",             d.uptime_ms);
     char *json = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, json);
+    if (!json) httpd_resp_set_status(req, "503 Service Unavailable");   // F-09: нет памяти на JSON
+    httpd_resp_sendstr(req, json ? json : "{\"ok\":false,\"err\":\"oom\"}");
     free(json);
     cJSON_Delete(root);
     return ESP_OK;

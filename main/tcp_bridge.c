@@ -3,6 +3,7 @@
 #include "acq_intent.h"      /* P1-a: cmd_is_device_reset() */
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "lwip/sockets.h"
 #include "lwip/inet.h"
 #include "freertos/FreeRTOS.h"
@@ -41,6 +42,9 @@ static SemaphoreHandle_t s_fd_mutex = NULL;
 static StreamBufferHandle_t s_tx_ring = NULL;
 static StaticStreamBuffer_t s_tx_ring_struct;   // во внутренней RAM (маленькая)
 static uint8_t *s_tx_ring_storage = NULL;       // в PSRAM
+// Н-5.1: момент последнего обмена с клиентом (send/recv), мс; uint32 — атомарное чтение.
+static volatile uint32_t s_client_io_ms = 0;
+static inline uint32_t now_ms32(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
 static volatile uint32_t s_bridge_dropped = 0;  // байт потеряно (overflow кольца + send-timeout)
 
 // producer: вызывается из CDC-задачи на каждый де-FTDI'нутый кусок. Не блокирует.
@@ -56,7 +60,8 @@ static void usb_to_tcp_cb(const uint8_t *data, size_t len)
         if (put < len) s_bridge_dropped += (uint32_t)(len - put);  // кольцо переполнено
     } else {
         // фоллбэк, если PSRAM-кольцо не выделилось: деградированный прямой режим
-        send(fd, data, len, MSG_DONTWAIT);
+        ssize_t sn = send(fd, data, len, MSG_DONTWAIT);   // C-34: хвост не терять молча
+        if (sn < (ssize_t)len) s_bridge_dropped += (uint32_t)(len - (sn > 0 ? (size_t)sn : 0));
     }
 }
 
@@ -85,7 +90,7 @@ static void tcp_tx_task(void *arg)
         size_t off = 0;
         while (off < n) {
             int w = send(fd, buf + off, n - off, 0);   // блокирующий (с SO_SNDTIMEO)
-            if (w > 0) { off += (size_t)w; continue; }
+            if (w > 0) { off += (size_t)w; s_client_io_ms = now_ms32(); continue; }
             if (w < 0 && errno == EINTR) continue;
             if (w < 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
                 // send-timeout: клиент тормозит дольше TX_SNDTIMEO_MS. Бросаем
@@ -110,10 +115,12 @@ static void tcp_tx_task(void *arg)
 static uint8_t s_pc_cmd_buf[512];
 static shproto_struct s_pc_cmd_decoder;
 static bool s_pc_cmd_decoder_init;
-// Скормить сырые байты клиента декодеру; при полном CMD_TEXT с «-rst» —
-// spectrum_reset(), как от кнопки UI «Сброс».
-static void tcp_scan_for_reset_cmd(const uint8_t *data, size_t n)
+// Скормить сырые байты клиента декодеру; true — в куске был полный CMD_TEXT с «-rst».
+// F-05: сам Сброс платы — у вызывающего и только после доставки прибору (rc==0),
+// как send_text_command_raw (usb_host_cdc.c) и кнопка UI «Сброс».
+static bool tcp_scan_for_reset_cmd(const uint8_t *data, size_t n)
 {
+    bool saw_rst = false;
     if (!s_pc_cmd_decoder_init) {
         shproto_init(&s_pc_cmd_decoder, s_pc_cmd_buf, sizeof(s_pc_cmd_buf));
         s_pc_cmd_decoder_init = true;
@@ -125,18 +132,26 @@ static void tcp_scan_for_reset_cmd(const uint8_t *data, size_t n)
             if (s_pc_cmd_decoder.cmd == CMD_TEXT && s_pc_cmd_decoder.len > 0 &&
                 s_pc_cmd_decoder.data[s_pc_cmd_decoder.len - 1] == '\0' &&
                 cmd_is_device_reset((const char *)s_pc_cmd_decoder.data)) {
-                ESP_LOGW(TAG, "TCP client sent -rst -- clearing base");
-                spectrum_reset();
+                saw_rst = true;
             }
         } else if (s_pc_cmd_decoder.dropped) {
             s_pc_cmd_decoder.dropped = false;
         }
     }
+    return saw_rst;
 }
 
 static void tcp_rx_task(void *arg)
 {
-    uint8_t buf[1024];
+    // Гейт 1.2.29 (stack_min_free.tcp_rx = 508 Б после первого клиента): приёмный буфер
+    // не на стеке, а в PSRAM — cdc_acm_host_data_tx_blocking копирует данные в свой буфер.
+    enum { RX_BUF = 1024 };
+    uint8_t *buf = NULL;
+    while (!buf) {   // F-5: не удалять задачу при отказе — мост ПК→прибор умер бы молча
+        buf = heap_caps_malloc(RX_BUF, MALLOC_CAP_SPIRAM);
+        if (!buf) buf = malloc(RX_BUF);
+        if (!buf) { ESP_LOGE(TAG, "rx buffer alloc failed, retry in 1 s"); vTaskDelay(pdMS_TO_TICKS(1000)); }
+    }
     while (1) {
         FD_LOCK();
         int fd = s_client_fd;
@@ -146,7 +161,7 @@ static void tcp_rx_task(void *arg)
             continue;
         }
 
-        int n = recv(fd, buf, sizeof(buf), 0);   // блокирующий recv — вне лока
+        int n = recv(fd, buf, RX_BUF, 0);   // блокирующий recv — вне лока
         if (n <= 0) {
             ESP_LOGI(TAG, "Client disconnected");
             FD_LOCK();
@@ -154,11 +169,20 @@ static void tcp_rx_task(void *arg)
             FD_UNLOCK();
             continue;
         }
+        s_client_io_ms = now_ms32();
         // Прибором управляет внешнее приложение: шлюз не знает, запущен ли набор,
         // и сторож набора не должен перебивать его «Стоп» своим -sta.
         usb_host_cdc_acq_intent_external();
-        tcp_scan_for_reset_cmd(buf, n);
-        usb_host_cdc_send(buf, n);
+        bool saw_rst = tcp_scan_for_reset_cmd(buf, n);
+        int rc = usb_host_cdc_send(buf, n);
+        if (saw_rst) {
+            if (rc == 0) {
+                ESP_LOGW(TAG, "TCP client sent -rst -- clearing base");
+                spectrum_reset();
+            } else {
+                ESP_LOGW(TAG, "TCP client -rst not delivered to device (rc=%d) -- board base kept", rc);
+            }
+        }
     }
 }
 
@@ -221,6 +245,17 @@ static void tcp_server_task(void *arg)
         if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &snd_to, sizeof(snd_to)) < 0)
             ESP_LOGW(TAG, "SO_SNDTIMEO failed: errno=%d", errno);
 
+        // Н-5.1 (release-gate 1.2.29): клиент, пропавший без FIN (ноутбук уснул,
+        // ушёл из зоны), при молчащем приборе держал слот моста вечно — данных нет,
+        // повторов нет. Keepalive закрывает его за ~KA_IDLE + KA_INTVL*KA_CNT с.
+        int ka = 1, ka_idle = 30, ka_intvl = 10, ka_cnt = 3;
+        if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof(ka)) < 0 ||
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &ka_idle, sizeof(ka_idle)) < 0 ||
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &ka_intvl, sizeof(ka_intvl)) < 0 ||
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &ka_cnt, sizeof(ka_cnt)) < 0)
+            ESP_LOGW(TAG, "TCP keepalive setup failed: errno=%d", errno);
+        s_client_io_ms = now_ms32();
+
         // Сбрасываем кольцо от хвоста прошлой сессии ДО публикации fd: producer
         // ещё гейтится s_client_fd<0 и не пишет, так что reset без гонки. Если
         // tx_task сейчас заблокирован в receive (reset вернёт fail) — кольцо и
@@ -258,13 +293,23 @@ void tcp_bridge_init(void)
     // (кэш/критические секции LWIP), независимо от раскладки приоритетов.
     xTaskCreatePinnedToCore(tcp_server_task, "tcp_srv", 4096, NULL, 5, NULL, 1);
     xTaskCreatePinnedToCore(tcp_tx_task,     "tcp_tx",  4096, NULL, 6, NULL, 1);
-    xTaskCreatePinnedToCore(tcp_rx_task,     "tcp_rx",  4096, NULL, 5, NULL, 1);
+    // 5120: запас на Сброс от клиента (spectrum_reset → запись метки во флеш + лог); эта ветка
+    // не измерена (нужен Сброс спектра через мост); стек без приёмного буфера (см. tcp_rx_task).
+    xTaskCreatePinnedToCore(tcp_rx_task,     "tcp_rx",  5120, NULL, 5, NULL, 1);
     ESP_LOGI(TAG, "TCP bridge initialized, port %d (net tasks pinned core 1)", TCP_BRIDGE_PORT);
 }
 
 bool tcp_bridge_client_connected(void)
 {
     return s_client_fd >= 0;
+}
+
+// Н-2/Н-5.1: клиент подключён И обменивался данными (send/recv) не дольше
+// max_idle_ms назад — «работа ПК-программы с платой» для возврата из полевой AP.
+bool tcp_bridge_client_active(uint32_t max_idle_ms)
+{
+    if (s_client_fd < 0) return false;
+    return (uint32_t)(now_ms32() - s_client_io_ms) <= max_idle_ms;   // uint32: перенос безопасен
 }
 
 uint32_t tcp_bridge_dropped_bytes(void)

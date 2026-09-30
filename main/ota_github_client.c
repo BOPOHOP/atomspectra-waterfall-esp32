@@ -8,6 +8,7 @@
 #include "ota_busy.h"
 #include "ota_github_download_retry.h"   // P3 №7 (sweep-B задача 5)
 #include "ota_image_check.h"
+#include "spectrogram.h"      // #AUD-F01: spectrogram_prepare_reboot()
 #include "atomspectra.h"      // wifi_is_connected()
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
@@ -438,6 +439,7 @@ static void install_task(void *arg)
     // и тот же неактивный слот одновременно (esp_ota_get_next_update_partition
     // не резервирует раздел сама по себе).
     if (!ota_busy_acquire(OTA_BUSY_GITHUB)) { install_fail(0, "ota_busy"); goto done; }
+    spectrum_autosave_abort_keep();   // F-08: как ручной /api/ota (П-6) — начатый автосейв прервать, current.bin не трогать
     esp_ota_handle_t ota = 0;
     if (esp_ota_begin(update, OTA_SIZE_UNKNOWN, &ota) != ESP_OK) {
         install_fail(0, "ota_begin_failed"); goto done;
@@ -521,12 +523,17 @@ static void install_task(void *arg)
 
     set_progress(OTA_GH_ST_INSTALLING, received, received, NULL);
     if (esp_ota_end(ota) != ESP_OK) { install_fail(0, "ota_end_failed"); goto done; }
-    if (esp_ota_set_boot_partition(update) != ESP_OK) {
+    // #OTA-VR (ota_busy.h): образ уже прошёл полную проверку в esp_ota_end(); повторная проверка внутри
+    // set_boot изредка ложно отказывает — до 3 попыток. Отказ esp_ota_end() выше остаётся окончательным.
+    if (ota_set_boot_verified(update) != ESP_OK) {
         install_fail(0, "set_boot_partition_failed"); goto done;
     }
-    set_progress(OTA_GH_ST_DONE, received, received, NULL);
     ESP_LOGW(TAG, "AWF-5: installed %s (%" PRIu32 " bytes) from GitHub, rebooting",
              update->label, received);
+    spectrogram_prepare_reboot();   // #AUD-F01 (P-016): не терять открытый сегмент
+    // D4-1 (разбор F01): DONE — только после подготовки: пока идёт финализация сегмента,
+    // httpd свободен, и UI (system.html ghPollReboot) принял бы ответ старой прошивки за конец ребута.
+    set_progress(OTA_GH_ST_DONE, received, received, NULL);
     vTaskDelay(pdMS_TO_TICKS(800));
     esp_restart();
 

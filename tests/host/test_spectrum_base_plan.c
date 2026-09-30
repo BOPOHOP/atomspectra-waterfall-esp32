@@ -230,6 +230,110 @@ static void test_d2_stale_stat_never_accepted_after_reset(void)
     CHECK(!spectrum_reset_stat_is_plausible_gen(2000, 6, current_gen, current_gen));
 }
 
+// тест: запуск без сброса — шлюз открыт, статистика принимается
+static void test_issue58_boot_without_reset_accepts_stat(void) {
+    bool bt = true;
+    spectrum_reset_gate_t g = { false, 0, 0 };
+    CHECK(spectrum_reset_gate_step(&g, 3000000, 3, 1667686, 1, 0, 0, &bt));
+    CHECK(!bt);
+    CHECK(spectrum_reset_gate_step(&g, 8000000, 8, 1667691, 2, 0, 0, &bt));
+    CHECK(g.reject_since_us == 0);
+}
+
+// тест: AWF-4 — устаревшая статистика сразу после сброса отклоняется, правдоподобная принимается
+static void test_issue58_awf4_race_still_rejected(void) {
+    bool bt = true;
+    spectrum_reset_gate_t g = { true, 0, 0 };
+    CHECK(!spectrum_reset_gate_step(&g, 1000000, 1, 2410, 5, 1, 1, &bt));
+    CHECK(spectrum_reset_gate_step(&g, 6000000, 6, 6, 6, 1, 1, &bt));
+    CHECK(!bt);
+}
+
+// тест: U1 — статистика старой генерации никогда не принимается и не запускает таймер
+static void test_u1_old_gen_never_starts_timer(void) {
+    bool bt = true;
+    spectrum_reset_gate_t g = { true, 0, 0 };
+    CHECK(!spectrum_reset_gate_step(&g, 1000000, 1, 1667686, 9, 2, 3, &bt));
+    CHECK(g.reject_since_us == 0);
+    CHECK(!spectrum_reset_gate_step(&g, 1000000000, 1000, 1667686, 10, 2, 3, &bt));
+    CHECK(g.reject_since_us == 0);
+}
+
+// тест: U1 — таймаут принимает только статистику, полученную после первого отклонения
+static void test_u1_timeout_needs_new_stat(void) {
+    bool bt = true;
+    spectrum_reset_gate_t g = { true, 0, 0 };
+    CHECK(!spectrum_reset_gate_step(&g, 1000000, 1, 1667686, 7, 3, 3, &bt));
+    CHECK(g.reject_since_us == 1000000);
+    CHECK(g.reject_first_seq == 7);
+    CHECK(!spectrum_reset_gate_step(&g, 10999999, 10, 1667695, 8, 3, 3, &bt));
+    CHECK(!spectrum_reset_gate_step(&g, 11000000, 11, 1667686, 7, 3, 3, &bt));
+    CHECK(!bt);
+    CHECK(spectrum_reset_gate_step(&g, 11000000, 11, 1667696, 8, 3, 3, &bt));
+    CHECK(bt);
+}
+
+// Н-1.3: STAT старого поколения с правдоподобным временем гейт не принимает (D2)
+static void test_n13_gate_old_gen_plausible_rejected(void) {
+    bool bt = true;
+    spectrum_reset_gate_t g = { true, 0, 0 };
+    CHECK(!spectrum_reset_gate_step(&g, 5000000, 5, 3, 4, 2, 3, &bt));
+    CHECK(!bt);
+    CHECK(g.reject_since_us == 0);
+}
+
+// Н-1.2: каждый STAT получает новый seq, gen и session на момент постановки
+static void test_n12_stat_tag_stamp(void) {
+    spectrum_stat_tag_t t = { false, 0, 0, 0 };
+    spectrum_stat_tag_stamp(&t, 3, 7);
+    CHECK(t.fresh && t.gen == 3 && t.session == 7 && t.seq == 1);
+    spectrum_stat_tag_stamp(&t, 4, 7);
+    CHECK(t.seq == 2 && t.gen == 4);
+}
+
+// Н-1.1: STAT прошлого сеанса USB и погашенный STAT в коммите не участвуют
+static void test_n11_stat_tag_session(void) {
+    spectrum_stat_tag_t t = { false, 0, 0, 0 };
+    spectrum_stat_tag_stamp(&t, 1, 5);
+    CHECK(spectrum_stat_tag_usable(&t, 5));
+    CHECK(!spectrum_stat_tag_usable(&t, 6));
+    t.fresh = false;
+    CHECK(!spectrum_stat_tag_usable(&t, 5));
+}
+
+// Н-1.2: публикация снимает гейт; перенос опоры — только без подтверждения
+static void test_n12_gate_on_publish(void) {
+    spectrum_reset_gate_t g = { true, 123, 9 };
+    CHECK(spectrum_reset_gate_on_publish(&g, true, false));
+    CHECK(!g.armed && g.reject_since_us == 0);
+    g.armed = true;
+    CHECK(!spectrum_reset_gate_on_publish(&g, true, true));
+    CHECK(!spectrum_reset_gate_on_publish(&g, false, false));
+}
+
+// Н-Д1: отложенный -rst — только пока тот же сброс не выполнен
+static void test_nd1_reset_pending_valid(void) {
+    spectrum_reset_gate_t g = { true, 0, 0 };
+    CHECK(spectrum_reset_pending_valid(&g, 5, 5));
+    CHECK(!spectrum_reset_pending_valid(&g, 5, 6));
+    g.armed = false;
+    CHECK(!spectrum_reset_pending_valid(&g, 5, 5));
+}
+
+// issue #58: старт без current.bin — первый коммит публикуется, не откладывается
+static void test_issue58_boot_commit_publishes(void) {
+    uint32_t base_bins[3] = {0,0,0};
+    uint32_t shown_bins[3] = {0,0,0};
+    spectrum_base_state_t st = { base_bins, 0, 0, shown_bins, 0, 0 };
+    uint32_t dev_bins[3] = {400, 300, 300};
+    CHECK(!spectrum_base_commit_should_defer(1000, st.base_counts, st.shown_counts, true));
+    bool did = spectrum_base_commit(&st, dev_bins, 1000, 3, true, 1667686);
+    CHECK(!did);
+    CHECK(st.base_counts == 0);
+    CHECK(st.shown_counts == 1000);
+    CHECK(shown_bins[0] == 400 && shown_bins[1] == 300 && shown_bins[2] == 300);
+}
+
 void spectrum_base_plan_suite(void)
 {
     test_reset_detection();
@@ -244,4 +348,14 @@ void spectrum_base_plan_suite(void)
     test_r1_defer_and_two_commit_sequence();
     test_awf4_reset_stat_race();
     test_d2_stale_stat_never_accepted_after_reset();
+    test_issue58_boot_without_reset_accepts_stat();
+    test_issue58_boot_commit_publishes();
+    test_issue58_awf4_race_still_rejected();
+    test_u1_old_gen_never_starts_timer();
+    test_u1_timeout_needs_new_stat();
+    test_n13_gate_old_gen_plausible_rejected();
+    test_n12_stat_tag_stamp();
+    test_n11_stat_tag_session();
+    test_n12_gate_on_publish();
+    test_nd1_reset_pending_valid();
 }

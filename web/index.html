@@ -32,7 +32,7 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 .status .sep{ color:#3a443a; } .status .ac{ color:var(--accent); font-weight:600; } .status .w{ color:var(--txt); } .mut{ color:#6b756a; }
 .bar{ height:8px; border-radius:4px; background:#1b211a; overflow:hidden; } .bar > i{ display:block; height:100%; border-radius:4px; transition:width .3s,background .3s; }
 .row{ display:flex; align-items:center; gap:16px; padding:12px 16px; flex-wrap:wrap; }
-.row + .row{ border-top:1px solid #1b211a; }
+.row + .row, #log + .row{ border-top:1px solid #1b211a; }  /* pre#log между рядами рвал .row + .row (разбор 54194aa, C) */
 .grp{ display:flex; gap:8px; }
 .btn{ border-radius:8px; padding:9px 16px; font-size:13px; cursor:pointer; background:#161b14; border:1px solid #2a322a; color:var(--txt); }
 .btn.sm{ padding:8px 13px; font-size:12.5px; }
@@ -110,6 +110,8 @@ table.saved tr.on td{ background:rgba(110,168,255,.07); }
 <span class="big ac" id="big-dose-wrap" style="display:none"><span id="big-dose">0.000</span><span class="mut" style="font-size:12px"> µSv/h</span></span>
 </div>
 </div>
+<!-- P-03 (Codeaudit): журнал главной — был скрыт (display:none), с #UI-6 удалён; lg() писал в никуда, в т.ч. «Сброс не выполнен» -->
+<pre id="log" style="display:none;margin:0 16px 10px;max-height:5.2em;overflow-y:auto;font-size:11.5px;line-height:1.3;color:#9aa598;white-space:pre-wrap;overflow-wrap:anywhere"></pre>
 <div class="row">
 <div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.scale">Шкала Y</span><div class="seg" id="seg-scale"><button id="btn-lin" onclick="setLog(false)">Lin</button><button id="btn-log" class="on" onclick="setLog(true)">Log</button></div></div>
 <div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.value">Величина</span><div class="seg" id="seg-y"><button id="btn-cnt" onclick="setCps(false)">Counts</button><button id="btn-cps" class="on" onclick="setCps(true)">CPS</button></div></div>
@@ -224,15 +226,15 @@ var DICT={
   "confirm.wifiReset":"Сбросить WiFi?",
   "saved.savedAs":"Сохранён #%1","saved.saveErr":"Ошибка сохранения",
   "saved.saveErrNoData":"Нет данных спектра (прибор не подключён/не выдаёт спектр)","saved.saveErrNoSpace":"Мало места на flash — удалите старые снимки",
-  "log.start":"Start sent","log.stop":"Stop sent","log.reset":"Reset sent","log.info":"Info requested",
-  "log.ovlOk":"Overlay loaded: #%1","log.ovlErr":"Overlay error: %1","log.ovlClear":"Overlay cleared",
+  "log.start":"Старт отправлен","log.stop":"Стоп отправлен","log.reset":"Сброс отправлен","log.resetNotSent":"Прибор не получил -rst (USB не подключён?) — плата повторит его в ближайшие секунды или при подключении прибора","log.resetUnconfirmed":"Прибор не выполнил сброс за ~10 с — показан его набор","log.resetUnconfirmedBoot":"С загрузки платы прибор не выполнил сбросов: {n} — показан его набор","log.info":"Запрошена информация",
+  "log.ovlOk":"Наложение загружено: #%1","log.ovlErr":"Ошибка наложения: %1","log.ovlClear":"Наложение очищено",
   "ovl.noTime":" (время не задано — показан счёт, не CPS)",
   "cal.readEmpty":"Прибор вернул пустую калибровку (нули/NaN) — калибровка платы не изменена",
-  "log.del":"Deleted #%1","log.rebootDev":"Reboot device sent",
+  "log.del":"Удалено: #%1","log.rebootDev":"Команда перезагрузки прибора отправлена",
   "log.exportOk":"Выгружено: %1","log.exportErr":"Экспорт не удался: %1",
-  "log.cal":"Calibration: [%1]","log.calErr":"Calibration error: %1","log.calClear":"Calibration cleared",
+  "log.cal":"Калибровка: [%1]","log.calErr":"Ошибка калибровки: %1","log.calClear":"Калибровка очищена",
   "st.real":"Реал.","st.live":"Живое","st.dead":"Мёртв.","st.dose":"МД",
-  "err.prefix":"Error: %1"
+  "err.prefix":"Ошибка: %1"
  },
  en:{
   "device":"Device",
@@ -274,7 +276,7 @@ var DICT={
   "confirm.wifiReset":"Reset WiFi?",
   "saved.savedAs":"Saved #%1","saved.saveErr":"Save error",
   "saved.saveErrNoData":"No spectrum data (device not connected / no spectrum)","saved.saveErrNoSpace":"Low flash space — delete old snapshots",
-  "log.start":"Start sent","log.stop":"Stop sent","log.reset":"Reset sent","log.info":"Info requested",
+  "log.start":"Start sent","log.stop":"Stop sent","log.reset":"Reset sent","log.resetNotSent":"Device did not receive -rst (USB disconnected?) — the board will resend it within seconds or when the device connects","log.resetUnconfirmed":"Device did not reset within ~10 s — showing its data","log.resetUnconfirmedBoot":"Resets not performed by the device since board boot: {n} — showing its data","log.info":"Info requested",
   "log.sent":"Sent: %1","log.ovlOk":"Overlay loaded: #%1","log.ovlErr":"Overlay error: %1","log.ovlClear":"Overlay cleared",
   "ovl.noTime":" (time unknown — showing counts, not CPS)",
   "cal.readEmpty":"Device returned an empty calibration (zeros/NaN) — board calibration unchanged",
@@ -322,7 +324,7 @@ var cursorCh=-1;
 var logEl=document.getElementById("log");
 var overlayBins=null,overlayIdx=-1,overlayTime=0;   /* #WF-CPS-1: своё время оверлея */
 var isLog=true,isCps=true,isKev=true;  /* #UI-34: дефолты тумблеров — Log / CPS / keV */
-var calib=null,lastD=null,calibEditing=false;
+var calib=null,lastD=null,calibEditing=false,lastRU=null;
 /* #AWF-12b F2 (release-gate-1.2.28-code.md): единый признак "калибровка
    задана" — предпочитаем булево поле calib_set прошивки (тот же предикат,
    что гейт авто-считывания), запасной вариант для старой прошивки без поля
@@ -343,9 +345,9 @@ async function post(url,opts){opts=opts||{};opts.method="POST";var h=opts.header
 async function loadPrefix(){try{var r=await(await fetch("/api/boot-config")).json();var e=document.getElementById("fx-prefix");if(e)e.value=r.name_prefix||"";}catch(_){}}
 async function savePrefix(){var e=document.getElementById("fx-prefix"),st=document.getElementById("fx-prefix-st");if(!e)return;st.textContent="…";try{var r=await post("/api/boot-config",{headers:{"Content-Type":"application/json"},body:JSON.stringify({name_prefix:e.value})});st.textContent=r.ok?"✓":"✗";}catch(_){st.textContent="✗";}}
 
-function lg(m){if(!logEl)return;logEl.textContent+=m+"\n";logEl.scrollTop=logEl.scrollHeight}
+function lg(m){if(!logEl)return;logEl.style.display="";var a=(logEl.textContent+new Date().toLocaleTimeString()+"  "+m).split("\n");logEl.textContent=a.slice(-50).join("\n")+"\n";logEl.scrollTop=logEl.scrollHeight}
 /* #UI-1: подтянуть текстовые ответы прибора из /api/devlog и показать их в логе команд («← ...») */
-async function pollDevLog(){try{var r=await(await fetch("/api/devlog?since="+devSeq)).json();if(r.lines&&r.lines.length){r.lines.forEach(function(e){var t=(e.text||"").replace(/\n+$/,"");lg("← "+t)})}if(typeof r.next==="number")devSeq=r.next}catch(e){}}
+async function pollDevLog(){try{var r=await(await fetch("/api/devlog?since="+devSeq)).json();if(r.lines&&r.lines.length){r.lines.forEach(function(e){var t=(e.text||"").replace(/\n+$/,""),ls=t.split("\n");if(ls.length>3)t=ls[0]+"  … (+"+(ls.length-1)+")";if(t.length>120)t=t.slice(0,120)+"…";lg("← "+t)})}if(typeof r.next==="number")devSeq=r.next}catch(e){}}
 function fmtTime(s){s=Math.round(s);var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return(h>0?h+"h ":"")+(m>0?m+"m ":"")+ss+"s"}
 function fmtHMS(s){var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(ss).padStart(2,"0")}
 function fmtNum(n){return Math.round(n).toLocaleString(lcl())}
@@ -412,6 +414,8 @@ async function update(){
   if(d.serial)document.getElementById("device-chip").textContent=d.serial;
   document.getElementById("ip-chip").textContent=location.hostname;
   lastD=d;
+  /* У-2: Reset не выполнен прибором — его набор сохранён (гейт #58, таймаут 10 с) */
+  if(typeof d.reset_unconfirmed==="number"){if(lastRU===null){if(d.reset_unconfirmed>0)lg(tr("log.resetUnconfirmedBoot").replace("{n}",d.reset_unconfirmed));}else if(d.reset_unconfirmed>lastRU)lg(tr("log.resetUnconfirmed"));lastRU=d.reset_unconfirmed;}
   acqObserve(d.time);  /* #UI-44 */
   setDeadBanner(!!d.dead);  /* #FW-43 */
   var stEl=document.getElementById("status");
@@ -677,7 +681,7 @@ function acqUserSet(run){
 }
 async function startAcq(){acqUserSet(true);await post("/api/command",{body:"-sta"});lg(tr("log.start"))}
 async function stopAcq(){acqUserSet(false);await post("/api/command",{body:"-sto"});lg(tr("log.stop"))}
-async function resetSpectrum(){clearCanvas();lastD=null;document.getElementById("big-time").textContent="00:00:00";document.getElementById("big-cps").textContent="0";document.getElementById("big-total").textContent="0";await post("/api/reset");lg(tr("log.reset"))}
+async function resetSpectrum(){clearCanvas();lastD=null;document.getElementById("big-time").textContent="00:00:00";document.getElementById("big-cps").textContent="0";document.getElementById("big-total").textContent="0";var r=await post("/api/reset");lg(tr("log.reset"));try{if((await r.json()).sent===false)lg(tr("log.resetNotSent"))}catch(e){}}
 async function saveSpectrum(){var r=await(await post("/api/save")).json();
  if(r.ok){lg(tfmt("saved.savedAs",r.index));loadSaved();loadFlashInfo();return}
  var k=r.err==="novalid"?"saved.saveErrNoData":r.err==="nospace"?"saved.saveErrNoSpace":"saved.saveErr";
