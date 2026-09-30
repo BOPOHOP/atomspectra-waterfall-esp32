@@ -147,6 +147,12 @@ need web_waterfall.c 1 '    reg(server, "/api/waterfall/export.aswf", HTTP_GET, 
 need web_waterfall.c 1 '    reg(server, "/api/waterfall/export.n42",  HTTP_GET, h_export_n42_async);'
 need web_waterfall.c 1 '    reg(server, "/api/waterfall/segment",  HTTP_GET, h_segment_async);'
 need web_waterfall.c 1 '        if (want >= 1 && want < rows) rows = want;'
+# LK-02/03/04 (1.2.30): старт/стоп/очистка/удаление сегмента — в отдельной задаче со своим счётчиком
+need web_waterfall.c 1 '    reg(server, "/api/waterfall/start",  HTTP_POST, h_start_async);'
+need web_waterfall.c 1 '    reg(server, "/api/waterfall/stop",   HTTP_POST, h_stop_async);'
+need web_waterfall.c 1 '    reg(server, "/api/waterfall/clear",  HTTP_POST, h_clear_async);'
+need web_waterfall.c 1 '    reg(server, "/api/waterfall/segment/delete", HTTP_POST, h_segdel_async);'
+need web_waterfall.c 4 '&s_ctl_active, WF_CTL_MAX); }'
 # LK-05 (1.2.30): httpd ждёт прибор на -inf / -tc_pot? не дольше 1 с на команду (было 2 с)
 need web_server.c 1 '#define SETTINGS_RAW_WAIT_MS 1000'
 need web_server.c 2 '    for (int waited = 0; waited < SETTINGS_RAW_WAIT_MS; waited += 50) {'

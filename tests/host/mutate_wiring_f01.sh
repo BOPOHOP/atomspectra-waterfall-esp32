@@ -87,6 +87,12 @@ mut M62_wp5_wholecopy   debug_log_ring.c      's/    char \*chunk = malloc(DBGLO
 mut M63_lk09_noalive    web_waterfall.c       '/    if (!alive) { free(a); return; }/d' 'if (!alive) { free(a); return; }'
 mut M64_lk09_always     web_waterfall.c       's/    if (!alive) { free(a); return; }/    if (false) { free(a); return; }/' 'if (!alive) { free(a); return; }'
 mut M65_lk09_inflight   web_waterfall.c       's/#define WS_INFLIGHT_MAX  4 /#define WS_INFLIGHT_MAX  8 /' '#define WS_INFLIGHT_MAX  4'
+# LK-02/03/04 (1.2.30)
+mut M71_lk02_sync_start web_waterfall.c       's/HTTP_POST, h_start_async);/HTTP_POST, h_start);/' 'h_start_async);'
+mut M72_lk02_sync_stop  web_waterfall.c       's/HTTP_POST, h_stop_async);/HTTP_POST, h_stop);/' 'h_stop_async);'
+mut M73_lk03_sync_clear web_waterfall.c       's/HTTP_POST, h_clear_async);/HTTP_POST, h_clear);/' 'h_clear_async);'
+mut M74_lk04_sync_segdl web_waterfall.c       's/HTTP_POST, h_segdel_async);/HTTP_POST, h_segment_delete);/' 'h_segdel_async);'
+mut M75_lk02_shared_cnt web_waterfall.c       's/h_stop, \&s_ctl_active, WF_CTL_MAX/h_stop, \&s_dl_active, WF_CTL_MAX/' '&s_ctl_active, WF_CTL_MAX); }'
 # LK-08/P-01 (1.2.30)
 mut M66_lk08_sync_win   web_waterfall.c       's/HTTP_GET,  h_window_async);/HTTP_GET,  h_window);/' 'h_window_async);'
 mut M67_lk08_sync_n42   web_waterfall.c       's/HTTP_GET, h_export_n42_async);/HTTP_GET, h_export_n42);/' 'h_export_n42_async);'

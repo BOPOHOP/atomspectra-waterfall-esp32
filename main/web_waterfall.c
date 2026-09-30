@@ -1287,7 +1287,7 @@ static void reg(httpd_handle_t srv, const char *uri, httpd_method_t m,
 #define WF_DL_MAX         1      // одновременно одна выдача: внутренняя RAM под стек задачи ограничена
 #define WF_DL_STACK       7168
 static volatile int s_dl_active;
-typedef struct { httpd_req_t *req; esp_err_t (*h)(httpd_req_t *); } wf_dl_job_t;
+typedef struct { httpd_req_t *req; esp_err_t (*h)(httpd_req_t *); volatile int *cnt; } wf_dl_job_t;
 
 static void wf_dl_task(void *arg)
 {
@@ -1295,7 +1295,7 @@ static void wf_dl_task(void *arg)
     free(arg);
     (void)j.h(j.req);
     httpd_req_async_handler_complete(j.req);
-    __atomic_fetch_sub(&s_dl_active, 1, __ATOMIC_SEQ_CST);
+    __atomic_fetch_sub(j.cnt, 1, __ATOMIC_SEQ_CST);
     vTaskDelete(NULL);
 }
 static esp_err_t wf_dl_busy(httpd_req_t *req)
@@ -1306,33 +1306,42 @@ static esp_err_t wf_dl_busy(httpd_req_t *req)
     return ESP_OK;
 }
 
-static esp_err_t wf_dl_async(httpd_req_t *req, esp_err_t (*h)(httpd_req_t *))
+static esp_err_t wf_dl_async(httpd_req_t *req, esp_err_t (*h)(httpd_req_t *), volatile int *cnt, int cmax)
 {
-    if (__atomic_add_fetch(&s_dl_active, 1, __ATOMIC_SEQ_CST) > WF_DL_MAX) {
-        __atomic_fetch_sub(&s_dl_active, 1, __ATOMIC_SEQ_CST);
+    if (__atomic_add_fetch(cnt, 1, __ATOMIC_SEQ_CST) > cmax) {
+        __atomic_fetch_sub(cnt, 1, __ATOMIC_SEQ_CST);
         return wf_dl_busy(req);
     }
     httpd_req_t *cp = NULL;
     wf_dl_job_t *j = malloc(sizeof(*j));
     if (!j || httpd_req_async_handler_begin(req, &cp) != ESP_OK) {
         free(j);
-        __atomic_fetch_sub(&s_dl_active, 1, __ATOMIC_SEQ_CST);
+        __atomic_fetch_sub(cnt, 1, __ATOMIC_SEQ_CST);
         return wf_dl_busy(req);
     }
-    j->req = cp; j->h = h;
+    j->req = cp; j->h = h; j->cnt = cnt;
     if (xTaskCreate(wf_dl_task, "wf_dl", WF_DL_STACK, j, 5, NULL) != pdPASS) {
         free(j);
         (void)wf_dl_busy(cp);
         httpd_req_async_handler_complete(cp);
-        __atomic_fetch_sub(&s_dl_active, 1, __ATOMIC_SEQ_CST);
+        __atomic_fetch_sub(cnt, 1, __ATOMIC_SEQ_CST);
     }
     return ESP_OK;
 }
 
-static esp_err_t h_window_async(httpd_req_t *req)      { return wf_dl_async(req, h_window); }
-static esp_err_t h_export_aswf_async(httpd_req_t *req) { return wf_dl_async(req, h_export_aswf); }
-static esp_err_t h_export_n42_async(httpd_req_t *req)  { return wf_dl_async(req, h_export_n42); }
-static esp_err_t h_segment_async(httpd_req_t *req)     { return wf_dl_async(req, h_segment); }
+static esp_err_t h_window_async(httpd_req_t *req)      { return wf_dl_async(req, h_window, &s_dl_active, WF_DL_MAX); }
+static esp_err_t h_export_aswf_async(httpd_req_t *req) { return wf_dl_async(req, h_export_aswf, &s_dl_active, WF_DL_MAX); }
+static esp_err_t h_export_n42_async(httpd_req_t *req)  { return wf_dl_async(req, h_export_n42, &s_dl_active, WF_DL_MAX); }
+static esp_err_t h_segment_async(httpd_req_t *req)     { return wf_dl_async(req, h_segment, &s_dl_active, WF_DL_MAX); }
+
+// LK-02/03/04 (1.2.30): старт/стоп/очистка/удаление сегмента ждут FSLOCK и окна flash секунды —
+// тоже в отдельной задаче, со своим счётчиком (долгая выдача не блокирует Стоп).
+#define WF_CTL_MAX        1
+static volatile int s_ctl_active;
+static esp_err_t h_start_async(httpd_req_t *req)   { return wf_dl_async(req, h_start, &s_ctl_active, WF_CTL_MAX); }
+static esp_err_t h_stop_async(httpd_req_t *req)    { return wf_dl_async(req, h_stop, &s_ctl_active, WF_CTL_MAX); }
+static esp_err_t h_clear_async(httpd_req_t *req)   { return wf_dl_async(req, h_clear, &s_ctl_active, WF_CTL_MAX); }
+static esp_err_t h_segdel_async(httpd_req_t *req)  { return wf_dl_async(req, h_segment_delete, &s_ctl_active, WF_CTL_MAX); }
 
 void web_waterfall_register(httpd_handle_t server)
 {
@@ -1343,9 +1352,9 @@ void web_waterfall_register(httpd_handle_t server)
 
     reg(server, "/waterfall",            HTTP_GET,  h_page);
     reg(server, "/api/waterfall/status", HTTP_GET,  h_status);
-    reg(server, "/api/waterfall/start",  HTTP_POST, h_start);
-    reg(server, "/api/waterfall/stop",   HTTP_POST, h_stop);
-    reg(server, "/api/waterfall/clear",  HTTP_POST, h_clear);
+    reg(server, "/api/waterfall/start",  HTTP_POST, h_start_async);
+    reg(server, "/api/waterfall/stop",   HTTP_POST, h_stop_async);
+    reg(server, "/api/waterfall/clear",  HTTP_POST, h_clear_async);
     reg(server, "/api/waterfall/config", HTTP_POST, h_config);
     reg(server, "/api/waterfall/window", HTTP_GET,  h_window_async);
     reg(server, "/api/waterfall/export.aswf", HTTP_GET, h_export_aswf_async);
@@ -1354,7 +1363,7 @@ void web_waterfall_register(httpd_handle_t server)
     reg(server, "/api/waterfall/segments", HTTP_GET, h_segments);
     reg(server, "/api/waterfall/segment",  HTTP_GET, h_segment_async);
     // #REC-11 pull: удаление сегмента по ack от PC-клиента (CSRF, только завершённый).
-    reg(server, "/api/waterfall/segment/delete", HTTP_POST, h_segment_delete);
+    reg(server, "/api/waterfall/segment/delete", HTTP_POST, h_segdel_async);
     // #REC-11-A2: конфиг/статус автономной выгрузки сегментов.
     reg(server, "/api/waterfall/offload",  HTTP_GET,  h_offload_get);
     reg(server, "/api/waterfall/offload",  HTTP_POST, h_offload_set);
