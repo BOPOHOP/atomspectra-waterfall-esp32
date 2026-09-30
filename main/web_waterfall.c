@@ -1301,7 +1301,8 @@ static void wf_dl_task(void *arg)
 static esp_err_t wf_dl_busy(httpd_req_t *req)
 {
     httpd_resp_set_hdr(req, "Retry-After", "2");
-    httpd_resp_send_err(req, HTTPD_503_SERVICE_UNAVAILABLE, "busy");
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    httpd_resp_sendstr(req, "busy");
     return ESP_OK;
 }
 
