@@ -287,7 +287,7 @@ then a "Reset" was not confirmed, the pulses of that interval are still lost (wi
 - The reboot when falling back to the field access point runs in a separate task with enough stack.
 - Firmware update occasionally rejected a valid image with `set_boot_partition`:
   the image passed the full check in `esp_ota_end()`, but the second check when selecting the boot partition
-  reported `Checksum failed` (1 failure in 16 OTAs in the test logs, on a manual update; repeating the same OTA succeeded). This
+  reported `Checksum failed` (one failure in the test logs, on a manual update; repeating the same OTA succeeded). This
   second check is now retried up to 3 times with a 200 ms pause; an `esp_ota_end()` failure is still final
   (#OTA-VR, `main/ota_busy.h`).
 - Stack headroom of the TCP bridge receive task is 2528–2556 B instead of 508 B. JSON objects moved to PSRAM.
