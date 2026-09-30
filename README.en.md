@@ -357,7 +357,7 @@ that point into a **base**, then shows the analyzer's fresh (zeroed) histogram o
 - **`/api/status`**: `base_counts`/`base_time` — how much is stored in the base, `dev_resets`
   — how many times the board has caught the analyzer resetting during this session,
   `reset_unconfirmed` — how many Resets the analyzer did not perform (`firmware-v1.2.29+`): if
-  it keeps sending its old data for 10 seconds after a Reset, the board shows that data instead
+  it keeps sending its old data for about 10 s after a Reset (11–13 s in practice), the board shows that data instead
   of keeping the screen empty, and the main page log says so.
 - **The Reset button** (in the Web UI **and** in BecqMoni/AtomSpectra over the TCP bridge,
   see below) is the only way to actually zero the reading — a power loss by itself never

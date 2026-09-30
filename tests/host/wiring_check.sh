@@ -57,7 +57,18 @@ d41=$(awk '/spectrogram_prepare_reboot\(\);/{p=FNR} /set_progress\(OTA_GH_ST_DON
 # Codeaudit F-08/F-09/F-10
 need ota_github_client.c 1 'spectrum_autosave_abort_keep();'
 need web_server.c  4 'if (!json) httpd_resp_set_status(req, "503 Service Unavailable");'
+need web_waterfall.c 1 'if (!out) httpd_resp_set_status(req, "503 Service Unavailable");'   # pass3 F-09: h_offload_get
 need wf_offload.c  1 'if (short_rd) { result = -16; goto done; }'
+# #OTA-VR: оба пути OTA ставят загрузочный раздел через повтор проверки; отказ esp_ota_end() — окончательный
+need web_server.c  1 'err = ota_set_boot_verified(update);'
+need web_server.c  0 'esp_ota_set_boot_partition('
+need ota_github_client.c 1 'if (ota_set_boot_verified(update) != ESP_OK) {'
+need ota_github_client.c 0 'esp_ota_set_boot_partition('
+need ota_github_client.c 1 'if (esp_ota_end(ota) != ESP_OK) { install_fail(0, "ota_end_failed"); goto done; }'
+need ota_busy.c    1 'ota_boot_retry_pure(set_boot_cb, &b, 3, ESP_ERR_OTA_VALIDATE_FAILED, &calls);'
+oe=$(awk '{c=$0; sub(/\r$/,"",c); sub(/^[ \t]+/,"",c)} p ~ /^err = esp_ota_end\(ota\);/ {n++; if (c == "if (err != ESP_OK) {") a++}
+  {p=c} END{print (n == 1 && a == 1) ? "ok" : "bad " n+0 "/" a+0}' web_server.c)
+[ "$oe" = ok ] || { echo "WIRING FAIL web_server.c: esp_ota_end() failure is not final (#OTA-VR, $oe)"; RC=1; }
 # #AUD-RST: неподтверждённый Сброс — опора до Сброса сохраняется и проверяется в wf_task
 need spectrogram.c 1 'memcpy(s_pre_rst_bins, s_prev, WF_CHANNELS * sizeof(uint32_t));'
 need spectrogram.c 1 'bool keep = s_pre_rst_valid && wf_rst_keeps_data('
@@ -76,6 +87,14 @@ need spectrogram.c 1 'for (int i = 0; i < 200 && s_wf_busy; i++) vTaskDelay(pdMS
 need spectrogram.c 1 's_wf_busy = true;    /* до проверки recording'
 need main.c        1 'if (t_cjson_try) return;'
 need spectrogram.c 1 's_pre_rst_bins = s_ref_bins;'                        # один PSRAM-буфер на две роли (min_free_heap)
+# Разбор 45cc8ae..5859f53 pass3 F-02: сброс флага итерации; опора файла потребляется один раз и РАНЬШЕ захвата опоры до Сброса
+need spectrogram.c 1 's_wf_busy = false;   /* LK-16'
+rp=$(awk '{c=$0; sub(/\r$/,"",c); sub(/^[ \t]+/,"",c)} p == "if (s_ref_pending) {" {n++; if (c == "s_ref_pending = false;") a++}
+  {p=c} END{print (n == 0 || (n == 1 && a == 1)) ? "ok" : "bad " n+0 "/" a+0}' spectrogram.c)
+[ "$rp" = ok ] || { echo "WIRING FAIL spectrogram.c: s_ref_pending not cleared when the file reference is consumed ($rp)"; RC=1; }
+ord=$(awk '/if \(s_ref_pending\) \{/ && !a {a=FNR} /memcpy\(s_pre_rst_bins, s_prev, WF_CHANNELS/ && !b {b=FNR}
+  END{print (!a || !b || a < b) ? "ok" : "bad " a "/" b}' spectrogram.c)
+[ "$ord" = ok ] || { echo "WIRING FAIL spectrogram.c: pre-reset capture precedes file-reference consume (shared buffer, $ord)"; RC=1; }
 # Разбор 54194aa pass2: барьеры Деккера — сразу после s_wf_busy = true и сразу перед ожиданием в prepare_reboot
 dk=$(awk '{c=$0; sub(/\r$/,"",c); sub(/^[ \t]+/,"",c)}
   p ~ /^s_wf_busy = true;/ {n++; if (c ~ /^__sync_synchronize\(\);/) a++}

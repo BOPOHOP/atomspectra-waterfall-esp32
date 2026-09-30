@@ -1089,7 +1089,8 @@ static esp_err_t h_offload_get(httpd_req_t *req)
     cJSON_AddBoolToObject  (root, "busy",        s.busy);
     char *out = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, out ? out : "{}");
+    if (!out) httpd_resp_set_status(req, "503 Service Unavailable");   // F-09 (разбор pass3): нет памяти на JSON
+    httpd_resp_sendstr(req, out ? out : "{\"ok\":false,\"err\":\"oom\"}");
     if (out) free(out);
     cJSON_Delete(root);
     return ESP_OK;

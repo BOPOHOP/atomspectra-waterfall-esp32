@@ -227,14 +227,14 @@ var DICT={
   "saved.savedAs":"Сохранён #%1","saved.saveErr":"Ошибка сохранения",
   "saved.saveErrNoData":"Нет данных спектра (прибор не подключён/не выдаёт спектр)","saved.saveErrNoSpace":"Мало места на flash — удалите старые снимки",
   "log.start":"Старт отправлен","log.stop":"Стоп отправлен","log.reset":"Сброс отправлен","log.resetNotSent":"Прибор не получил -rst (USB не подключён?) — плата повторит его в ближайшие секунды или при подключении прибора","log.resetUnconfirmed":"Прибор не выполнил сброс за ~10 с — показан его набор","log.resetUnconfirmedBoot":"С загрузки платы прибор не выполнил сбросов: {n} — показан его набор","log.info":"Запрошена информация",
-  "log.ovlOk":"Overlay loaded: #%1","log.ovlErr":"Overlay error: %1","log.ovlClear":"Наложение очищено",
+  "log.ovlOk":"Наложение загружено: #%1","log.ovlErr":"Ошибка наложения: %1","log.ovlClear":"Наложение очищено",
   "ovl.noTime":" (время не задано — показан счёт, не CPS)",
   "cal.readEmpty":"Прибор вернул пустую калибровку (нули/NaN) — калибровка платы не изменена",
-  "log.del":"Deleted #%1","log.rebootDev":"Команда перезагрузки прибора отправлена",
+  "log.del":"Удалено: #%1","log.rebootDev":"Команда перезагрузки прибора отправлена",
   "log.exportOk":"Выгружено: %1","log.exportErr":"Экспорт не удался: %1",
-  "log.cal":"Calibration: [%1]","log.calErr":"Calibration error: %1","log.calClear":"Калибровка очищена",
+  "log.cal":"Калибровка: [%1]","log.calErr":"Ошибка калибровки: %1","log.calClear":"Калибровка очищена",
   "st.real":"Реал.","st.live":"Живое","st.dead":"Мёртв.","st.dose":"МД",
-  "err.prefix":"Error: %1"
+  "err.prefix":"Ошибка: %1"
  },
  en:{
   "device":"Device",
@@ -347,7 +347,7 @@ async function savePrefix(){var e=document.getElementById("fx-prefix"),st=docume
 
 function lg(m){if(!logEl)return;logEl.style.display="";var a=(logEl.textContent+new Date().toLocaleTimeString()+"  "+m).split("\n");logEl.textContent=a.slice(-50).join("\n")+"\n";logEl.scrollTop=logEl.scrollHeight}
 /* #UI-1: подтянуть текстовые ответы прибора из /api/devlog и показать их в логе команд («← ...») */
-async function pollDevLog(){try{var r=await(await fetch("/api/devlog?since="+devSeq)).json();if(r.lines&&r.lines.length){r.lines.forEach(function(e){var t=(e.text||"").replace(/\n+$/,""),ls=t.split("\n");if(ls.length>3)t=ls[0]+"  … (+"+(ls.length-1)+")";if(t.length>200)t=t.slice(0,200)+"…";lg("← "+t)})}if(typeof r.next==="number")devSeq=r.next}catch(e){}}
+async function pollDevLog(){try{var r=await(await fetch("/api/devlog?since="+devSeq)).json();if(r.lines&&r.lines.length){r.lines.forEach(function(e){var t=(e.text||"").replace(/\n+$/,""),ls=t.split("\n");if(ls.length>3)t=ls[0]+"  … (+"+(ls.length-1)+")";if(t.length>120)t=t.slice(0,120)+"…";lg("← "+t)})}if(typeof r.next==="number")devSeq=r.next}catch(e){}}
 function fmtTime(s){s=Math.round(s);var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return(h>0?h+"h ":"")+(m>0?m+"m ":"")+ss+"s"}
 function fmtHMS(s){var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(ss).padStart(2,"0")}
 function fmtNum(n){return Math.round(n).toLocaleString(lcl())}

@@ -523,7 +523,9 @@ static void install_task(void *arg)
 
     set_progress(OTA_GH_ST_INSTALLING, received, received, NULL);
     if (esp_ota_end(ota) != ESP_OK) { install_fail(0, "ota_end_failed"); goto done; }
-    if (esp_ota_set_boot_partition(update) != ESP_OK) {
+    // #OTA-VR (ota_busy.h): образ уже прошёл полную проверку в esp_ota_end(); повторная проверка внутри
+    // set_boot изредка ложно отказывает — до 3 попыток. Отказ esp_ota_end() выше остаётся окончательным.
+    if (ota_set_boot_verified(update) != ESP_OK) {
         install_fail(0, "set_boot_partition_failed"); goto done;
     }
     ESP_LOGW(TAG, "AWF-5: installed %s (%" PRIu32 " bytes) from GitHub, rebooting",

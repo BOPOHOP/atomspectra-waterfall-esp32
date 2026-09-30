@@ -1218,7 +1218,7 @@ function oflRenderStat(j){
    "   "+t("ofl.st_last")+" "+(j.last_status||0)+"   "+busy+"   "+t("ofl.st_lastok")+" "+last+pass;
 }
 function loadOffload(){
- fetch("/api/waterfall/offload").then(function(r){return r.json();}).then(function(j){
+ fetch("/api/waterfall/offload").then(function(r){if(!r.ok)throw 0;return r.json();}).then(function(j){
   lastOffload={enabled:!!j.enabled,url:j.url||"",user:j.user||""};
   var en=document.getElementById("oflEn"); if(en)en.checked=!!j.enabled;
   var u=document.getElementById("oflUrl"); if(u)u.value=j.url||"";
@@ -1229,7 +1229,7 @@ function loadOffload(){
 function oflPollStat(){   // лёгкое обновление статистики, не трогая поля ввода оператора
  var card=document.getElementById("oflCard"); if(!card||!card.open)return;
  var ae=document.activeElement; if(ae&&(ae.id==="oflUrl"||ae.id==="oflUser"||ae.id==="oflPass"))return;
- fetch("/api/waterfall/offload").then(function(r){return r.json();}).then(function(j){
+ fetch("/api/waterfall/offload").then(function(r){if(!r.ok)throw 0;return r.json();}).then(function(j){
   lastOffload.enabled=!!j.enabled;
   if(j.url!==undefined)lastOffload.url=j.url||"";
   if(j.user!==undefined)lastOffload.user=j.user||"";

@@ -18,8 +18,10 @@ network" threat model is a separate task after 1.2.29.
 
 The board's web server is single-threaded: while one request runs a long operation, other tabs and clients
 wait. Found by an external code audit (Codeaudit, 29.09), moved to 1.2.30 by the project owner.
-- LK-02: start/stop/clear/delete requests wait for the waterfall file lock without a timeout while writing
-  is in progress (a reboot waits for it at most 5 s).
+- LK-02: start/stop/clear requests wait for the waterfall file lock without a timeout while writing is in
+  progress. A reboot waits for it with a timeout: up to 5 s, and up to ~11 s in total if the open segment
+  did not close on the first try (`spectrogram.c:1957-1959`). Segment deletion is queued and does not wait
+  for the lock inside the request (#HTTP-FS1 below).
 - LK-03: "Clear" waterfall deletes up to ~11 segments directly in the web server task.
 - LK-04: waterfall recording Start/Stop wait for pending rows (up to 60 s) and for the segment to close
   inside the request.
@@ -31,6 +33,17 @@ wait. Found by an external code audit (Codeaudit, 29.09), moved to 1.2.30 by the
 - S-01: heavy GETs (`/api/ota/github/check`, `/api/settings/backup`, `/api/waterfall/window`) need no CSRF
   token and do not check Origin: a foreign page open in a browser on the same network can trigger them and
   load the board.
+
+### Downloading the debug log temporarily takes up to ~0.5 MB of memory — fix planned for 1.2.30
+
+Applies only when the debug log ring is enabled (it is off by default).
+- `GET /api/debug/log` copies the whole filled ring into memory even when only new lines are requested
+  (`since`): up to 384 KB, plus the response send buffer (up to 64 KB per the lwIP setting). Measured on
+  30.09 on 1.2.29: a 216 758 B download lowered `min_free_heap` by 308 520 B.
+- If the download coincides with the spectrum autosave or with web interface load, free memory briefly
+  drops below 512 KB (measured: 462 632 B). If memory runs out, the request gets 500 `oom`
+  (`debug_log_ring.c:532`) and the rest of the board keeps working.
+- The download code has not changed since 1.2.21. Fix (chunked download, copying only new lines) — in 1.2.30.
 
 ### BUG-AS-08: ⚠ The gateway does not back up the instrument's factory DSP tuning
 
@@ -266,13 +279,21 @@ then a "Reset" was not confirmed, the pulses of that interval are still lost (wi
 - The spectrum autosave is sanity-checked on boot.
 - An update from GitHub aborts the autosave without deleting the spectrum files.
 - When there is no memory to print a JSON response the board answers `503 {"ok":false,"err":"oom"}` instead of
-  cutting the response (no memory for the response object itself — `500 oom`).
+  cutting the response (no memory for the response object itself — `500 oom`). Server upload settings
+  (`GET /api/waterfall/offload`) used to come back empty (`{}` with 200) in this case and the waterfall page
+  cleared the form fields; now it is the same 503 and the page leaves the fields as they are.
 - Segment upload to a server (push): a short file read ends the attempt with error `-16` instead of
   sending an incomplete body.
 - The reboot when falling back to the field access point runs in a separate task with enough stack.
-- Stack headroom of the TCP bridge receive task is 2556 B instead of 508 B. Minimum internal RAM under a
-  4-client load is 3659 B instead of 819 B: JSON objects moved to PSRAM. Allocation failure counter —
-  `alloc_fail` in `/api/system`.
+- Firmware update (manual and from GitHub) occasionally rejected a valid image with `set_boot_partition`:
+  the image passed the full check in `esp_ota_end()`, but the second check when selecting the boot partition
+  reported `Checksum failed` (1 failure in 25 OTAs in the test logs; repeating the same OTA succeeded). This
+  second check is now retried up to 3 times with a 200 ms pause; an `esp_ota_end()` failure is still final
+  (#OTA-VR, `main/ota_busy.h`).
+- Stack headroom of the TCP bridge receive task is 2556 B instead of 508 B. JSON objects moved to PSRAM.
+  Allocation failure counter — `alloc_fail` in `/api/system`. The minimum internal RAM (`int_min`) under
+  load still briefly drops to a few hundred bytes (measured 29–30.09: 91–707 B), with no allocation
+  failures (`alloc_fail` = 0).
 
 ### issue #58: spectrum not shown after a reflash or reboot during acquisition — FIXED (v1.2.29)
 

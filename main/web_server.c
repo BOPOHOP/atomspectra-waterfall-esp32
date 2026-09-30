@@ -763,7 +763,9 @@ static esp_err_t handle_ota_locked(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ota_end: invalid image");
         return ESP_FAIL;
     }
-    err = esp_ota_set_boot_partition(update);
+    // #OTA-VR (ota_busy.h): образ уже прошёл полную проверку в esp_ota_end() выше; повторная проверка
+    // внутри set_boot изредка ложно отказывает — до 3 попыток. Отказ esp_ota_end() остаётся окончательным.
+    err = ota_set_boot_verified(update);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "AWF-4: esp_ota_set_boot_partition: %s", esp_err_to_name(err));
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "set_boot_partition");

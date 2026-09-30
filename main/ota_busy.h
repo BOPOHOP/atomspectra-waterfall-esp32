@@ -39,6 +39,29 @@ static inline bool ota_busy_is_busy_pure(ota_busy_owner_t state)
     return state != OTA_BUSY_NONE;
 }
 
+// #OTA-VR (гейт 1.2.29, 30.09): esp_ota_set_boot_partition() сама проверяет образ (IDF esp_ota_ops.c:443).
+// Валидный образ был отвергнут «Checksum failed» сразу после успешного esp_ota_end(), повтор той же OTA
+// прошёл: чтение уже записанного образа изредка даёт неверные данные. Проверка детерминирована для
+// записанных байт -- битый образ отвергается КАЖДЫМ повтором, поэтому повтор безопасен. Повторяем
+// только код validate_failed, прочие ошибки -- сразу. *calls = число вызовов set(); возврат -- последний код.
+static inline int ota_boot_retry_pure(int (*set)(void *ctx), void *ctx, int tries, int validate_failed, int *calls)
+{
+    int err = validate_failed;
+    for (*calls = 0; *calls < tries; ) {
+        err = set(ctx);
+        (*calls)++;
+        if (err != validate_failed) break;
+    }
+    return err;
+}
+
+#ifdef ESP_PLATFORM
+#include "esp_ota_ops.h"
+// Оба пути OTA: esp_ota_set_boot_partition() с повтором проверки (до 3 раз, пауза 200 мс). Звать ТОЛЬКО
+// после успешной esp_ota_end() -- её отказ окончателен (tests/host/wiring_check.sh, #OTA-VR).
+esp_err_t ota_set_boot_verified(const esp_partition_t *p);
+#endif
+
 // FreeRTOS-обёртки (main/ota_busy.c) -- реальная точка вызова из обоих путей.
 bool ota_busy_acquire(ota_busy_owner_t who);
 void ota_busy_release(ota_busy_owner_t who);
