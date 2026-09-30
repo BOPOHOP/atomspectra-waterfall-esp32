@@ -135,6 +135,10 @@ need debug_log_ring.c 1 '    char *chunk = malloc(DBGLOG_CHUNK);'
 need debug_log_ring.c 1 '? dbglog_chunk_plan(s_bytes_total, s_used, want, end, DBGLOG_CHUNK, &off, &len) : DBGLOG_CHUNK_OVERWRITTEN;'
 need debug_log_ring.c 1 '    s_bytes_total += len;'
 need debug_log_ring.c 0 'tmp = malloc(used + 1);'
+# LK-09 (1.2.30): отброшенному WS-клиенту кадры из очереди не шлём (не ждём сокетный таймаут на каждом); очередь ≤ 4 кадров
+need web_waterfall.c 1 '    if (!alive) { free(a); return; }'
+need web_waterfall.c 1 '    for (int i = 0; i < WF_WS_MAX; i++) if (s_ws_fds[i] == a->fd) { alive = true; break; }'
+need web_waterfall.c 1 '#define WS_INFLIGHT_MAX  4'
 # LK-05 (1.2.30): httpd ждёт прибор на -inf / -tc_pot? не дольше 1 с на команду (было 2 с)
 need web_server.c 1 '#define SETTINGS_RAW_WAIT_MS 1000'
 need web_server.c 2 '    for (int waited = 0; waited < SETTINGS_RAW_WAIT_MS; waited += 50) {'

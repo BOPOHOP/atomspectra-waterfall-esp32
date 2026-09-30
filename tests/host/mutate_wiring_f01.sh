@@ -83,4 +83,8 @@ mut M59_lk05_loop       web_server.c          '0,/    for (int waited = 0; waite
 mut M60_wp5_nocount     debug_log_ring.c      '/^    s_bytes_total += len;/d' 's_bytes_total += len;'
 mut M61_wp5_noplan      debug_log_ring.c      's/? dbglog_chunk_plan(s_bytes_total, s_used, want, end, DBGLOG_CHUNK, \&off, \&len) : DBGLOG_CHUNK_OVERWRITTEN;/? DBGLOG_CHUNK_OK : DBGLOG_CHUNK_OVERWRITTEN;/' 'dbglog_chunk_plan(s_bytes_total'
 mut M62_wp5_wholecopy   debug_log_ring.c      's/    char \*chunk = malloc(DBGLOG_CHUNK);/    char *chunk = malloc(s_cap);/' 'char *chunk = malloc(DBGLOG_CHUNK);'
+# LK-09 (1.2.30): проверка «клиент ещё в реестре» перед отправкой кадра и предел очереди
+mut M63_lk09_noalive    web_waterfall.c       '/    if (!alive) { free(a); return; }/d' 'if (!alive) { free(a); return; }'
+mut M64_lk09_always     web_waterfall.c       's/    if (!alive) { free(a); return; }/    if (false) { free(a); return; }/' 'if (!alive) { free(a); return; }'
+mut M65_lk09_inflight   web_waterfall.c       's/#define WS_INFLIGHT_MAX  4 /#define WS_INFLIGHT_MAX  8 /' '#define WS_INFLIGHT_MAX  4'
 exit $RC

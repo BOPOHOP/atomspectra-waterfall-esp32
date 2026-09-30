@@ -28,7 +28,7 @@
 static const char *TAG = "wf_web";
 
 #define WF_WS_MAX        4
-#define WS_INFLIGHT_MAX  8   // P2-3: лимит несброшенных кадров на клиента
+#define WS_INFLIGHT_MAX  4   // P2-3: лимит несброшенных кадров на клиента; LK-09 (1.2.30): 8 → 4 (меньше очереди у медленного клиента)
 // #PERF-2 / P-009 (sweep-A): сколько ждать HEAVY-слот, прежде чем отдать 503.
 // Прежние 250 мс исходили из «держатель — автосейв, десяток миллисекунд»; это неверно:
 // разовый автосейв / снимок-бэкап / base.bin держат слот ~0,6–0,7 с (fwrite 33 КиБ
@@ -94,6 +94,13 @@ typedef struct { int fd; size_t len; uint8_t buf[]; } ws_send_t;
 static void ws_async_send(void *arg)
 {
     ws_send_t *a = arg;
+    // LK-09 (1.2.30): после первого сбоя клиент удалён из реестра, но в очереди httpd могли остаться его кадры (до
+    // WS_INFLIGHT_MAX); каждый такой кадр блокировал бы веб-сервер на сокетный таймаут (3 с). Отброшенному клиенту не шлём.
+    bool alive = false;
+    WS_LOCK();
+    for (int i = 0; i < WF_WS_MAX; i++) if (s_ws_fds[i] == a->fd) { alive = true; break; }
+    WS_UNLOCK();
+    if (!alive) { free(a); return; }
     httpd_ws_frame_t fr = { 0 };
     fr.type    = HTTPD_WS_TYPE_BINARY;
     fr.payload = a->buf;
