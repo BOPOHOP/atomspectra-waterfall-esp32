@@ -14,45 +14,18 @@ password, anyone nearby can connect to the board. Set your own password on the "
 through the access point with the default password, the tab warns about it). Revisiting the "trusted
 network" threat model is a separate task after 1.2.29.
 
-### The web interface freezes during heavy operations — fix planned for 1.2.30
+### Heavy web-interface operations — limitations after 1.2.30
 
-The board's web server is single-threaded: while one request runs a long operation, other tabs and clients
-wait. Found by an external code audit (Codeaudit, 29.09), moved to 1.2.30 by the project owner.
-- LK-02: start/stop/clear requests wait for the waterfall file lock without a timeout while writing is in
-  progress. A reboot waits for it with a timeout: up to 5 s, and up to ~11 s in total if the open segment
-  did not close on the first try (`spectrogram.c:1957-1959`). Segment deletion is queued and does not wait
-  for the lock inside the request (#HTTP-FS1 below).
-- LK-03: "Clear" waterfall deletes up to ~11 segments directly in the web server task.
-- LK-04: waterfall recording Start/Stop wait for pending rows (up to 60 s) and for the segment to close
-  inside the request.
-- LK-05: `/api/settings/backup` and `/snapshot` poll the instrument for up to ~4 s inside the request.
-- LK-07: `/api/ota/github/check` calls GitHub over HTTPS inside the request, up to 15 s.
-- LK-08, P-01: waterfall window (up to 4 MB), export and segment downloads hold the web server for the whole
-  transfer; every visit or F5 on the waterfall page downloads the whole ring again.
-- LK-09: 16 KB WebSocket frames are sent with a wait of up to 3 s; a slow client delays everyone.
-- S-01: heavy GETs (`/api/ota/github/check`, `/api/settings/backup`, `/api/waterfall/window`) need no CSRF
-  token and do not check Origin: a foreign page open in a browser on the same network can trigger them and
-  load the board.
-
-### "Reset" does not write the last waterfall row — up to one recording step per reset
-
-The board sends the reset command to the instrument immediately (`handle_reset`, `web_server.c:540`) and does not
-commit a row before it; the instrument zeroes its counters on the command. Pulses accumulated from the last
-written row up to the reset (at most one recording step, 5 s by default) do not reach the waterfall. On a live
-board on 30.09 three resets gave 1, 3 and 5 s (by the instrument's time marks; an estimate, not a direct loss
-measurement). The spectrum is cleared on purpose, but in the waterfall these seconds stay unrecorded. A fix —
-commit a row before sending the command — is planned for 1.2.30.
-
-### Downloading the debug log temporarily takes up to ~0.5 MB of memory — fix planned for 1.2.30
-
-Applies only when the debug log ring is enabled (it is off by default).
-- `GET /api/debug/log` copies the whole filled ring into memory even when only new lines are requested
-  (`since`): up to 384 KB, plus the response send buffer (up to 64 KB per the lwIP setting). Measured on
-  30.09 on 1.2.29: a 216 758 B download with 951 068 B free brought the `min_free_heap` mark down to 642 548 B (peak use 308 520 B).
-- If the download coincides with the spectrum autosave or with web interface load, free memory briefly
-  drops below 512 KB (measured: 462 632 B). If memory runs out, the request gets 500 `oom`
-  (`debug_log_ring.c:532`) and the rest of the board keeps working.
-- The download code has not changed since 1.2.21. Fix (chunked download, copying only new lines) — in 1.2.30.
+In 1.2.30 start, stop, clear and segment delete, the waterfall window, exports, segment download and the GitHub update
+check run outside the web server thread (the web interface no longer freezes while they work). Remaining limitations:
+- One download (window, export, segment) and one control operation (start, stop, clear, segment delete) run at a time;
+  a parallel request gets 503 with `Retry-After: 2`. The offload client retries on its next pass, no data is lost.
+  "Clear" during a download also gets 503.
+- The settings backup (`/api/settings/backup`, `/snapshot`) still waits for the instrument inside the web server thread,
+  up to 1 s per attempt (was 2 s); the lock is not fully removed.
+- The waterfall exports (`export.aswf`, `export.n42`) and segment download do not require a CSRF token: a foreign page
+  on the same network can occupy the single download slot for the duration of an export. The waterfall window, settings
+  backup and update check do require it (`X-CSRF-Token`).
 
 ### BUG-AS-08: ⚠ The gateway does not back up the instrument's factory DSP tuning
 
