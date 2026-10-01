@@ -95,6 +95,7 @@ mut M82_p22_silent200   debug_log_ring.c      's/if (cr != DBGLOG_CHUNK_OK) { er
 mut M83_p23_notoken     ../scripts/waterfall_n42.py 's/headers={"X-CSRF-Token": tok}, //' 'headers={"X-CSRF-Token": tok}'
 mut M84_p11_sizeonly    ../scripts/wf_pull_client.py 's/return h is not None and h == hashlib.sha256(blob).hexdigest()/return h is not None/' 'h == hashlib.sha256(blob).hexdigest()'
 # Живой гейт 1.2.30
+mut M97_gate_log_done   debug_log_ring.c      '/        if (cr == DBGLOG_CHUNK_DONE) break;/d' 'if (cr == DBGLOG_CHUNK_DONE) break;'
 mut M93_gate_dl_nofb    web_waterfall.c       's/        esp_err_t rc = h(cp);/        esp_err_t rc = ESP_OK;/' 'esp_err_t rc = h(cp);'
 mut M94_gate_chk_nofb   ota_github_client.c   's/            sync_fb = true;/            sync_fb = false;/' 'sync_fb = true;'
 mut M95_gate_stack_dl   web_waterfall.c       's/#define WF_DL_STACK       6144/#define WF_DL_STACK       8192/' '#define WF_DL_STACK       6144'

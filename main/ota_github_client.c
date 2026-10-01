@@ -320,7 +320,7 @@ static void ota_gh_check_task(void *arg)
 {
     char tmp[sizeof(s_chk_json)];
     ota_gh_check(tmp, sizeof(tmp));
-    ESP_LOGI(TAG, "ota_gh_chk: stack min free %u B (of %d)", (unsigned)uxTaskGetStackHighWaterMark(NULL), OTA_GH_CHK_STACK);
+    ESP_LOGW(TAG, "ota_gh_chk: stack min free %u B (of %d)", (unsigned)uxTaskGetStackHighWaterMark(NULL), OTA_GH_CHK_STACK);
     xSemaphoreTake(s_lock, portMAX_DELAY);
     memcpy(s_chk_json, tmp, sizeof(tmp));
     s_chk_done_us = esp_timer_get_time();

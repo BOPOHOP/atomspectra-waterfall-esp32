@@ -589,6 +589,7 @@ esp_err_t debug_log_ring_http_dump(httpd_req_t *req, uint32_t since)
             if (len > first) memcpy(chunk + first, s_ring, len - first);
         }
         xSemaphoreGive(s_mtx);
+        if (cr == DBGLOG_CHUNK_DONE) break;                       // срез отдан целиком — штатное завершение (финальный чанк ниже)
         if (cr != DBGLOG_CHUNK_OK) { err = ESP_FAIL; break; }   // затёрли — не «успешный» 200 с X-Log-Next-Seq на конец среза
         err = httpd_resp_send_chunk(req, chunk, len);
         if (err != ESP_OK) break;

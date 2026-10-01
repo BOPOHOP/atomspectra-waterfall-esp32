@@ -165,6 +165,8 @@ need web_waterfall.c 1 '    if (xTaskCreatePinnedToCore(wf_dl_task, "wf_dl", WF_
 need debug_log_ring.c 2 'err = ESP_FAIL; break; }'
 need ../scripts/waterfall_n42.py 1 'headers={"X-CSRF-Token": tok}'
 need ../scripts/wf_pull_client.py 1 '        return h is not None and h == hashlib.sha256(blob).hexdigest()'
+# Живой гейт 1.2.30 (WP5): DONE — штатный конец среза, не обрыв (иначе каждый ответ журнала завершался ESP_FAIL без финального чанка)
+need debug_log_ring.c 1 '        if (cr == DBGLOG_CHUNK_DONE) break;'
 # Живой гейт 1.2.30: не хватило внутренней RAM под стек задачи — откат на прежнее синхронное поведение, а не отказ; стеки уменьшены
 need web_waterfall.c 1 '        esp_err_t rc = h(cp);'
 need web_waterfall.c 1 '#define WF_DL_STACK       6144'
