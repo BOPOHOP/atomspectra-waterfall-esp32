@@ -5,6 +5,23 @@
 #include "test_util.h"
 #include <math.h>   // #AWF-12b F6/T3: NAN/INFINITY для тестов ниже
 
+// #59 (1.2.30): настройка «всегда читать калибровку из прибора» (по умолчанию выкл).
+static void test_calib_pref(void)
+{
+    // выкл — прежнее поведение: -cal нужен только при пустой калибровке/серийнике
+    CHECK(calib_autoread_needed_pref(false, false, false) == false);
+    CHECK(calib_autoread_needed_pref(true, false, false) == true);
+    CHECK(calib_autoread_needed_pref(false, true, false) == true);
+    // вкл — всегда, даже при заданной калибровке и известном серийнике (смена прибора)
+    CHECK(calib_autoread_needed_pref(false, false, true) == true);
+    // выкл: калибровка задана -> запрос ради серийника (коэффициенты не применять); пуста -> применять
+    CHECK(calib_request_serial_only(false, false) == true);
+    CHECK(calib_request_serial_only(true, false) == false);
+    // вкл: коэффициенты прибора применяются всегда (и при заданной калибровке платы)
+    CHECK(calib_request_serial_only(false, true) == false);
+    CHECK(calib_request_serial_only(true, true) == false);
+}
+
 void calib_autoread_suite(void)
 {
     // calib_is_missing: невалидна ИЛИ все коэффициенты точно 0.0.
@@ -113,4 +130,5 @@ void calib_autoread_suite(void)
         CHECK(calib_apply_coeffs(true, true) == false);
         CHECK(calib_apply_coeffs(false, false) == false);
     }
+    test_calib_pref();
 }

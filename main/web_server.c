@@ -810,7 +810,7 @@ static esp_err_t handle_boot_config_get(httpd_req_t *req)
 {
     boot_config_t bc;
     boot_config_load(&bc);
-    char resp[380];
+    char resp[420];
     // #FW-42: name_prefix санитизирован в NVS ([A-Za-z0-9_-]) → JSON-escape не нужен.
     // issue #52: + настройки резервных снимков и текущий номер сессии (read-only).
     // AWF-2a финал: field_ap_fallback — прямая семантика (structура тоже
@@ -819,7 +819,7 @@ static esp_err_t handle_boot_config_get(httpd_req_t *req)
         "{\"autostart_spectrum\":%s,\"autostart_waterfall\":%s,"
         "\"clear_spectrum\":%s,\"clear_waterfall\":%s,\"name_prefix\":\"%s\","
         "\"backup_keep\":%u,\"backup_hours\":%u,\"backup_test_minutes\":%s,"
-        "\"field_ap_fallback\":%s,"
+        "\"field_ap_fallback\":%s,\"calib_always\":%s,"
         "\"session\":%" PRIu32 "}",
         bc.autostart_spectrum  ? "true" : "false",
         bc.autostart_waterfall ? "true" : "false",
@@ -829,6 +829,7 @@ static esp_err_t handle_boot_config_get(httpd_req_t *req)
         (unsigned)bc.backup_keep, (unsigned)bc.backup_hours,
         bc.backup_test_minutes ? "true" : "false",
         bc.field_ap_fallback_enabled ? "true" : "false",
+        bc.calib_always_from_device ? "true" : "false",
         boot_config_get_session());
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, resp);
@@ -888,6 +889,8 @@ static esp_err_t handle_boot_config_set(httpd_req_t *req)
         bc.backup_test_minutes = cJSON_IsTrue(it);
     if ((it = cJSON_GetObjectItem(root, "field_ap_fallback")))
         bc.field_ap_fallback_enabled = cJSON_IsTrue(it);
+    if ((it = cJSON_GetObjectItem(root, "calib_always")))     // #59 (1.2.30)
+        bc.calib_always_from_device = cJSON_IsTrue(it);
     cJSON_Delete(root);
     int rc = boot_config_save(&bc);
     httpd_resp_set_type(req, "application/json");

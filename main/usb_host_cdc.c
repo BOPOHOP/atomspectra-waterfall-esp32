@@ -11,6 +11,7 @@
 #include "freertos/stream_buffer.h"   /* #BRIDGE-1: RX-кольцо декаплинга data_cb */
 #include "esp_heap_caps.h"   /* #TCP-5: диагностика свободного DMA-блока перед open */
 #include "esp_timer.h"       /* #FW-22: timestamp для last_* полей */
+#include "boot_config.h"     /* #59: boot_config_calib_always() */
 #include "acq_watch.h"       /* сторож набора после перезагрузки прибора */
 #include "acq_intent.h"      /* намерение набора по текстовой команде */
 #include "calib_autoread.h"  /* #AWF-12: авто-считывание -cal перед -sta */
@@ -113,6 +114,7 @@ static bool     s_text_flush_armed = false;
 static char     s_devlog_text[DEVLOG_RING][DEVLOG_TEXTSZ];
 static uint16_t s_devlog_len [DEVLOG_RING];
 static uint32_t s_devlog_seq [DEVLOG_RING];   // seq записи в слоте (0 = пусто)
+static uint32_t s_devlog_ms  [DEVLOG_RING];   // #60 (1.2.30): время ПРИЁМА строки, мс с загрузки (esp_timer)
 static uint32_t s_devlog_next = 1;            // seq для следующей записи (монотонный)
 static SemaphoreHandle_t s_devlog_mutex = NULL;
 
@@ -127,6 +129,7 @@ static void devlog_push(const uint8_t *txt, int len)
     s_devlog_text[slot][len] = '\0';
     s_devlog_len[slot] = (uint16_t)len;
     s_devlog_seq[slot] = seq;
+    s_devlog_ms[slot] = (uint32_t)(esp_timer_get_time() / 1000);
     xSemaphoreGive(s_devlog_mutex);
 }
 
@@ -911,7 +914,8 @@ void usb_host_cdc_devlog_json(uint32_t since, char *out, size_t outsz)
     if (s_devlog_mutex) xSemaphoreGive(s_devlog_mutex);
 
     size_t pos = 0;
-    pos += snprintf(out + pos, outsz - pos, "{\"lines\":[");
+    // #60: up_ms — «сейчас» платы в той же шкале, что t у строк; страница считает время приёма как now − (up_ms − t)
+    pos += snprintf(out + pos, outsz - pos, "{\"up_ms\":%" PRIu32 ",\"lines\":[", (uint32_t)(esp_timer_get_time() / 1000));
     // окно: только то, что ещё в кольце (последние DEVLOG_RING записей)
     start = since + 1;
     if (next >= DEVLOG_RING && start < next - DEVLOG_RING + 1) start = next - DEVLOG_RING + 1;
@@ -920,20 +924,22 @@ void usb_host_cdc_devlog_json(uint32_t since, char *out, size_t outsz)
     int emitted = 0;
     for (uint32_t s = start; s <= next && next != 0; s++) {
         int tlen = -1;
+        uint32_t tms = 0;
         if (s_devlog_mutex) xSemaphoreTake(s_devlog_mutex, portMAX_DELAY);
         int slot = s % DEVLOG_RING;
         if (s_devlog_seq[slot] == s) {        // ещё не вытеснен
             tlen = s_devlog_len[slot];
             if (tlen > DEVLOG_TEXTSZ - 1) tlen = DEVLOG_TEXTSZ - 1;
             memcpy(tmp, s_devlog_text[slot], tlen);
+            tms = s_devlog_ms[slot];
         }
         if (s_devlog_mutex) xSemaphoreGive(s_devlog_mutex);
         if (tlen < 0) continue;
 
         // запас под объект; если мало места — прекращаем (next всё равно отдадим)
-        if (pos + (size_t)tlen * 2 + 48 >= outsz) break;
-        pos += snprintf(out + pos, outsz - pos, "%s{\"seq\":%" PRIu32 ",\"text\":\"",
-                        emitted ? "," : "", s);
+        if (pos + (size_t)tlen * 2 + 72 >= outsz) break;
+        pos += snprintf(out + pos, outsz - pos, "%s{\"seq\":%" PRIu32 ",\"t\":%" PRIu32 ",\"text\":\"",
+                        emitted ? "," : "", s, tms);
         for (int i = 0; i < tlen && pos + 8 < outsz; i++) {
             unsigned char c = (unsigned char)tmp[i];
             if (c == '"' || c == '\\')      { out[pos++] = '\\'; out[pos++] = c; }
@@ -1019,7 +1025,8 @@ static void usb_host_cdc_calib_autoread_gate(void)
     DIAG_UNLOCK();
     if (!claimed) return;
     // Н-1: калибровка на плате задана (запрос ради серийника) — её не заменять.
-    spectrum_calib_set_serial_only(!spectrum_calibration_is_missing());
+    // #59 (1.2.30): при включённой настройке «всегда читать калибровку» коэффициенты прибора применяются и поверх заданной.
+    spectrum_calib_set_serial_only(calib_request_serial_only(spectrum_calibration_is_missing(), boot_config_calib_always()));
     if (send_text_command_raw("-cal") == 0) {
         ESP_LOGI(TAG, "calibration or serial not set -> requesting -cal before -sta");
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -1038,7 +1045,7 @@ int usb_host_send_text_command(const char *cmd)
     // Н-1: ручное «Считать» (-cal из UI/API) применяет калибровку прибора всегда.
     if (strncmp(cmd, "-cal", 4) == 0) spectrum_calib_set_serial_only(false);
     if (cmd_is_acq_start(cmd) &&
-        calib_autoread_needed(spectrum_calibration_is_missing(), spectrum_serial_is_missing()))
+        calib_autoread_needed_pref(spectrum_calibration_is_missing(), spectrum_serial_is_missing(), boot_config_calib_always()))
         usb_host_cdc_calib_autoread_gate();
     return send_text_command_raw(cmd);
 }

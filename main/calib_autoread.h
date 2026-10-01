@@ -120,6 +120,19 @@ static inline bool calib_apply_coeffs(bool read_success, bool serial_only_reques
     return read_success && !serial_only_request;
 }
 
+// #59 (1.2.30, настройка «Всегда читать калибровку из прибора», по умолчанию ВЫКЛ): при включённой настройке
+// «-cal» перед стартом набора запрашивается всегда, а не только при пустой калибровке/серийнике.
+static inline bool calib_autoread_needed_pref(bool calib_missing, bool serial_missing, bool always)
+{
+    return always || calib_autoread_needed(calib_missing, serial_missing);
+}
+
+// serial_only (коэффициенты прибора НЕ применять): калибровка на плате задана И настройка «всегда» выключена.
+static inline bool calib_request_serial_only(bool calib_missing, bool always)
+{
+    return !calib_missing && !always;
+}
+
 static inline bool calib_autoread_should_request(bool prev_was_run, uint32_t now_ms,
                                                    uint32_t last_request_ms)
 {

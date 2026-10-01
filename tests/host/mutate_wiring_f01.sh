@@ -94,6 +94,16 @@ mut M81_p33_unpinned    web_waterfall.c       's/xTaskCreatePinnedToCore(wf_dl_t
 mut M82_p22_silent200   debug_log_ring.c      's/if (cr != DBGLOG_CHUNK_OK) { err = ESP_FAIL; break; }/if (cr != DBGLOG_CHUNK_OK) break;/' 'err = ESP_FAIL; break; }'
 mut M83_p23_notoken     ../scripts/waterfall_n42.py 's/headers={"X-CSRF-Token": tok}, //' 'headers={"X-CSRF-Token": tok}'
 mut M84_p11_sizeonly    ../scripts/wf_pull_client.py 's/return h is not None and h == hashlib.sha256(blob).hexdigest()/return h is not None/' 'h == hashlib.sha256(blob).hexdigest()'
+# #59 (1.2.30)
+mut M88_i59_nostore     boot_config.c         's/    e |= nvs_set_u8(h, "cal_al", in->calib_always_from_device ? 1 : 0);//' 'nvs_set_u8(h, "cal_al"'
+mut M89_i59_noapi       web_server.c          's/        bc.calib_always_from_device = cJSON_IsTrue(it);/        (void)it;/' 'bc.calib_always_from_device = cJSON_IsTrue(it);'
+mut M90_i59_oldneed     usb_host_cdc.c        's/calib_autoread_needed_pref(spectrum_calibration_is_missing(), spectrum_serial_is_missing(), boot_config_calib_always())/calib_autoread_needed(spectrum_calibration_is_missing(), spectrum_serial_is_missing())/' 'calib_autoread_needed_pref(spectrum_calibration_is_missing()'
+mut M91_i59_oldserial   usb_host_cdc.c        's/calib_request_serial_only(spectrum_calibration_is_missing(), boot_config_calib_always())/!spectrum_calibration_is_missing()/' 'calib_request_serial_only(spectrum_calibration_is_missing()'
+mut M92_i59_nouisave    ../web/system.html    's/,\n  calib_always:document.getElementById("bc-calib-always").checked//; /^  calib_always:document/d' 'calib_always:document.getElementById("bc-calib-always").checked'
+# #60 (1.2.30)
+mut M85_i60_nostamp     usb_host_cdc.c        '/    s_devlog_ms\[slot\] = (uint32_t)(esp_timer_get_time() \/ 1000);/d' 's_devlog_ms[slot] = '
+mut M86_i60_nofield     usb_host_cdc.c        's/\\"seq\\":%" PRIu32 ",\\"t\\":%" PRIu32 ",\\"text/\\"seq\\":%" PRIu32 ",\\"text/' '\"t\":%" PRIu32'
+mut M87_i60_pagenow     ../web/index.html     's/lg("← "+t,(typeof r.up_ms==="number"\&\&typeof e.t==="number")?new Date(Date.now()-((r.up_ms-e.t)>>>0)):undefined)/lg("← "+t)/' 'typeof r.up_ms==="number"'
 # WP10 (1.2.30)
 mut M76_p37_nocut       ../web/index.html     's/if(h0.length>100)h0=/if(h0.length>1000)h0=/' 'if(h0.length>100)h0='
 mut M77_p38_silent      ../web/waterfall.html 's/ }).catch(function(){oflSetMsg(t("ofl.err"),"err");});/ }).catch(function(){});/' 'oflSetMsg(t("ofl.err"),"err");});'

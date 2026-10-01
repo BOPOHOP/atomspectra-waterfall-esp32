@@ -22,7 +22,6 @@ need usb_host_cdc.c 1 'spectrum_usb_session_bump();'
 need usb_host_cdc.c 1 'if (!spectrum_reset_still_undelivered(g)) {'
 need usb_host_cdc.c 1 'if (!s_rst_pending) {'
 need usb_host_cdc.c 1 'if (s_cdc_dev && s_rst_pending) rst_pending_dispatch();'
-need usb_host_cdc.c 1 'spectrum_calib_set_serial_only(!spectrum_calibration_is_missing());'
 need wifi_manager.c 2 'if (tcp_bridge_client_active(WIFI_RETURN_BRIDGE_IDLE_MS)) {'
 need tcp_bridge.c  1 'setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof(ka)) < 0 ||'
 need monitor.c     1 'if (!prev_valid || resync != prev_resync) {'
@@ -115,7 +114,7 @@ dk=$(awk '{c=$0; sub(/\r$/,"",c); sub(/^[ \t]+/,"",c)}
 # P-03 (Codeaudit): журнал главной страницы существует и показывается (в копии main/ без web/ — пропуск)
 if [ -f ../web/index.html ]; then
     need ../web/index.html 1 '<pre id="log" style="display:none;'
-    need ../web/index.html 1 'function lg(m){if(!logEl)return;logEl.style.display="";'
+    need ../web/index.html 1 'function lg(m,at){if(!logEl)return;logEl.style.display="";'
     need ../web/index.html 1 '.row + .row, #log + .row{'                     # pass2 C: pre#log рвал .row + .row
     # S-01 (1.2.30): страницы шлют CSRF-токен на тяжёлых GET
     need ../web/service.html   2 'await gget("/api/settings/backup");'
@@ -166,6 +165,18 @@ need web_waterfall.c 1 '    if (xTaskCreatePinnedToCore(wf_dl_task, "wf_dl", WF_
 need debug_log_ring.c 2 'err = ESP_FAIL; break; }'
 need ../scripts/waterfall_n42.py 1 'headers={"X-CSRF-Token": tok}'
 need ../scripts/wf_pull_client.py 1 '        return h is not None and h == hashlib.sha256(blob).hexdigest()'
+# #59 (1.2.30): настройка «всегда читать калибровку из прибора» — NVS, API, UI и оба решения в usb_host_cdc (нужен -cal; применять ли коэффициенты)
+need boot_config.c 1 '    out->calib_always_from_device = get_flag(h, "cal_al");'
+need boot_config.c 1 '    e |= nvs_set_u8(h, "cal_al", in->calib_always_from_device ? 1 : 0);'
+need web_server.c 1 '        bc.calib_always_from_device = cJSON_IsTrue(it);'
+need usb_host_cdc.c 1 '        calib_autoread_needed_pref(spectrum_calibration_is_missing(), spectrum_serial_is_missing(), boot_config_calib_always()))'
+need usb_host_cdc.c 1 '    spectrum_calib_set_serial_only(calib_request_serial_only(spectrum_calibration_is_missing(), boot_config_calib_always()));'
+need ../web/system.html 1 '  calib_always:document.getElementById("bc-calib-always").checked'
+# #60 (1.2.30): у строки журнала прибора — время ПРИЁМА (запись, выдача, страница), а не «сейчас»
+need usb_host_cdc.c 1 '    s_devlog_ms[slot] = (uint32_t)(esp_timer_get_time() / 1000);'
+need usb_host_cdc.c 1 '            tms = s_devlog_ms[slot];'
+need usb_host_cdc.c 1 '"%s{\"seq\":%" PRIu32 ",\"t\":%" PRIu32 ",\"text\":\"",'
+need ../web/index.html 1 'lg("← "+t,(typeof r.up_ms==="number"&&typeof e.t==="number")?new Date(Date.now()-((r.up_ms-e.t)>>>0)):undefined)'
 # LK-05 (1.2.30): httpd ждёт прибор на -inf / -tc_pot? не дольше 1 с на команду (было 2 с)
 need web_server.c 1 '#define SETTINGS_RAW_WAIT_MS 1000'
 need web_server.c 2 '    for (int waited = 0; waited < SETTINGS_RAW_WAIT_MS; waited += 50) {'
