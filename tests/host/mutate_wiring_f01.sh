@@ -94,6 +94,11 @@ mut M81_p33_unpinned    web_waterfall.c       's/xTaskCreatePinnedToCore(wf_dl_t
 mut M82_p22_silent200   debug_log_ring.c      's/if (cr != DBGLOG_CHUNK_OK) { err = ESP_FAIL; break; }/if (cr != DBGLOG_CHUNK_OK) break;/' 'err = ESP_FAIL; break; }'
 mut M83_p23_notoken     ../scripts/waterfall_n42.py 's/headers={"X-CSRF-Token": tok}, //' 'headers={"X-CSRF-Token": tok}'
 mut M84_p11_sizeonly    ../scripts/wf_pull_client.py 's/return h is not None and h == hashlib.sha256(blob).hexdigest()/return h is not None/' 'h == hashlib.sha256(blob).hexdigest()'
+# Живой гейт 1.2.30
+mut M93_gate_dl_nofb    web_waterfall.c       's/        esp_err_t rc = h(cp);/        esp_err_t rc = ESP_OK;/' 'esp_err_t rc = h(cp);'
+mut M94_gate_chk_nofb   ota_github_client.c   's/            sync_fb = true;/            sync_fb = false;/' 'sync_fb = true;'
+mut M95_gate_stack_dl   web_waterfall.c       's/#define WF_DL_STACK       6144/#define WF_DL_STACK       8192/' '#define WF_DL_STACK       6144'
+mut M96_gate_stack_chk  ota_github_client.c   's/#define OTA_GH_CHK_STACK 6144/#define OTA_GH_CHK_STACK 8192/' '#define OTA_GH_CHK_STACK 6144'
 # #59 (1.2.30)
 mut M88_i59_nostore     boot_config.c         's/    e |= nvs_set_u8(h, "cal_al", in->calib_always_from_device ? 1 : 0);//' 'nvs_set_u8(h, "cal_al"'
 mut M89_i59_noapi       web_server.c          's/        bc.calib_always_from_device = cJSON_IsTrue(it);/        (void)it;/' 'bc.calib_always_from_device = cJSON_IsTrue(it);'

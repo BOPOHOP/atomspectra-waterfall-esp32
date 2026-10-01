@@ -1285,7 +1285,7 @@ static void reg(httpd_handle_t srv, const char *uri, httpd_method_t m,
 // LK-08 (1.2.30): долгие выдачи (окно, экспорт, сегмент) идут в отдельной задаче через
 // httpd_req_async_handler_begin — поток httpd свободен на время передачи (опросы UI, WS-кадры).
 #define WF_DL_MAX         1      // одновременно одна выдача: внутренняя RAM под стек задачи ограничена
-#define WF_DL_STACK       7168
+#define WF_DL_STACK       6144   // 7168 был на пределе крупнейшего внутреннего блока (7168 Б на гейте 1.2.30); запас смотреть по логу «wf_dl: stack min free»
 static volatile int s_dl_active;
 typedef struct { httpd_req_t *req; esp_err_t (*h)(httpd_req_t *); volatile int *cnt; } wf_dl_job_t;
 
@@ -1294,6 +1294,7 @@ static void wf_dl_task(void *arg)
     wf_dl_job_t j = *(wf_dl_job_t *)arg;
     free(arg);
     esp_err_t rc = j.h(j.req);
+    ESP_LOGI(TAG, "wf_dl: stack min free %u B (of %d)", (unsigned)uxTaskGetStackHighWaterMark(NULL), WF_DL_STACK);
     __atomic_fetch_sub(j.cnt, 1, __ATOMIC_SEQ_CST);   // до complete: следующий запрос того же клиента не получит ложный 503
     // ESP_FAIL = обрыв посреди выдачи (контракт синхронных обработчиков): закрыть сессию, клиент увидит разрыв
     if (rc != ESP_OK) httpd_sess_trigger_close(j.req->handle, httpd_req_to_sockfd(j.req));
@@ -1323,10 +1324,15 @@ static esp_err_t wf_dl_async(httpd_req_t *req, esp_err_t (*h)(httpd_req_t *), vo
     }
     j->req = cp; j->h = h; j->cnt = cnt;
     if (xTaskCreatePinnedToCore(wf_dl_task, "wf_dl", WF_DL_STACK, j, 5, NULL, 1) != pdPASS) {
+        // Живой гейт 1.2.30: крупнейший свободный блок внутренней RAM ~7 КБ — стек может не поместиться. Не отказ, а прежнее
+        // поведение: обработчик выполняется здесь же (поток httpd занят, как до 1.2.30), копия запроса закрывается как обычно.
         free(j);
-        (void)wf_dl_busy(cp);
-        httpd_req_async_handler_complete(cp);
+        ESP_LOGW(TAG, "wf_dl: task create failed (int largest %u) -> synchronous fallback",
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+        esp_err_t rc = h(cp);
         __atomic_fetch_sub(cnt, 1, __ATOMIC_SEQ_CST);
+        if (rc != ESP_OK) httpd_sess_trigger_close(cp->handle, httpd_req_to_sockfd(cp));
+        httpd_req_async_handler_complete(cp);
     }
     return ESP_OK;
 }

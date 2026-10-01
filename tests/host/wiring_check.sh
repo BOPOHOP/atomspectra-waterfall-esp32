@@ -127,7 +127,7 @@ need web_waterfall.c 1 '    if (!web_csrf_check(req)) return ESP_FAIL;   // S-01
 # LK-07 (1.2.30): проверка релиза GitHub — не в задаче httpd; решение запуск/ожидание/готовое — ota_gh_check_state.h
 need web_server.c        1 '    ota_gh_check_async(resp, sizeof(resp));'
 need ota_github_client.c 1 '    ota_chk_act_t act = ota_chk_decide(s_chk_state, age_ms, OTA_GH_CHECK_KEEP_MS);'
-need ota_github_client.c 1 '        if (xTaskCreatePinnedToCore(ota_gh_check_task, "ota_gh_chk", 8192, NULL, 3, NULL, 1) != pdPASS) {'
+need ota_github_client.c 1 '        if (xTaskCreatePinnedToCore(ota_gh_check_task, "ota_gh_chk", OTA_GH_CHK_STACK, NULL, 3, NULL, 1) != pdPASS) {'
 need ota_github_client.c 1 '    s_chk_state = OTA_CHK_DONE;'
 # WP5 (1.2.30): журнал отладки отдаётся потоком по кускам, без malloc на всё кольцо; счётчик байт растёт при записи
 need debug_log_ring.c 1 '    char *chunk = malloc(DBGLOG_CHUNK);'
@@ -165,6 +165,11 @@ need web_waterfall.c 1 '    if (xTaskCreatePinnedToCore(wf_dl_task, "wf_dl", WF_
 need debug_log_ring.c 2 'err = ESP_FAIL; break; }'
 need ../scripts/waterfall_n42.py 1 'headers={"X-CSRF-Token": tok}'
 need ../scripts/wf_pull_client.py 1 '        return h is not None and h == hashlib.sha256(blob).hexdigest()'
+# Живой гейт 1.2.30: не хватило внутренней RAM под стек задачи — откат на прежнее синхронное поведение, а не отказ; стеки уменьшены
+need web_waterfall.c 1 '        esp_err_t rc = h(cp);'
+need web_waterfall.c 1 '#define WF_DL_STACK       6144'
+need ota_github_client.c 1 '            sync_fb = true;'
+need ota_github_client.c 1 '#define OTA_GH_CHK_STACK 6144'
 # #59 (1.2.30): настройка «всегда читать калибровку из прибора» — NVS, API, UI и оба решения в usb_host_cdc (нужен -cal; применять ли коэффициенты)
 need boot_config.c 1 '    out->calib_always_from_device = get_flag(h, "cal_al");'
 need boot_config.c 1 '    e |= nvs_set_u8(h, "cal_al", in->calib_always_from_device ? 1 : 0);'

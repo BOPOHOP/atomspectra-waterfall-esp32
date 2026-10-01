@@ -315,10 +315,12 @@ esp_err_t ota_gh_check(char *out_json, size_t out_cap)
     return ESP_OK;
 }
 
+#define OTA_GH_CHK_STACK 6144   // 8192 не помещался в крупнейший внутренний блок на гейте 1.2.30; запас смотреть по логу «ota_gh_chk: stack min free»
 static void ota_gh_check_task(void *arg)
 {
     char tmp[sizeof(s_chk_json)];
     ota_gh_check(tmp, sizeof(tmp));
+    ESP_LOGI(TAG, "ota_gh_chk: stack min free %u B (of %d)", (unsigned)uxTaskGetStackHighWaterMark(NULL), OTA_GH_CHK_STACK);
     xSemaphoreTake(s_lock, portMAX_DELAY);
     memcpy(s_chk_json, tmp, sizeof(tmp));
     s_chk_done_us = esp_timer_get_time();
@@ -336,17 +338,24 @@ esp_err_t ota_gh_check_async(char *out_json, size_t out_cap)
     xSemaphoreTake(s_lock, portMAX_DELAY);
     uint32_t age_ms = (uint32_t)((esp_timer_get_time() - s_chk_done_us) / 1000);
     ota_chk_act_t act = ota_chk_decide(s_chk_state, age_ms, OTA_GH_CHECK_KEEP_MS);
+    bool sync_fb = false;
     if (act == OTA_CHK_ACT_START) {
         s_chk_state = OTA_CHK_RUNNING;
-        if (xTaskCreatePinnedToCore(ota_gh_check_task, "ota_gh_chk", 8192, NULL, 3, NULL, 1) != pdPASS) {
+        if (xTaskCreatePinnedToCore(ota_gh_check_task, "ota_gh_chk", OTA_GH_CHK_STACK, NULL, 3, NULL, 1) != pdPASS) {
+            // Живой гейт 1.2.30: стек 8192 Б не помещался (крупнейший внутренний блок ~7 КБ). Не «network_error», а прежнее
+            // поведение: проверка прямо в этом запросе (поток httpd занят до ~15 с, как до 1.2.30), состояние остаётся IDLE.
             s_chk_state = OTA_CHK_IDLE;
-            act = OTA_CHK_ACT_SERVE;     // не запустилось — честный отказ сети, не вечное «checking»
-            snprintf(s_chk_json, sizeof(s_chk_json), "%s", k_fail);
+            sync_fb = true;
         }
     }
     if (act == OTA_CHK_ACT_SERVE) snprintf(out_json, out_cap, "{\"state\":\"done\",%s", s_chk_json + 1);
     else snprintf(out_json, out_cap, "{\"state\":\"checking\"}");
     xSemaphoreGive(s_lock);
+    if (sync_fb) {
+        char tmp[sizeof(s_chk_json)];
+        ota_gh_check(tmp, sizeof(tmp));
+        snprintf(out_json, out_cap, "{\"state\":\"done\",%s", tmp + 1);
+    }
     return ESP_OK;
 }
 
