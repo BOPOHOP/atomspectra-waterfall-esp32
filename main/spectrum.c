@@ -941,6 +941,15 @@ void spectrum_get_totals(uint32_t *counts, uint32_t *time_sec, uint32_t *resync_
     SPEC_UNLOCK();
 }
 
+// #MX-12 (1.2.31): температура T1 прибора для кольца мониторинга (NaN — нет данных)
+float spectrum_get_t1(void)
+{
+    SPEC_LOCK();
+    float t = s_spectrum.temperature[0];
+    SPEC_UNLOCK();
+    return t;
+}
+
 bool spectrum_reset_mark_undelivered(void)
 {
     MARK_LOCK(); bool p = s_mark_present && s_mark_state == MARK_PENDING; MARK_UNLOCK();

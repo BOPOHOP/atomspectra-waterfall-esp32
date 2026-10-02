@@ -692,11 +692,12 @@ function fmtKB(n){return (n/1024).toFixed(0)}
 function fmtUp(s){var d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60),x=s%60;
  var p=[]; if(d>0)p.push(d+t("up.d")); if(d>0||h>0)p.push(h+t("up.h")); p.push(m+t("up.m")); if(d===0)p.push(x+t("up.s")); return p.join(" ");}
 
-function spark(id,hist,color){
+function spark(id,hist,color,fixed){
  var cv=document.getElementById(id);if(!cv||hist.length<2)return;
  var ctx=cv.getContext('2d'),w=cv.width,h=cv.height,mn=1e9,mx=-1e9,i;
- for(i=0;i<hist.length;i++){if(hist[i]<mn)mn=hist[i];if(hist[i]>mx)mx=hist[i];}
- if(mx-mn<1)mx=mn+1;
+ if(fixed){mn=fixed.mn;mx=fixed.mx;}   // CPU 0–100 %: почти постоянное значение иначе рисовалось плоской линией у дна
+ else{for(i=0;i<hist.length;i++){if(hist[i]<mn)mn=hist[i];if(hist[i]>mx)mx=hist[i];}
+ if(mx-mn<1)mx=mn+1;}
  var pad=8; function yO(v){return pad+(h-2*pad)*(1-(v-mn)/(mx-mn));}
  ctx.clearRect(0,0,w,h);
  ctx.strokeStyle='rgba(255,255,255,.05)';
@@ -844,7 +845,7 @@ async function refreshSpectrum(){
   if(typeof r.cpu==="number"){
    cpu.push(r.cpu); if(cpu.length>80)cpu.shift();
    document.getElementById("cpu-cur").textContent=r.cpu;
-   spark("cpuc",cpu,'#f0c45a');
+   spark("cpuc",cpu,'#f0c45a',{mn:0,mx:100});
   }
   /* #PERF-1: meta.json отдаёт число каналов полем channels — массив bins уехал
      в бинарную /api/spectrum, поэтому r.bins.length здесь больше нет. */

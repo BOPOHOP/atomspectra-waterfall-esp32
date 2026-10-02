@@ -274,6 +274,7 @@ uint32_t spectrum_reset_unconfirmed_count(void);
 // для монитора CPS; НЕ копирует 32 КБ bins (в отличие от spectrum_get_snapshot).
 // resync_seq (может быть NULL) — счётчик переноса опоры У-3/Н-8.
 void spectrum_get_totals(uint32_t *counts, uint32_t *time_sec, uint32_t *resync_seq);
+float spectrum_get_t1(void);   // #MX-12: температура T1 прибора, NaN — нет данных
 // Н-3.3: метка reset.mark на flash и -rst до прибора не дошёл (Сброс без прибора
 // до перезагрузки, спектр после него не сохранён). Вызывать после spectrum_restore_autosave().
 bool spectrum_reset_mark_undelivered(void);

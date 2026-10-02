@@ -525,8 +525,14 @@ static esp_err_t handle_monitor_series(httpd_req_t *req)
         "{\"epoch\":%" PRIu32 ",\"next_seq\":%" PRIu32 ",\"first_seq\":%" PRIu32
         ",\"interval_base\":1,\"samples\":[", epoch, next, first);
     for (size_t i = 0; i < n; i++) {
-        pos += snprintf(buf + pos, 2048 - pos, "%s[%" PRIu32 ",%u,%" PRIu32 "]",
-                        i ? "," : "", smp[i].end_sec, (unsigned)smp[i].dur, smp[i].counts);
+        // #MX-12 (1.2.31): 4-й элемент — температура T1, °C (null — нет данных)
+        if (smp[i].t_dc == MON_T_NONE)
+            pos += snprintf(buf + pos, 2048 - pos, "%s[%" PRIu32 ",%u,%" PRIu32 ",null]",
+                            i ? "," : "", smp[i].end_sec, (unsigned)smp[i].dur, smp[i].counts);
+        else
+            pos += snprintf(buf + pos, 2048 - pos, "%s[%" PRIu32 ",%u,%" PRIu32 ",%s%d.%d]",
+                            i ? "," : "", smp[i].end_sec, (unsigned)smp[i].dur, smp[i].counts,
+                            smp[i].t_dc < 0 ? "-" : "", abs(smp[i].t_dc) / 10, abs(smp[i].t_dc) % 10);
         if (pos > 1900) { httpd_resp_send_chunk(req, buf, pos); pos = 0; }
     }
     pos += snprintf(buf + pos, 2048 - pos, "]}");

@@ -131,4 +131,17 @@ mut M67_lk08_sync_n42   web_waterfall.c       's/HTTP_GET, h_export_n42_async);/
 mut M68_lk08_sync_seg   web_waterfall.c       's/HTTP_GET, h_segment_async);/HTTP_GET, h_segment);/' 'h_segment_async);'
 mut M69_lk08_max8       web_waterfall.c       's/#define WF_DL_MAX         1/#define WF_DL_MAX         8/' '#define WF_DL_MAX         1'
 mut M70_p01_norows      web_waterfall.c       's/if (want >= 1 \&\& want < rows) rows = want;/(void)want;/' 'rows = want;'
+# #MX-3..#MX-12 (1.2.31)
+mut M102_mx3_cpuauto     ../web/system.html    's/,{mn:0,mx:100});/);/' '{mn:0,mx:100}'
+mut M103_mx4_nohint      ../web/index.html     's/acqSince=(acqHint===false)?now-6000:now;/acqSince=now;/' 'acqSince=(acqHint===false)'
+mut M104_mx6_bigstatus   ../web/index.html     's/data-i18n="status.connecting" style="font-size:11.5px;/data-i18n="status.connecting" style="/' 'style="font-size:11.5px;'
+mut M105_mx7_nodays      ../web/index.html     's/(dd>0?dd+tr("t.d")+" ":"")//' 'dd+tr("t.d")'
+mut M106_mx8_nosma       ../web/index.html     's/var sma=smaCps(d.time,d.total);/var sma=null;/' 'var sma=smaCps('
+mut M107_mx9_cursor      ../web/index.html     's/var bw=PW\/visN(N);/var bw=PW\/N;/' 'var bw=PW/visN(N);'
+mut M108_mx10_nopow      ../web/index.html     's/Math.pow(v\/mx,1\/Math.E)/(v\/mx)/' 'Math.pow(v/mx,1/Math.E)'
+mut M109_mx11_lastch     ../web/index.html     's/var NM=(NV>=N)?N-1:NV;/var NM=NV;/' 'var NM=(NV>=N)?N-1:NV;'
+mut M110_mx12_notemp     monitor.c             's/, (uint16_t)dur, t_dc);/, (uint16_t)dur, 0);/' '(uint16_t)dur, t_dc);'
+mut M111_mx12_sign       web_server.c          's/smp\[i\].t_dc < 0 ? "-" : ""/""/' 't_dc < 0 ? "-" : ""'
+mut M112_mx12_pagetemp   ../web/monitor.html   's/,pend\[k\]\[3\]);/);/' 'pend[k][3]);'
+mut M113_mx12_csv        ../web/monitor.html   's/"rel_err_pct","temp_c"\]/"rel_err_pct"]/' '"rel_err_pct","temp_c"]'
 exit $RC

@@ -8,12 +8,15 @@
 #include <stddef.h>
 
 // Базовый сэмпл серии: дельта одного (или нескольких слитых) коммитов свипа.
-// 10 Б в упаковке — 21600 шт ≈ 211 КБ PSRAM на 6 ч при 1 Гц.
+// 12 Б в упаковке (с 1.2.31 — с температурой) — 21600 шт ≈ 253 КБ PSRAM на 6 ч при 1 Гц.
 typedef struct __attribute__((packed)) {
     uint32_t end_sec;   // total_time_sec прибора на момент коммита (наборное время)
     uint32_t counts;    // прирост total_counts за dur
     uint16_t dur;       // прирост total_time_sec, с (обычно 1; больше при пропусках свипов)
-} monitor_sample_t;
+    int16_t  t_dc;      // #MX-12 (1.2.31): температура T1 прибора, 0,1 °C; MON_T_NONE — нет данных
+} monitor_sample_t;     // 12 Б: 21600 шт ≈ 253 КБ PSRAM
+
+#define MON_T_NONE INT16_MIN
 
 // Поднять кольцо + задачу-подписчика на коммиты свипов. Вызывать из app_main()
 // ПОСЛЕ spectrum_init() (spectrum_get_totals ходит под SPEC_LOCK).

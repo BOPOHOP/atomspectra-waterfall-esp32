@@ -84,7 +84,6 @@ table.saved tr.on td{ background:rgba(110,168,255,.07); }
 </nav>
 
 <div class="wrap">
-<div class="status" id="status" data-i18n="status.connecting">Подключение...</div>
 <div id="dead-banner" style="display:none;margin-bottom:10px;padding:11px 14px;border:1px solid #d9634e;border-radius:8px;background:rgba(217,99,78,.12);color:#f0a08e;font-size:13px;line-height:1.5"></div>
 
 <section class="panel pad">
@@ -102,18 +101,22 @@ table.saved tr.on td{ background:rgba(110,168,255,.07); }
 <button class="btn red" onclick="resetSpectrum()" data-i18n-html="btn.reset">&#8634; Сброс</button>
 <span class="st" id="acq-state">&hellip;</span>
 </div>
-<div class="ml" style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
+<div class="ml" style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+<div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;justify-content:flex-end">
 <span class="big" id="big-time">00:00:00</span><span class="mut">|</span>
-<span class="big ac"><span id="big-cps">0</span><span class="mut" style="font-size:12px"> CPS</span></span><span class="mut">|</span>
+<span class="big ac"><span id="big-cps">0</span><span class="mut" id="big-sma" style="font-size:15px" title="SMA"></span><span class="mut" style="font-size:12px"> CPS</span></span><span class="mut">|</span>
 <span class="big w"><span id="big-total">0</span><span class="mut" style="font-size:12px"> counts</span></span>
 <span class="mut" id="big-dose-sep" style="display:none">|</span>
 <span class="big ac" id="big-dose-wrap" style="display:none"><span id="big-dose">0.000</span><span class="mut" style="font-size:12px"> µSv/h</span></span>
 </div>
+<div class="status" id="status" data-i18n="status.connecting" style="font-size:11.5px;gap:12px;justify-content:flex-end">Подключение...</div>
+</div>
 </div>
 <div class="row">
-<div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.scale">Шкала Y</span><div class="seg" id="seg-scale"><button id="btn-lin" onclick="setLog(false)">Lin</button><button id="btn-log" class="on" onclick="setLog(true)">Log</button></div></div>
+<div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.scale">Шкала Y</span><div class="seg" id="seg-scale"><button id="btn-lin" onclick="setLog(false)">Lin</button><button id="btn-log" class="on" onclick="setLog(true)">Log</button><button id="btn-pow" onclick="setPow()" title="y^(1/e)">x<sup>1/e</sup></button></div></div>
 <div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.value">Величина</span><div class="seg" id="seg-y"><button id="btn-cnt" onclick="setCps(false)">Counts</button><button id="btn-cps" class="on" onclick="setCps(true)">CPS</button></div></div>
 <div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.x">Ось X</span><div class="seg" id="seg-x"><button id="btn-ch" onclick="setKev(false)">Ch</button><button id="btn-kev" class="on" onclick="setKev(true)">keV</button></div></div>
+<div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.xr">Диапазон X</span><div class="seg" id="seg-xr"><button id="btn-x1k" onclick="setXRange(1000)">0–1000</button><button id="btn-x2k" onclick="setXRange(2000)">0–2000</button><button id="btn-xall" class="on" onclick="setXRange(0)" data-i18n="ctl.xall">весь</button></div></div>
 <!-- #UI-3: оверлей энергетических линий нуклидов -->
 <div style="display:flex;align-items:center;gap:8px;position:relative">
  <button class="btn sm" id="btn-nuc" onclick="toggleNucPanel()" data-i18n-html="nuc.toggle" title="" disabled style="opacity:.5">&#9883; Линии</button>
@@ -217,7 +220,7 @@ var DICT={
   "btn.expXml":"Export XML","btn.expCsv":"Export CSV","btn.expN42":"Export N42","btn.expSpe":"Export SPE",
   "btn.clearOvl":"Снять overlay",
   "btn.rebootDev":"Reboot прибора","btn.rebootEsp":"Reboot ESP","btn.wifiReset":"WiFi Reset",
-  "ctl.scale":"Шкала Y","ctl.value":"Величина","ctl.x":"Ось X",
+  "ctl.scale":"Шкала Y","ctl.value":"Величина","ctl.x":"Ось X","ctl.xr":"Диапазон X, кэВ","ctl.xall":"весь",
   "nuc.toggle":"&#9883; Линии","nuc.title":"Линии нуклидов",
   "nuc.all":"Все","nuc.none":"Снять",
   "nuc.need_cal":"Нужна калибровка энергии",
@@ -246,7 +249,7 @@ var DICT={
   "log.del":"Удалено: #%1","log.rebootDev":"Команда перезагрузки прибора отправлена",
   "log.exportOk":"Выгружено: %1","log.exportErr":"Экспорт не удался: %1",
   "log.cal":"Калибровка: [%1]","log.calErr":"Ошибка калибровки: %1","log.calClear":"Калибровка очищена",
-  "st.real":"Реал.","st.live":"Живое","st.dead":"Мёртв.","st.dose":"МД",
+  "t.d":"д","st.real":"Реал.","st.live":"Живое","st.dead":"Мёртв.","st.dose":"МД",
   "err.prefix":"Ошибка: %1"
  },
  en:{
@@ -267,7 +270,7 @@ var DICT={
   "btn.expXml":"Export XML","btn.expCsv":"Export CSV","btn.expN42":"Export N42","btn.expSpe":"Export SPE",
   "btn.clearOvl":"Clear overlay",
   "btn.rebootDev":"Reboot device","btn.rebootEsp":"Reboot ESP","btn.wifiReset":"WiFi Reset",
-  "ctl.scale":"Y scale","ctl.value":"Value","ctl.x":"X axis",
+  "ctl.scale":"Y scale","ctl.value":"Value","ctl.x":"X axis","ctl.xr":"X range, keV","ctl.xall":"full",
   "nuc.toggle":"&#9883; Lines","nuc.title":"Nuclide lines",
   "nuc.all":"All","nuc.none":"None",
   "nuc.need_cal":"Energy calibration required",
@@ -296,7 +299,7 @@ var DICT={
   "log.del":"Deleted #%1","log.rebootDev":"Reboot device sent",
   "log.exportOk":"Exported: %1","log.exportErr":"Export failed: %1",
   "log.cal":"Calibration: [%1]","log.calErr":"Calibration error: %1","log.calClear":"Calibration cleared",
-  "st.real":"Real","st.live":"Live","st.dead":"Dead","st.dose":"DR",
+  "t.d":"d","st.real":"Real","st.live":"Live","st.dead":"Dead","st.dose":"DR",
   "err.prefix":"Error: %1"
  }
 };
@@ -336,7 +339,7 @@ var Ccur=document.getElementById("spcur"),Xcur=Ccur.getContext("2d");
 var cursorCh=-1;
 var logEl=document.getElementById("log");
 var overlayBins=null,overlayIdx=-1,overlayTime=0;   /* #WF-CPS-1: своё время оверлея */
-var isLog=true,isCps=true,isKev=true;  /* #UI-34: дефолты тумблеров — Log / CPS / keV */
+var isLog=true,isPow=false,isCps=true,isKev=true;  /* #UI-34: дефолты тумблеров — Log / CPS / keV */
 var calib=null,lastD=null,calibEditing=false,lastRU=null;
 /* #AWF-12b F2 (release-gate-1.2.28-code.md): единый признак "калибровка
    задана" — предпочитаем булево поле calib_set прошивки (тот же предикат,
@@ -365,11 +368,24 @@ function clearLog(){logEl.textContent="";lgCount(0)}
 function saveLog(){var d=new Date(),z=function(n){return(n<10?"0":"")+n},u=URL.createObjectURL(new Blob(["# "+d.toLocaleString()+"\n"+logEl.textContent],{type:"text/plain;charset=utf-8"})),a=document.createElement("a");a.href=u;a.download="atomspectra-exchange-"+d.getFullYear()+z(d.getMonth()+1)+z(d.getDate())+"-"+z(d.getHours())+z(d.getMinutes())+z(d.getSeconds())+".txt";document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(u)},1000)}
 /* #UI-1: подтянуть текстовые ответы прибора из /api/devlog и показать их в логе команд («← ...») */
 async function pollDevLog(){try{var r=await(await fetch("/api/devlog?since="+devSeq)).json();if(r.lines&&r.lines.length){r.lines.forEach(function(e){var t=(e.text||"").replace(/\n+$/,"").replace(/\n/g," ⏎ ");lg("← "+t,(typeof r.up_ms==="number"&&typeof e.t==="number")?new Date(Date.now()-((r.up_ms-e.t)>>>0)):undefined)})}if(typeof r.next==="number")devSeq=r.next}catch(e){}}
-function fmtTime(s){s=Math.round(s);var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return(h>0?h+"h ":"")+(m>0?m+"m ":"")+ss+"s"}
-function fmtHMS(s){var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(ss).padStart(2,"0")}
+/* #MX-7 (1.2.31): наборы бывают по 30–40 суток — больше 24 ч время показывается с днями */
+function fmtTime(s){s=Math.round(s);var dd=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60),ss=s%60;return(dd>0?dd+tr("t.d")+" ":"")+(dd>0||h>0?h+"h ":"")+(m>0?m+"m ":"")+ss+"s"}
+function fmtHMS(s){var dd=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60),ss=s%60;return(dd>0?dd+tr("t.d")+" ":"")+String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(ss).padStart(2,"0")}
+/* #MX-8 (1.2.31): CPS, усреднённый за окно SMA вкладки «Мониторинг» (окно отсчётов × интервал, по умолчанию 10 × 10 с).
+   Считается по счёту и времени набора: (Δcounts)/(Δtime) за последние W секунд; сброс набора (time убыл) очищает историю. */
+var smaHist=[];
+function smaWinSec(){var w=10,iv=10;try{var v=parseInt(localStorage.getItem("aswf-sma-win"),10);if(v>=2&&v<=200)w=v;var st=JSON.parse(localStorage.getItem("aswf-mon-sess")||"{}");if(st.iv>=1)iv=st.iv}catch(e){}return w*iv}
+function smaCps(t,n){if(typeof t!=="number"||typeof n!=="number")return null;if(smaHist.length&&t<smaHist[smaHist.length-1].t)smaHist=[];if(!smaHist.length||t>smaHist[smaHist.length-1].t)smaHist.push({t:t,n:n});var W=smaWinSec();while(smaHist.length>2&&smaHist[1].t<=t-W)smaHist.shift();if(smaHist.length>600)smaHist.shift();var a=smaHist[0];return(t>a.t)?(n-a.n)/(t-a.t):null}
 function fmtNum(n){return Math.round(n).toLocaleString(lcl())}
-function setLog(v){isLog=v;setSeg(["btn-lin","btn-log"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
+/* #MX-10 (1.2.31): степенная шкала Y — y^(1/e): поджимает пики мягче логарифма, по аналогии с BecqMoni */
+function setPow(){isPow=true;isLog=false;setSeg(["btn-lin","btn-log","btn-pow"],2);if(lastD)draw(lastD);else clearCanvas()}
+function setLog(v){isLog=v;isPow=false;setSeg(["btn-lin","btn-log","btn-pow"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
 function setCps(v){isCps=v;setSeg(["btn-cnt","btn-cps"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
+/* #MX-9 (1.2.31): предел оси X — 1000 / 2000 кэВ или весь спектр (0); только в режиме keV с калибровкой */
+var xRange=0;try{xRange=parseInt(localStorage.getItem("aswf-xrange"),10)||0}catch(e){}
+setSeg(["btn-x1k","btn-x2k","btn-xall"],xRange===1000?0:xRange===2000?1:2);
+function visN(N){if(!xRange||!isKev||!calib)return N;var c=Math.ceil(kev2ch(xRange))+1;return Math.max(16,Math.min(N,c))}
+function setXRange(v){xRange=v;try{localStorage.setItem("aswf-xrange",String(v))}catch(e){}setSeg(["btn-x1k","btn-x2k","btn-xall"],v===1000?0:v===2000?1:2);if(lastD)draw(lastD);drawCursor()}
 function setKev(v){isKev=v;setSeg(["btn-ch","btn-kev"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
 function setSeg(ids,onIdx){ids.forEach(function(id,i){var el=document.getElementById(id);if(!el)return;if(i===onIdx)el.classList.add("on");else el.classList.remove("on")})}
 function ch2kev(ch){if(!calib)return ch;var e=0;for(var i=0;i<calib.length;i++)e+=calib[i]*Math.pow(ch,i);return e}
@@ -442,16 +458,14 @@ async function update(){
   if(typeof d.t2==="number" && d.t2>0)tStr+='/'+d.t2;
   if(typeof d.t3==="number" && d.t3>0)tStr+='/'+d.t3;
   var doseStr=(doseK>0)?(d.cps*doseK).toFixed(3):"";
-  stEl.innerHTML='<span class="ac">CPS <span>'+d.cps+'</span></span><span class="sep">|</span>'+
-   '<span class="w"><span>'+d.total.toLocaleString(lcl())+'</span> <span class="mut">'+tr("ax.cnt").toLowerCase()+'</span></span>'+
-   (doseStr?'<span class="sep">|</span><span><span class="mut">'+tr("st.dose")+'</span> <span class="ac">'+doseStr+'</span> <span class="mut">µSv/h</span></span>':'')+'<span class="sep">|</span>'+
-   '<span><span class="mut">'+tr("st.real")+'</span> '+fmtTime(d.time)+'</span><span class="sep">|</span>'+
-   '<span><span class="mut">'+tr("st.live")+'</span> '+fmtTime(lv)+'</span><span class="sep">|</span>'+
+  /* #MX-5/#MX-6 (1.2.31): CPS, счёт, МД и реальное время — только крупными цифрами выше; здесь — остальное */
+  stEl.innerHTML='<span><span class="mut">'+tr("st.live")+'</span> '+fmtTime(lv)+'</span><span class="sep">|</span>'+
    '<span><span class="mut">'+tr("st.dead")+'</span> '+dpct.toFixed(2)+'%</span><span class="sep">|</span>'+
    '<span>Lost <span>'+d.lost+'</span></span><span class="sep">|</span>'+
    '<span>T '+tStr+' &deg;C</span>';
   document.getElementById("big-time").textContent=fmtHMS(d.time);
   document.getElementById("big-cps").textContent=d.cps;
+  var sma=smaCps(d.time,d.total);document.getElementById("big-sma").textContent=(sma===null)?"":" / "+sma.toFixed(2);
   document.getElementById("big-total").textContent=d.total.toLocaleString(lcl());
   if(doseK>0){var bigDr=(d.cps*doseK).toFixed(3);document.getElementById("big-dose").textContent=bigDr;document.getElementById("big-dose-sep").style.display="";document.getElementById("big-dose-wrap").style.display="";}else{document.getElementById("big-dose-sep").style.display="none";document.getElementById("big-dose-wrap").style.display="none";}
   draw(d);
@@ -462,6 +476,7 @@ async function update(){
 function draw(d){
  var bins=d.bins,time=d.time,N=bins.length;
  var tt=time>0?time:1;
+ var NV=visN(N);   /* #MX-9: видимые каналы при пределе оси X в кэВ */
  var yV=new Array(N);
  for(var i=0;i<N;i++)yV[i]=isCps?bins[i]/tt:bins[i];
  var yO=null;
@@ -472,8 +487,11 @@ function draw(d){
  if(overlayBins){var ot=overlayTime>0?overlayTime:0;yO=new Array(overlayBins.length);
   for(var i=0;i<overlayBins.length;i++)yO[i]=(isCps&&ot>0)?overlayBins[i]/ot:overlayBins[i]}
  var mx=0;
- for(var i=0;i<N;i++)if(yV[i]>mx)mx=yV[i];
- if(yO)for(var i=0;i<yO.length;i++)if(yO[i]>mx)mx=yO[i];
+ /* #MX-11 (1.2.31): последний канал — переполнение (всё выше шкалы); в фоне он на порядки выше спектра и
+    сплющивал масштаб Y. В максимум не входит, линия в нём упирается в верх графика. */
+ var NM=(NV>=N)?N-1:NV;
+ for(var i=0;i<NM;i++)if(yV[i]>mx)mx=yV[i];
+ if(yO)for(var i=0;i<Math.min(yO.length-1,NM);i++)if(yO[i]>mx)mx=yO[i];
  if(mx<=0)mx=1;
  var yTicks=[],minExp=0,maxExp=0,yMap;
  if(isLog){
@@ -490,30 +508,30 @@ function draw(d){
   /* простой лог-линейный map [minExp..maxExp]→[PB..PT]; #UI-35 half-split убран (при поле=1 суб-декад у counts нет, для cps сдвиг сохраняет identity). */
   yMap=function(v){if(v<=0)return PB;var lv=Math.log10(v);if(lv<=minExp)return PB;if(lv>=maxExp)return PT;return PB-((lv-minExp)/(maxExp-minExp))*PH;};
  }else{
-  yMap=function(v){return PB-(v/mx)*PH};
+  yMap=isPow?function(v){return v<=0?PB:PB-Math.pow(v/mx,1/Math.E)*PH}:function(v){return PB-(v/mx)*PH};
   var ys=niceStep(mx,6);for(var v=0;v<=mx*1.01;v+=ys)yTicks.push(v);
  }
  var xTicks=[];
- if(isKev&&calib){var mk=ch2kev(N-1);var ks=niceStep(mk,8);for(var k=0;k<=mk*1.01;k+=ks){var c=kev2ch(k);var x=PL+(c/N)*PW;if(x>=PL&&x<=PR)xTicks.push({x:x,l:k.toFixed(0)})}}
- else{var cs=niceStep(N,8);for(var c=0;c<=N;c+=cs){var x=PL+(c/N)*PW;if(x>=PL&&x<=PR)xTicks.push({x:x,l:String(Math.round(c))})}}
+ if(isKev&&calib){var mk=ch2kev(NV-1);var ks=niceStep(mk,8);for(var k=0;k<=mk*1.01;k+=ks){var c=kev2ch(k);var x=PL+(c/NV)*PW;if(x>=PL&&x<=PR)xTicks.push({x:x,l:k.toFixed(0)})}}
+ else{var cs=niceStep(NV,8);for(var c=0;c<=NV;c+=cs){var x=PL+(c/NV)*PW;if(x>=PL&&x<=PR)xTicks.push({x:x,l:String(Math.round(c))})}}
  X.fillStyle="#0c0f0b";X.fillRect(0,0,1200,400);
  X.strokeStyle="rgba(255,255,255,.05)";X.lineWidth=1;
  for(var i=0;i<yTicks.length;i++){var y=yMap(yTicks[i]);if(y>=PT&&y<=PB){X.beginPath();X.moveTo(PL,y);X.lineTo(PR,y);X.stroke()}}
  for(var i=0;i<xTicks.length;i++){X.beginPath();X.moveTo(xTicks[i].x,PT);X.lineTo(xTicks[i].x,PB);X.stroke()}
  X.save();X.beginPath();X.rect(PL,PT,PW,PH);X.clip();
- var bw=PW/N;
+ var bw=PW/NV;
  var accent=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#34d3c0';
- if(yO){X.fillStyle="rgba(110,168,255,0.28)";for(var i=0;i<yO.length;i++){var y=yMap(yO[i]);if(PB-y>0.3)X.fillRect(PL+i*bw,y,Math.max(bw-.3,.3),PB-y)}}
+ if(yO){X.fillStyle="rgba(110,168,255,0.28)";for(var i=0;i<Math.min(yO.length,NV);i++){var y=yMap(yO[i]);if(PB-y>0.3)X.fillRect(PL+i*bw,y,Math.max(bw-.3,.3),PB-y)}}
  /* #UI-36: лёгкая заливка (alpha 0x1e ≈ 0.12) + чёткая линия сверху — как в AtomSpectra-референсе.
     Раньше accent+"44" (~0.27) сплошными столбцами = тяжёлая «плита», топила форму спектра. */
  X.fillStyle=accent+"1e";
- for(var i=0;i<N;i++){var y=yMap(yV[i]);if(PB-y>0.3)X.fillRect(PL+i*bw,y,Math.max(bw-.3,.3),PB-y)}
+ for(var i=0;i<NV;i++){var y=yMap(yV[i]);if(PB-y>0.3)X.fillRect(PL+i*bw,y,Math.max(bw-.3,.3),PB-y)}
  X.strokeStyle=accent;X.lineWidth=1;X.beginPath();
- for(var i=0;i<N;i++){var px=PL+i*bw+bw/2,py=yMap(yV[i]);i===0?X.moveTo(px,py):X.lineTo(px,py)}
+ for(var i=0;i<NV;i++){var px=PL+i*bw+bw/2,py=yMap(yV[i]);i===0?X.moveTo(px,py):X.lineTo(px,py)}
  X.stroke();
- if(yO){X.strokeStyle="#6ea8ff";X.lineWidth=1.1;X.setLineDash([5,4]);X.beginPath();for(var i=0;i<yO.length;i++){var px=PL+i*bw+bw/2,py=yMap(yO[i]);i===0?X.moveTo(px,py):X.lineTo(px,py)}X.stroke();X.setLineDash([])}
+ if(yO){X.strokeStyle="#6ea8ff";X.lineWidth=1.1;X.setLineDash([5,4]);X.beginPath();for(var i=0;i<Math.min(yO.length,NV);i++){var px=PL+i*bw+bw/2,py=yMap(yO[i]);i===0?X.moveTo(px,py):X.lineTo(px,py)}X.stroke();X.setLineDash([])}
  X.restore();
- drawNuclides(N);
+ drawNuclides(NV);
  X.strokeStyle="#283024";X.lineWidth=1;X.strokeRect(PL+.5,PT+.5,PW,PH);
  X.fillStyle="#5a645a";X.font="11px ui-monospace,monospace";X.textAlign="right";
  for(var i=0;i<yTicks.length;i++){var y=yMap(yTicks[i]);if(y>=PT&&y<=PB)X.fillText(fmtY(yTicks[i]),PL-6,y+4)}
@@ -527,7 +545,7 @@ function drawCursor(){
  Xcur.clearRect(0,0,1200,400);
  if(cursorCh<0||!lastD)return;
  var N=lastD.bins.length; if(N<=0)return;
- var bw=PW/N;
+ var bw=PW/visN(N);
  var x=PL+(cursorCh+0.5)*bw;
  if(x<PL||x>PR)return;
  var accent=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#34d3c0';
@@ -543,7 +561,7 @@ C.addEventListener("mousemove",function(e){
  var my=(e.clientY-rect.top)*(400/rect.height);
  var info=document.getElementById("cursor-info");
  if(mx<PL||mx>PR||my<PT||my>PB){info.style.color="#5b655a";info.textContent=tr("cursor.hint");if(cursorCh!==-1){cursorCh=-1;drawCursor();}return}
- var ch=Math.floor((mx-PL)/PW*lastD.bins.length);
+ var ch=Math.floor((mx-PL)/PW*visN(lastD.bins.length));
  if(ch<0||ch>=lastD.bins.length){info.style.color="#5b655a";info.textContent=tr("cursor.hint");if(cursorCh!==-1){cursorCh=-1;drawCursor();}return}
  var cnt=lastD.bins[ch];
  var s="ch "+ch;
@@ -680,7 +698,7 @@ function setAcqBtns(run){
 function acqObserve(t){
  if(typeof t!=="number")return;
  var now=Date.now(); acqFrameTs=now;
- if(acqT===null){acqT=t;acqSince=now;setAcqBtns(null);return;}
+ if(acqT===null){acqT=t;acqSince=(acqHint===false)?now-6000:now;if(acqHint===true)acqGrowTs=now;setAcqBtns(acqHint);return;}
  if(t<acqT)acqStopWait=false;
  else if(acqStopWait){ acqFlat=(t===acqT)?acqFlat+1:0; if(acqFlat>=2||now-acqHold>6000){acqStopWait=false;acqFlat=0;} }
  else if(t>acqT)acqGrowTs=now;
@@ -696,6 +714,13 @@ function acqUserSet(run){
  else{acqGrowTs=0;acqSince=now-6000;acqStopWait=true;}
  setAcqBtns(run);
 }
+/* #MX-4 (1.2.31): до первых 6 с наблюдения индикатор показывал «…». Начальное состояние берём из намерения
+   набора платы (acq_intent: 1 — набор, 2 — стоп, 0 — неизвестно); дальше его подтверждает или опровергает рост `time`. */
+var acqHint=null;
+fetch("/api/usb-diag").then(function(r){return r.json()}).then(function(j){
+ acqHint=(j.acq_intent===1)?true:(j.acq_intent===2)?false:null;
+ if(acqT!==null&&acqHint!==null&&Date.now()>=acqHold&&!acqGrowTs){var now=Date.now();if(acqHint){acqGrowTs=now;}else{acqSince=now-6000;}setAcqBtns(acqHint);}
+}).catch(function(){});
 async function startAcq(){acqUserSet(true);await post("/api/command",{body:"-sta"});lg(tr("log.start"))}
 async function stopAcq(){acqUserSet(false);await post("/api/command",{body:"-sto"});lg(tr("log.stop"))}
 async function resetSpectrum(){clearCanvas();lastD=null;document.getElementById("big-time").textContent="00:00:00";document.getElementById("big-cps").textContent="0";document.getElementById("big-total").textContent="0";var r=await post("/api/reset");lg(tr("log.reset"));try{if((await r.json()).sent===false)lg(tr("log.resetNotSent"))}catch(e){}}

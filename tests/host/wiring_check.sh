@@ -212,5 +212,21 @@ rt=$(awk '/^    if \(cmd_is_device_reset\(cmd0\)\) \(void\)spectrogram_flush_tai
 f09=$(awk 'match($0,/char \*[A-Za-z_]+ = cJSON_PrintUnformatted\(/){v=substr($0,RSTART+6,RLENGTH-6); sub(/ =.*/,"",v); k=3; want=FILENAME":"FNR; next}
   k>0 { if (index($0,"!" v) || index($0, v " ?")) k=0; else if (--k==0) print want }' ./*.c)
 [ -z "$f09" ] || { echo "WIRING FAIL cJSON_PrintUnformatted without NULL check: $f09"; RC=1; }
+# #MX-3..#MX-12 (1.2.31): замечания пользователя по странице спектра, «Системе» и «Мониторингу»
+need ../web/system.html  1 "spark(\"cpuc\",cpu,'#f0c45a',{mn:0,mx:100});"              # MX-3: CPU прибора в шкале 0–100 %
+need ../web/index.html   1 'acqSince=(acqHint===false)?now-6000:now;'                     # MX-4: начальное состояние из acq_intent
+need ../web/index.html   0 '<span class="ac">CPS <span>'                                   # MX-5: CPS не дублируется в строке статуса
+need ../web/index.html   1 '<div class="status" id="status" data-i18n="status.connecting" style="font-size:11.5px;'   # MX-6
+need ../web/index.html   2 '(dd>0?dd+tr("t.d")+" ":"")'                                   # MX-7: дни в обоих форматах времени
+need ../web/index.html   1 'var sma=smaCps(d.time,d.total);'                               # MX-8
+need ../web/monitor.html 1 'aswf-sma-win"),e=document.getElementById("smaWin")'           # MX-8: окно SMA помнится
+need ../web/index.html   1 'function visN(N){if(!xRange||!isKev||!calib)return N;'          # MX-9
+need ../web/index.html   1 'var bw=PW/visN(N);'                                            # MX-9: курсор в том же масштабе
+need ../web/index.html   1 'Math.pow(v/mx,1/Math.E)'                                       # MX-10
+need ../web/index.html   1 'var NM=(NV>=N)?N-1:NV;'                                         # MX-11: канал переполнения вне масштаба
+need monitor.c           1 'ring_push(tsec, counts - prev_counts, (uint16_t)dur, t_dc);'   # MX-12
+need web_server.c        1 'smp[i].t_dc < 0 ? "-" : ""'                                     # MX-12: знак при -0.x
+need ../web/monitor.html 1 'pushBase(pend[k][0],pend[k][1],pend[k][2],pend[k][3]);'         # MX-12
+need ../web/monitor.html 1 '"rel_err_pct","temp_c"]'                                       # MX-12: колонка в CSV
 [ "$RC" -eq 0 ] && echo "wiring: OK"
 exit $RC
