@@ -38,7 +38,7 @@ mut M22_cjson_try    main.c               '/if (t_cjson_try) return;/d'
 mut M23_rx_delete    tcp_bridge.c         's/retry in 1 s"); vTaskDelay(pdMS_TO_TICKS(1000)); }/"); vTaskDelete(NULL); return; }/'
 mut M24_barrier_set  spectrogram.c        '/s_wf_busy = true;    \/\* до проверки/{n;d}' 'Dekker barrier'
 mut M25_barrier_wait spectrogram.c        '$!N;s/ *__sync_synchronize();\n\( *for (int i = 0; i < 200\)/\1/;P;D' 'Dekker barrier'
-mut M26_css_log      ../web/index.html    's/\.row + \.row, #log + \.row{/.row + .row{/' '#log + .row{'
+mut M26_log_open     ../web/index.html    's/id="log-body" style="display:none;/id="log-body" style="display:block;/' 'id="log-body" style="display:none;'
 # #OTA-VR: повтор проверки образа в обоих путях OTA, отказ esp_ota_end() окончателен
 mut M27_web_no_retry web_server.c         's/err = ota_set_boot_verified(update);/err = ESP_OK;/' "line 'err = ota_set_boot_verified(update);'"
 mut M28_web_direct   web_server.c         '$a static void mut28(const esp_partition_t *p) { esp_ota_set_boot_partition(p); }' "'esp_ota_set_boot_partition(' x1"
@@ -111,7 +111,8 @@ mut M85_i60_nostamp     usb_host_cdc.c        '/    s_devlog_ms\[slot\] = (uint3
 mut M86_i60_nofield     usb_host_cdc.c        's/\\"seq\\":%" PRIu32 ",\\"t\\":%" PRIu32 ",\\"text/\\"seq\\":%" PRIu32 ",\\"text/' '\"t\":%" PRIu32'
 mut M87_i60_pagenow     ../web/index.html     's/lg("← "+t,(typeof r.up_ms==="number"\&\&typeof e.t==="number")?new Date(Date.now()-((r.up_ms-e.t)>>>0)):undefined)/lg("← "+t)/' 'typeof r.up_ms==="number"'
 # WP10 (1.2.30)
-mut M76_p37_nocut       ../web/index.html     's/if(h0.length>100)h0=/if(h0.length>1000)h0=/' 'if(h0.length>100)h0='
+mut M76_p37_nocut       ../web/index.html     's/" ⏎ ");/" . ");/' '" ⏎ ");'
+mut M98_exch_nosave     ../web/index.html     's/a.download="atomspectra-exchange-"/a.download="x-"/' 'a.download="atomspectra-exchange-"'
 mut M77_p38_silent      ../web/waterfall.html 's/ }).catch(function(){oflSetMsg(t("ofl.err"),"err");});/ }).catch(function(){});/' 'oflSetMsg(t("ofl.err"),"err");});'
 mut M78_start_nolog     ../web/waterfall.html 's/if(!r.ok)lg("start: HTTP "+r.status);//' 'lg("start: HTTP "'
 # LK-02/03/04 (1.2.30)

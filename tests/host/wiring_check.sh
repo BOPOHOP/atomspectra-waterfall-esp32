@@ -113,9 +113,11 @@ dk=$(awk '{c=$0; sub(/\r$/,"",c); sub(/^[ \t]+/,"",c)}
 [ "$dk" = ok ] || { echo "WIRING FAIL spectrogram.c: Dekker barrier around s_wf_busy missing ($dk)"; RC=1; }
 # P-03 (Codeaudit): журнал главной страницы существует и показывается (в копии main/ без web/ — пропуск)
 if [ -f ../web/index.html ]; then
-    need ../web/index.html 1 '<pre id="log" style="display:none;'
-    need ../web/index.html 1 'function lg(m,at){if(!logEl)return;logEl.style.display="";'
-    need ../web/index.html 1 '.row + .row, #log + .row{'                     # pass2 C: pre#log рвал .row + .row
+    # #59/#60 (1.2.30): журнал обмена с прибором — свёрнутая секция под калибровкой, с сохранением в файл
+    need ../web/index.html 1 '<pre id="log" style="margin:0 0 8px;'
+    need ../web/index.html 1 'id="log-body" style="display:none;'
+    need ../web/index.html 1 'onclick="saveLog()"'
+    need ../web/index.html 1 'function lg(m,at){if(!logEl)return;var a='
     # S-01 (1.2.30): страницы шлют CSRF-токен на тяжёлых GET
     need ../web/service.html   2 'await gget("/api/settings/backup");'
     need ../web/system.html    1 'await gget("/api/ota/github/check")'
@@ -153,7 +155,8 @@ need web_waterfall.c 1 '    reg(server, "/api/waterfall/clear",  HTTP_POST, h_cl
 need web_waterfall.c 1 '    reg(server, "/api/waterfall/segment/delete", HTTP_POST, h_segdel_async);'
 need web_waterfall.c 3 '&s_ctl_active, WF_CTL_MAX); }'
 # WP10 (1.2.30): P3-7 — сначала обрезка первой строки, потом счётчик «(+N)»; P3-8 — отказ загрузки offload виден; Старт/Стоп показывают не-200
-need ../web/index.html 1 'if(ls.length>3){var h0=ls[0];if(h0.length>100)h0=h0.slice(0,100)+"…";t=h0+"  … (+"+(ls.length-1)+")"}else if(t.length>120)t=t.slice(0,120)+"…";'
+need ../web/index.html 1 '.replace(/\n/g," ⏎ ");'   # журнал обмена: полный текст ответа (без обрезки), для сохранения в файл
+need ../web/index.html 1 'a.download="atomspectra-exchange-"'
 need ../web/waterfall.html 2 ' }).catch(function(){oflSetMsg(t("ofl.err"),"err");});'
 need ../web/waterfall.html 1 'if(!r.ok)lg("start: HTTP "+r.status);'
 need ../web/waterfall.html 1 'if(!r.ok)lg("stop: HTTP "+r.status);'
