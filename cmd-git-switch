@@ -1,0 +1,4 @@
+#! /bin/sh
+
+git restore dependencies.lock
+git switch "$@"
