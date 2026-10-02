@@ -103,7 +103,11 @@ canvas{ display:block; width:100%; height:auto; background:#0c0f0b; border-radiu
 </section>
 
 <section class="panel">
-<div class="title"><span data-i18n="list.title">Список</span><span class="lbl" id="list-cnt">—</span></div>
+<div class="title"><span data-i18n="list.title">Список</span><span style="display:flex;gap:8px;align-items:center">
+<button class="btn sm green" id="btn-imp" data-i18n="btn.import">Импорт фона…</button>
+<input type="file" id="imp-file" accept=".json,.xml,.n42,.csv,.txt" style="display:none">
+<span class="lbl" id="list-cnt">—</span></span></div>
+<div class="lbl" id="imp-msg" style="padding:0 16px 8px"></div>
 <div class="list" id="list"><div class="empty" data-i18n="list.loading">Загрузка...</div></div>
 </section>
 </div>
@@ -123,6 +127,11 @@ var DICT={
   "meta.counts":"Counts","meta.time":"Время измерения","meta.cps":"CPS (среднее)",
   "meta.saved":"Сохранено","meta.ch":"Каналы","meta.cal":"Калибровка",
   "list.title":"Список","list.loading":"Загрузка...",
+  "btn.import":"Импорт фона…","list.impTag":"фон, импорт",
+  "imp.ok":"Импортирован как #%1","imp.warnTotal":"сумма каналов не совпала с заявленной в файле","imp.warnNoCal":"калибровка не задана — наложение по каналам","imp.warnCalibBad":"калибровка в файле некорректна — отброшена",
+  "imp.err.format":"Не удалось разобрать файл: %1","imp.err.channels":"Нужно 8192 канала, в файле %1","imp.err.counts":"Недопустимые счёты: %1","imp.err.time":"Недопустимое время набора: %1","imp.err.big":"Файл больше 2 МБ",
+  "imp.err.xfer":"Повреждена передача — повторите","imp.err.bad":"Недопустимые данные: %1","imp.err.recv_timeout":"Связь прервалась при загрузке","imp.err.exhausted":"Все 9999 слотов заняты",
+  "imp.err.nospace":"Мало места на flash — удалите старые снимки","imp.err.fserr":"Ошибка платы: %1","imp.err.oom":"Ошибка платы: %1","imp.err.busy":"Плата занята — повторите позже",
   "list.empty":"Нет сохранённых спектров",
   "list.autoTitle":"Автоматические копии",
   "confirm.delBk":"Удалить резервную копию %1?",
@@ -147,6 +156,11 @@ var DICT={
   "meta.counts":"Counts","meta.time":"Acq. time","meta.cps":"CPS (avg)",
   "meta.saved":"Saved","meta.ch":"Channels","meta.cal":"Calibration",
   "list.title":"List","list.loading":"Loading...",
+  "btn.import":"Import background…","list.impTag":"background, imported",
+  "imp.ok":"Imported as #%1","imp.warnTotal":"channel sum differs from the total stated in the file","imp.warnNoCal":"no calibration — overlay by channel","imp.warnCalibBad":"calibration in the file is invalid — dropped",
+  "imp.err.format":"Cannot parse the file: %1","imp.err.channels":"8192 channels required, file has %1","imp.err.counts":"Invalid counts: %1","imp.err.time":"Invalid acquisition time: %1","imp.err.big":"File is larger than 2 MB",
+  "imp.err.xfer":"Transfer corrupted — retry","imp.err.bad":"Invalid data: %1","imp.err.recv_timeout":"Upload interrupted","imp.err.exhausted":"All 9999 slots used",
+  "imp.err.nospace":"Low flash space — delete old snapshots","imp.err.fserr":"Board error: %1","imp.err.oom":"Board error: %1","imp.err.busy":"Board busy — retry later",
   "list.empty":"No saved spectra",
   "list.autoTitle":"Automatic backups",
   "confirm.delBk":"Delete backup %1?",
@@ -244,7 +258,7 @@ async function loadList(){
    var s=spectra[i];
    var on=(curKind==="spec"&&s.index===currentIdx)?' on':'';
    html+='<div class="item'+on+'" data-idx="'+s.index+'" onclick="selectIdx('+s.index+')">'+
-    '<div class="hd"><b>#'+s.index+'</b><span class="lbl">'+fmtDate(s.saved_at)+'</span></div>'+
+    '<div class="hd"><b>#'+s.index+'</b>'+(s.imp?'<span class="lbl" style="color:#f0c45a">'+t("list.impTag")+'</span>':'')+'<span class="lbl">'+fmtDate(s.saved_at)+'</span></div>'+
     '<div class="sub"><span>'+fmtNum(s.counts)+' counts</span><span>'+fmtTime(s.time)+'</span></div>'+
     '</div>';
   }
@@ -388,6 +402,162 @@ async function deleteCurrent(){
  await loadFlashInfo();
 }
 
+/*IMPORT-BEGIN*/
+/* 1.2.31: импорт фона. Файл (JSON платы / XML BecqMoni / N42 / CSV) разбирает БРАУЗЕР, на плату уходит бинарное тело ASI1
+   (32896 Б: 128 Б заголовок + 8192 x u32, little-endian, CRC-32) — cJSON на плате не годится (внутренняя RAM ~16 КБ). */
+function impFail(k,a){throw{k:"imp.err."+k,a:a||[]};}
+var IMP_CH=8192,IMP_U32=4294967295,IMP_MAXT=315360000;
+function impCrc(u8,s,e,prev){var c=~prev;for(var i=s;i<e;i++){c^=u8[i];for(var k=0;k<8;k++)c=(c>>>1)^(0xEDB88320&(-(c&1)));}return(~c)>>>0;}
+function impDetect(txt){
+ var s=txt.replace(/^﻿/,"").trimStart();
+ if(s.charAt(0)==="{")return"json";
+ if(s.indexOf("<RadInstrumentData")>=0)return"n42";
+ if(s.indexOf("<ResultDataFile")>=0)return"xml";
+ if(/^Channel\s*,\s*Counts/.test(s))return"csv";
+ return null;
+}
+function impSer(s){return String(s||"").replace(/^IMP:/,"").replace(/[^\x20-\x7E]/g,"?").substring(0,43);}
+function impNum(x){var n=Number(x);return isFinite(n)?n:NaN;}
+function impUnxml(s){return s.replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&amp;/g,"&");}
+function impTag(s,re){var m=re.exec(s);return m?m[1]:null;}
+/* Калибровка: 1..5 конечных коэффициентов, не все нули, E(ch) строго возрастает на 0..8191 (64 точки) — иначе отбрасывается. */
+function impCalibOk(c){
+ if(!Array.isArray(c)||c.length<1||c.length>5)return false;
+ var nz=false,i;for(i=0;i<c.length;i++){if(typeof c[i]!=="number"||!isFinite(c[i]))return false;if(c[i]!==0)nz=true;}
+ if(!nz)return false;
+ var prev=-Infinity;
+ for(var j=0;j<64;j++){var ch=Math.round(j*(IMP_CH-1)/63),e=0;for(i=0;i<c.length;i++)e+=c[i]*Math.pow(ch,i);if(!(e>prev))return false;prev=e;}
+ return true;
+}
+/* Общая проверка результата разбора (все форматы): каналы ровно 8192, счёты u32, сумма 1..2^32-1, время 1..10 лет. */
+function impFinish(p){
+ var b=p.bins;
+ if(!b||b.length!==IMP_CH)impFail("channels",[b?b.length:0]);
+ var s=0;for(var i=0;i<IMP_CH;i++){var v=b[i];if(!(v>=0&&v<=IMP_U32&&Math.floor(v)===v))impFail("counts",["#"+i]);s+=v;}
+ if(s<=0||s>IMP_U32)impFail("counts",[s<=0?"sum=0":"sum>2^32-1"]);
+ p.time=Math.floor(p.time);if(!(p.time>=1&&p.time<=IMP_MAXT))impFail("time",[String(p.time)]);
+ p.lost=Math.max(0,Math.min(Math.floor(p.lost||0),IMP_U32-s));
+ p.warn=p.warn||[];
+ if(p.calib&&!impCalibOk(p.calib)){p.calib=null;p.warn.push("imp.warnCalibBad");}
+ if(!p.calib&&p.warn.indexOf("imp.warnNoCal")<0)p.warn.push("imp.warnNoCal");
+ if(p.declTotal>0&&Math.abs(p.declTotal-s)>0.001*s)p.warn.push("imp.warnTotal");
+ p.sum=s;p.serial=impSer(p.serial);
+ return p;
+}
+/* JSON платы (/api/saved/<i>/spectrum.json): bins,time,lost,calib (+calib_set),saved_at (с 1.2.31),serial,total. */
+function impParseJson(txt,mt){
+ var r;try{r=JSON.parse(txt);}catch(e){impFail("format",["JSON"]);}
+ var sa=impNum(r.saved_at),c=(r.calib_set!==false&&Array.isArray(r.calib))?r.calib:null;
+ return{bins:Array.isArray(r.bins)?r.bins:null,time:impNum(r.time),lost:impNum(r.lost)||0,calib:c,
+  savedAt:sa>0?sa:Math.floor(mt/1000),serial:r.serial,declTotal:impNum(r.total)};
+}
+/* CSV платы: "Channel,Counts (TotalTime=<t>s)" + строки "канал,счёт"; калибровки нет. */
+function impParseCsv(txt,mt){
+ var L=txt.replace(/^﻿/,"").split(/\r?\n/),m=/TotalTime\s*=\s*([\d.]+)/.exec(L[0]),b=[];
+ if(!m)impFail("format",["CSV TotalTime"]);
+ for(var i=1;i<L.length;i++){
+  if(!L[i])continue;var q=L[i].split(",");
+  if(q.length!==2)impFail("format",["CSV #"+(i+1)]);
+  b.push(/^\s*\d+\s*$/.test(q[1])?Number(q[1]):NaN);
+ }
+ return{bins:b,time:Number(m[1]),lost:0,calib:null,savedAt:Math.floor(mt/1000),serial:"",warn:["imp.warnNoCal"]};
+}
+/* Локальная дата-время → UNIX с; до 2020 года (часы платы не были синхронизированы) = 0, т.е. «неизвестно». */
+function impLocal(y,mo,d,h,mi,s,utc){
+ var t=(utc?Date.UTC(y,mo-1,d,h,mi,s):new Date(y,mo-1,d,h,mi,s).getTime())/1000;
+ return t>1577836800?Math.floor(t):0;
+}
+/* XML BecqMoni (/api/saved/<i>/export.xml): число DataPoint обязано совпасть с NumberOfChannels. */
+function impParseXml(txt,mt){
+ var pts=txt.match(/<DataPoint>[^<]*<\/DataPoint>/g)||[],b=pts.map(function(x){var v=x.replace(/<[^>]*>/g,"").trim();return/^\d+$/.test(v)?Number(v):NaN;});
+ var nc=impTag(txt,/<NumberOfChannels>\s*(\d+)\s*</);
+ if(nc!==null&&Number(nc)!==b.length)impFail("format",["NumberOfChannels "+nc+" != DataPoint "+b.length]);
+ var cf=(txt.match(/<Coefficient>[^<]*<\/Coefficient>/g)||[]).map(function(x){return Number(x.replace(/<[^>]*>/g,"").trim());});
+ var v=impNum(impTag(txt,/<ValidPulseCount>\s*(\d+)/)),tp=impNum(impTag(txt,/<TotalPulseCount>\s*(\d+)/));
+ var et=/<EndTime>\s*(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)/.exec(txt),sa=et?impLocal(+et[1],+et[2],+et[3],+et[4],+et[5],+et[6],false):0;
+ var nm=impTag(txt,/<SampleInfo>[\s\S]*?<Name>([^<]*)<\/Name>/);
+ return{bins:b,time:impNum(impTag(txt,/<MeasurementTime>\s*([\d.]+)/)),lost:(tp>v)?tp-v:0,calib:cf.length?cf:null,
+  savedAt:sa||Math.floor(mt/1000),serial:nm?impUnxml(nm):"",declTotal:v};
+}
+/* ChannelData N42: compressionCode None (счёты через пробел) или CountedZeroes ("0 N" = N нулей). */
+function impN42Data(s,code){
+ var t=s.trim().split(/\s+/),o=[],i,n,k;
+ for(i=0;i<t.length&&o.length<=IMP_CH;i++){
+  if(code==="CountedZeroes"&&t[i]==="0"&&i+1<t.length){n=Number(t[++i]);if(!(n>=0&&n<=IMP_CH))n=0;for(k=0;k<n;k++)o.push(0);}
+  else o.push(/^\d+$/.test(t[i])?Number(t[i]):NaN);
+ }
+ return o;
+}
+/* N42-2011 (/api/export.n42, /api/saved/<i>/export.n42): время набора RealTimeDuration, конец = StartDateTime + время. */
+function impParseN42(txt,mt){
+ var cd=txt.match(/<ChannelData[^>]*>[^<]*<\/ChannelData>/g)||[];
+ if(cd.length!==1)impFail("format",["N42: ChannelData x"+cd.length]);
+ var code=impTag(cd[0],/compressionCode="([^"]*)"/)||"None";
+ if(code!=="None"&&code!=="CountedZeroes")impFail("format",["N42 compressionCode "+code]);
+ var b=impN42Data(cd[0].replace(/<[^>]*>/g,""),code),c=impTag(txt,/<CoefficientValues>([^<]*)</),sum=0,i;
+ for(i=0;i<b.length;i++)sum+=b[i];
+ var rt=impNum(impTag(txt,/<RealTimeDuration>\s*PT([\d.]+)S/)),tc=impNum(impTag(txt,/<TotalCounts>\s*(\d+)/));
+ var m=/<StartDateTime>\s*(\d\d)\.(\d\d)\.(\d{4})\s+(\d\d):(\d\d):(\d\d)/.exec(txt),st=m?impLocal(+m[3],+m[2],+m[1],+m[4],+m[5],+m[6],false):0;
+ m=m||/<StartDateTime>\s*(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(Z?)/.exec(txt);
+ if(!st&&m&&m.length===8)st=impLocal(+m[1],+m[2],+m[3],+m[4],+m[5],+m[6],m[7]==="Z");
+ return{bins:b,time:rt,lost:(tc>sum)?tc-sum:0,calib:c?c.trim().split(/\s+/).map(Number):null,
+  savedAt:st?st+Math.floor(rt):Math.floor(mt/1000),serial:""};
+}
+/* Разбор по СОДЕРЖИМОМУ (не по расширению). mt — File.lastModified (мс): запасная дата конца набора. */
+function impParse(txt,name,mt){
+ var f=impDetect(txt);
+ if(!f)impFail("format",[name||""]);
+ var p=(f==="json"?impParseJson:f==="xml"?impParseXml:f==="n42"?impParseN42:impParseCsv)(txt,mt||Date.now());
+ p.format=f;
+ return impFinish(p);
+}
+/* Тело ASI1 для POST /api/import: заголовок 128 Б (magic,version,hdr,channels,time,lost,order,calib f64x5,saved_at i64,serial[48],flags,crc) + bins u32. */
+function impEncode(p){
+ var buf=new ArrayBuffer(128+4*IMP_CH),dv=new DataView(buf),u8=new Uint8Array(buf),i,c=p.calib||[];
+ dv.setUint32(0,0x31495341,true);dv.setUint16(4,1,true);dv.setUint16(6,128,true);dv.setUint32(8,IMP_CH,true);
+ dv.setUint32(12,p.time,true);dv.setUint32(16,p.lost,true);dv.setInt32(20,c.length?c.length-1:-1,true);
+ for(i=0;i<c.length;i++)dv.setFloat64(24+8*i,c[i],true);
+ var sa=Math.max(0,Math.floor(p.savedAt||0));dv.setUint32(64,sa>>>0,true);dv.setUint32(68,Math.floor(sa/4294967296),true);
+ for(i=0;i<p.serial.length;i++)u8[72+i]=p.serial.charCodeAt(i);
+ dv.setUint32(120,1,true);
+ for(i=0;i<IMP_CH;i++)dv.setUint32(128+4*i,p.bins[i],true);
+ dv.setUint32(124,impCrc(u8,128,buf.byteLength,impCrc(u8,0,124,0)),true);
+ return buf;
+}
+/* Отправка: 503 (занят асинхронный слот или ворота flash) — до 3 попыток через 2 с; результат платы + предупреждения разбора. */
+async function importFile(f){
+ if(f.size>2*1024*1024)impFail("big");
+ var p=impParse(await f.text(),f.name,f.lastModified),body=impEncode(p),r,j;
+ for(var a=0;a<3;a++){
+  r=await post("/api/import",{headers:{"Content-Type":"application/octet-stream"},body:body});
+  if(r.status!==503)break;
+  await new Promise(function(s){setTimeout(s,2000);});
+ }
+ if(r.status===503)impFail("busy");
+ try{j=await r.json();}catch(e){j={ok:false,err:"http"+r.status};}
+ j.warn=p.warn;return j;
+}
+/* Код отказа платы (design 2.4) → текст UI. */
+function impErrText(k){
+ var m={bad_size:"xfer",bad_magic:"xfer",bad_version:"xfer",bad_crc:"xfer",bad_channels:"channels",bad_time:"bad",bad_counts:"bad",bad_calib:"bad",bad_serial:"bad"};
+ var key="imp.err."+(m[k]||k);
+ return DICT.ru[key]!==undefined?tfmt(key,k):tfmt("imp.err.fserr",k);
+}
+async function doImport(f){
+ var el=document.getElementById("imp-msg"),b=document.getElementById("btn-imp");
+ b.disabled=true;el.textContent="…";
+ try{
+  var j=await importFile(f),w=(j.warn||[]).map(function(k){return t(k);}).join(" · ");
+  if(j.ok){
+   el.textContent=tfmt("imp.ok",j.index)+(w?" · "+w:"");
+   await loadList();await loadFlashInfo();await selectIdx(j.index);
+  }else el.textContent=impErrText(j.err);
+ }catch(e){el.textContent=(e&&e.k)?tfmt.apply(null,[e.k].concat(e.a||[])):String(e);}
+ b.disabled=false;
+}
+
+/*IMPORT-END*/
+
 function overlayOnMain(){
  if(currentIdx<0)return;
  try{localStorage.setItem("aswf-overlay",String(currentIdx));}catch(e){}
@@ -397,6 +567,8 @@ function overlayOnMain(){
 (async function(){
  applyI18n();
  document.getElementById("langBtn").onclick=function(){setLang(LANG==="ru"?"en":"ru");};
+ document.getElementById("btn-imp").onclick=function(){document.getElementById("imp-file").click();};
+ document.getElementById("imp-file").onchange=function(){var f=this.files&&this.files[0];this.value="";if(f)doImport(f);};
  document.getElementById("ip-chip").textContent=location.hostname;
  await loadCsrf();
  await loadCalib();

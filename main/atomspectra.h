@@ -289,6 +289,9 @@ const device_info_t   *spectrum_get_device_info(void);
 int  spectrum_save_to_flash(void);  // >=0 idx; -1 нет валидного спектра; -2 мало места; -3 ошибка FS (#FW-24)
 int  spectrum_load_from_flash(int index, spectrum_data_t *out);
 int  spectrum_delete_from_flash(int index);
+// 1.2.31: импорт проверенного спектра (spectrum_import_decode) в spec_NNNN.bin. Под http_io_gate.
+// >=0 индекс; -2 мало места; -3 ошибка ФС; -4 слоты исчерпаны; -5 писатель flash занят.
+int  spectrum_import_to_flash(const spectrum_data_t *sp);
 
 // issue #52: автоматические резервные снимки в BACKUP_DIR.
 // Записывает текущий спектр как bk_<sess>_<seq>.bin и удаляет старые, чтобы

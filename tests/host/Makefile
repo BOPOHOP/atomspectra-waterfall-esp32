@@ -52,7 +52,8 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_wf_rst_keep.c \
        test_wf_tail_plan.c \
        test_ota_gh_check_state.c \
-       test_debug_log_chunk.c
+       test_debug_log_chunk.c \
+       test_spectrum_import_plan.c
 
 test: $(SRCS) test_util.h
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm

@@ -965,6 +965,19 @@ bool spectrum_reset_mark_undelivered(void)
     return p;
 }
 
+// 1.2.31: первая свободная «дырка» 0..9998 → индекс, в path — её имя; -4 = все 9999 слотов заняты (path при этом не
+// годится для записи: держит имя последнего проверенного файла, #FW-59). Общий поиск для «Сохранить» и импорта фона.
+static int spec_find_free_slot(char *path, size_t cap)
+{
+    for (int idx = 0; idx < 9999; idx++) {
+        snprintf(path, cap, "%s/spec_%04d.bin", SPEC_DIR, idx);
+        FILE *f = fopen(path, "r");
+        if (!f) return idx;
+        fclose(f);
+    }
+    return -4;
+}
+
 int spectrum_save_to_flash(void)
 {
     spectrum_data_t *snap = malloc(sizeof(*snap));
@@ -983,22 +996,15 @@ int spectrum_save_to_flash(void)
         return -2;
     }
     char path[64];
-    int idx = 0;
+    int idx = spec_find_free_slot(path, sizeof(path));   // 1.2.31: общий поиск слота с импортом (было: цикл здесь же)
     FILE *f;
-    while (idx < 9999) {
-        snprintf(path, sizeof(path), "%s/spec_%04d.bin", SPEC_DIR, idx);
-        f = fopen(path, "r");
-        if (!f) break;
-        fclose(f);
-        idx++;
-    }
     // #FW-59 (задача #3/Codeaudit P1): idx==9999 значит слоты 0..9998 заняты —
     // цикл выше НЕ выполнил тело для idx=9999 (условие while сработало раньше),
     // поэтому `path` всё ещё держит имя ПОСЛЕДНЕГО проверенного файла (spec_9998.bin).
     // Без этой проверки следующий fopen(path,"wb") молча перезаписал бы
     // spec_9998.bin, а вызывающему вернулся бы idx=9999 — имя файла и
     // сообщённый индекс разошлись бы, спектр по факту потерян.
-    if (idx >= 9999) {
+    if (idx < 0) {      // spec_find_free_slot: -4 = слоты исчерпаны (тот же результат, что давал idx >= 9999)
         ESP_LOGE(TAG, "Save rejected: spec_XXXX.bin slots exhausted (0..9998 all taken)");
         free(snap);
         return -4;
@@ -1105,6 +1111,26 @@ static bool atomic_write_snapshot(const char *tmp_path, const char *final_path,
     if (wr != 1 || cl != 0) { unlink(tmp_path); return false; }
     if (rename(tmp_path, final_path) != 0) { unlink(tmp_path); return false; }
     return true;
+}
+
+// 1.2.31 импорт фона: sp уже проверен spectrum_import_decode(); вызывать под http_io_gate (как «Сохранить»).
+// Запись атомарная (tmp+rename) под flash_quiet_writer_lock, как у снимков; имя tmp не начинается с spec_ — листинг его не видит.
+// >=0 индекс; -2 мало места; -3 ошибка ФС; -4 слоты исчерпаны; -5 писатель flash занят.
+int spectrum_import_to_flash(const spectrum_data_t *sp)
+{
+    size_t total = 0, used = 0;
+    esp_littlefs_info("storage", &total, &used);
+    if (total - used < AUTOSAVE_RESERVE + sizeof(spectrum_data_t)) {
+        ESP_LOGW(TAG, "Import rejected: free=%zu < reserve=%d", total - used, AUTOSAVE_RESERVE);
+        return -2;
+    }
+    if (!flash_quiet_writer_lock(flash_quiet_writer_lock_ticks())) return -5;
+    char path[64];
+    int idx = spec_find_free_slot(path, sizeof(path));
+    if (idx >= 0 && !atomic_write_snapshot(SPEC_DIR "/import.tmp", path, sp)) idx = -3;
+    flash_quiet_writer_unlock();
+    if (idx >= 0) ESP_LOGI(TAG, "Imported spectrum to %s (%" PRIu32 " counts)", path, sp->total_counts);
+    return idx;
 }
 
 int spectrum_backup_save(uint32_t sess, uint32_t seq, int keep, uint32_t expect_req)

@@ -236,5 +236,35 @@ need monitor.c           1 'ring_push(tsec, counts - prev_counts, (uint16_t)dur,
 need web_server.c        1 'smp[i].t_dc < 0 ? "-" : ""'                                     # MX-12: знак при -0.x
 need ../web/monitor.html 1 'pushBase(pend[k][0],pend[k][1],pend[k][2],pend[k][3]);'         # MX-12
 need ../web/monitor.html 1 '"rel_err_pct","temp_c"]'                                       # MX-12: колонка в CSV
+# 1.2.31: импорт фона в «Сохранённые» (design-1.2.31-import.md) + дефект «любой POST /api/saved/* удаляет запись»
+need web_server.c 1 '#include "spectrum_import_plan.h"'
+line web_server.c 1 'int idx = saved_delete_index(req->uri);'                       # удаление — только /api/saved/<i>/delete, иначе 404
+need web_server.c 1 'HTTP_POST, handle_import,'                                    # маршрут импорта НЕ под /api/saved/* (там POST = удаление)
+need web_server.c 1 '"/api/import"'
+need web_server.c 1 'if (req->content_len != SPEC_IMPORT_SIZE) { import_reply(req, "400 Bad Request", "bad_size"); return ESP_FAIL; }'
+need web_server.c 1 'return web_async_run(req, handle_import_job);'                # асинхронная задача, общий счётчик s_dl_active
+need web_server.c 1 'uint8_t *b = heap_caps_malloc(SPEC_IMPORT_SIZE, MALLOC_CAP_SPIRAM);'      # буферы — в PSRAM, не во внутренней RAM
+need web_server.c 1 'spectrum_data_t *sp = heap_caps_malloc(sizeof(*sp), MALLOC_CAP_SPIRAM);'
+need web_server.c 1 'if (r == HTTPD_SOCK_ERR_TIMEOUT && !ota_timeout_budget_exceeded(++streak, OTA_MAX_CONSECUTIVE_TIMEOUTS)) continue;'
+need web_server.c 1 'imp_err_t e = rx ? spectrum_import_decode(b, SPEC_IMPORT_SIZE, sp) : IMP_BAD_SIZE;'
+need web_server.c 1 'if (!http_io_gate_enter_wait_or_503(req, SAVED_FLASH_GATE_WAIT_MS)) { free(sp); return ESP_OK; }'   # запись под воротами flash
+need web_server.c 1 'int idx = spectrum_import_to_flash(sp);'
+imp=$(awk '{c=$0; sub(/\r$/,"",c)} c ~ /^static esp_err_t handle_import\(httpd_req_t \*req\)/{f=1} f && c ~ /csrf_check\(req\)/{ok=1} f && c == "}"{f=0} END{print ok ? "ok" : "bad"}' web_server.c)
+[ "$imp" = ok ] || { echo "WIRING FAIL web_server.c: handle_import without csrf_check ($imp)"; RC=1; }
+need web_server.c 1 '",\"calib_set\":%s,\"saved_at\":%ld",'                          # дата набора в JSON записи (экспорт → импорт на другой плате)
+need web_server.c 1 'memcmp(tag, "IMP:", 4) ? "" : ",\"imp\":true"'                # метка импорта в /api/list
+need spectrum.c   2 'int idx = spec_find_free_slot(path, sizeof(path));'            # «Сохранить» и импорт — один поиск слота
+need spectrum.c   1 'if (!flash_quiet_writer_lock(flash_quiet_writer_lock_ticks())) return -5;'
+need spectrum.c   1 'if (idx >= 0 && !atomic_write_snapshot(SPEC_DIR "/import.tmp", path, sp)) idx = -3;'   # tmp+rename, имя не spec_*
+need web_waterfall.c 1 'return wf_dl_async(req, h, &s_dl_active, WF_DL_MAX);'      # web_async_run: тот же счётчик, максимум одна задача 6144 Б
+need ../web/saved.html 1 'r=await post("/api/import",{headers:{"Content-Type":"application/octet-stream"},body:body});'
+need ../web/saved.html 1 'document.getElementById("btn-imp").onclick=function(){document.getElementById("imp-file").click();};'
+need ../web/saved.html 1 "(s.imp?'<span"                                         # метка «фон, импорт» в списке
+need ../web/saved.html 1 'dv.setUint32(124,impCrc(u8,128,buf.byteLength,impCrc(u8,0,124,0)),true);'
+need ../web/index.html 1 'var ob=ovlView();'                                       # оверлей рисуется по энергетической шкале живого спектра
+need ../web/index.html 1 'ovlKey=k;ovlCache=rb?rebinByEnergy(overlayBins,overlayCal,calib):overlayBins;'
+need ../web/index.html 1 'overlayCal=(r.calib_set!==false&&calibArraySet(r.calib))?r.calib:null;'
+need ../web/index.html 0 'yO=new Array(overlayBins.length)'
+need ../web/index.html 1 "(s.imp?' <span"
 [ "$RC" -eq 0 ] && echo "wiring: OK"
 exit $RC

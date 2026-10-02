@@ -245,6 +245,7 @@ var DICT={
   "log.start":"Старт отправлен","log.stop":"Стоп отправлен","log.reset":"Сброс отправлен","log.resetNotSent":"Прибор не получил -rst (USB не подключён?) — плата повторит его в ближайшие секунды или при подключении прибора","log.resetUnconfirmed":"Прибор не выполнил сброс за ~10 с — показан его набор","log.resetUnconfirmedBoot":"С загрузки платы прибор не выполнил сбросов: {n} — показан его набор","log.info":"Запрошена информация",
   "log.ovlOk":"Наложение загружено: #%1","log.ovlErr":"Ошибка наложения: %1","log.ovlClear":"Наложение очищено",
   "ovl.noTime":" (время не задано — показан счёт, не CPS)",
+  "ovl.rebinned":" (перенесено по энергии)","ovl.byChannel":" (в записи нет калибровки — по каналам)","saved.impTag":"фон, импорт",
   "cal.readEmpty":"Прибор вернул пустую калибровку (нули/NaN) — калибровка платы не изменена",
   "log.del":"Удалено: #%1","log.rebootDev":"Команда перезагрузки прибора отправлена",
   "log.exportOk":"Выгружено: %1","log.exportErr":"Экспорт не удался: %1",
@@ -295,6 +296,7 @@ var DICT={
   "log.start":"Start sent","log.stop":"Stop sent","log.reset":"Reset sent","log.resetNotSent":"Device did not receive -rst (USB disconnected?) — the board will resend it within seconds or when the device connects","log.resetUnconfirmed":"Device did not reset within ~10 s — showing its data","log.resetUnconfirmedBoot":"Resets not performed by the device since board boot: {n} — showing its data","log.info":"Info requested",
   "log.sent":"Sent: %1","log.ovlOk":"Overlay loaded: #%1","log.ovlErr":"Overlay error: %1","log.ovlClear":"Overlay cleared",
   "ovl.noTime":" (time unknown — showing counts, not CPS)",
+  "ovl.rebinned":" (rebinned by energy)","ovl.byChannel":" (record has no calibration — by channel)","saved.impTag":"background, imported",
   "cal.readEmpty":"Device returned an empty calibration (zeros/NaN) — board calibration unchanged",
   "log.del":"Deleted #%1","log.rebootDev":"Reboot device sent",
   "log.exportOk":"Exported: %1","log.exportErr":"Export failed: %1",
@@ -339,6 +341,7 @@ var Ccur=document.getElementById("spcur"),Xcur=Ccur.getContext("2d");
 var cursorCh=-1;
 var logEl=document.getElementById("log");
 var overlayBins=null,overlayIdx=-1,overlayTime=0;   /* #WF-CPS-1: своё время оверлея */
+var overlayCal=null,ovlCache=null,ovlKey="",overlayRebinned=false;   /* 1.2.31: калибровка записи и вид оверлея, перенесённый на живую шкалу */
 var isLog=true,isPow=false,isCps=true,isKev=true;  /* #UI-34: дефолты тумблеров — Log / CPS / keV */
 var calib=null,lastD=null,calibEditing=false,lastRU=null;
 /* #AWF-12b F2 (release-gate-1.2.28-code.md): единый признак "калибровка
@@ -390,6 +393,34 @@ function setKev(v){isKev=v;setSeg(["btn-ch","btn-kev"],v?1:0);if(lastD)draw(last
 function setSeg(ids,onIdx){ids.forEach(function(id,i){var el=document.getElementById(id);if(!el)return;if(i===onIdx)el.classList.add("on");else el.classList.remove("on")})}
 function ch2kev(ch){if(!calib)return ch;var e=0;for(var i=0;i<calib.length;i++)e+=calib[i]*Math.pow(ch,i);return e}
 function kev2ch(kev){var lo=0,hi=8192;for(var i=0;i<30;i++){var m=(lo+hi)/2;if(ch2kev(m)<kev)lo=m;else hi=m}return(lo+hi)/2}
+/*REBIN-BEGIN*/
+/* 1.2.31: перенос оверлея по ЭНЕРГИИ. Запись (импорт фона с другой платы / другая калибровка) рисовалась на тот же КАНАЛ, что живой
+   спектр, — при разных калибровках линии не совпадали. Канал i — ячейка [i-1/2, i+1/2]; последний канал — переполнение (всё выше
+   шкалы) и остаётся последним. Счёт сохраняется: ячейка источника делится по перекрытию, вышедшее за шкалу приёмника — в край. */
+function calE(c,x){var e=0;for(var i=c.length-1;i>=0;i--)e=e*x+c[i];return e}
+function calMono(c,n){var p=-Infinity;for(var j=0;j<=64;j++){var e=calE(c,-0.5+j*n/64);if(!(e>p))return false;p=e}return true}
+function calSame(a,b){var n=8192,p=[0,2048,4096,6144,8191],i;for(i=0;i<p.length;i++)if(!(Math.abs(calE(a,p[i])-calE(b,p[i]))<0.5))return false;return true}
+function calInv(c,E,n){var lo=-0.5,hi=n-0.5;for(var i=0;i<45;i++){var m=(lo+hi)/2;if(calE(c,m)<E)lo=m;else hi=m}return(lo+hi)/2}
+function rebinByEnergy(src,ca,cb){
+ var n=src.length;
+ if(!ca||!cb||!ca.length||!cb.length||n<3||!calMono(ca,n)||!calMono(cb,n)||calSame(ca,cb))return src;
+ var out=new Array(n),i,j;for(i=0;i<n;i++)out[i]=0;
+ var bmin=calE(cb,-0.5),bmax=calE(cb,n-1.5);
+ for(i=0;i<n-1;i++){
+  var v=src[i];if(!v)continue;
+  var elo=calE(ca,i-0.5),ehi=calE(ca,i+0.5),w=ehi-elo;
+  var lo=Math.max(elo,bmin),hi=Math.min(ehi,bmax);
+  if(hi<=lo){out[ehi<=bmin?0:n-1]+=v;continue}
+  var fin=(hi-lo)/w;
+  if(elo<bmin)out[0]+=v*(bmin-elo)/w;
+  if(ehi>bmax)out[n-1]+=v*(ehi-bmax)/w;
+  var x0=calInv(cb,lo,n),x1=calInv(cb,hi,n),jl=Math.max(0,Math.floor(x0+0.5)),jh=Math.min(n-2,Math.floor(x1+0.5));
+  for(j=jl;j<=jh;j++){var o=(x1-x0)>1e-12?(Math.min(x1,j+0.5)-Math.max(x0,j-0.5))/(x1-x0):(j===jl?1:0);if(o>0)out[j]+=v*fin*o}
+ }
+ out[n-1]+=src[n-1];
+ return out;
+}
+/*REBIN-END*/
 function niceStep(r,n){if(r<=0)return 1;var s=r/n,e=Math.floor(Math.log10(s)),f=s/Math.pow(10,e);return(f<=1.5?1:f<=3.5?2:f<=7.5?5:10)*Math.pow(10,e)}
 function fmtY(v){if(v>=1e6)return(v/1e6).toFixed(1)+"M";if(v>=1e4)return(v/1e3).toFixed(0)+"k";if(v>=1e3)return(v/1e3).toFixed(1)+"k";if(v>0&&v<0.01)return v.toExponential(0);if(isCps)return v.toFixed(v<1?3:v<10?2:v<100?1:0);return String(Math.round(v))}
 
@@ -484,8 +515,9 @@ function draw(d){
     было overlayBins[i]/tt, дало разбухший CPS у оверлея короче текущего набора и
     заниженный у длиннее. overlayTime<=0 (не пришло/битые метаданные) — не делим,
     показываем счёт как есть (пометка — см. loadOverlay). */
- if(overlayBins){var ot=overlayTime>0?overlayTime:0;yO=new Array(overlayBins.length);
-  for(var i=0;i<overlayBins.length;i++)yO[i]=(isCps&&ot>0)?overlayBins[i]/ot:overlayBins[i]}
+ var ob=ovlView();   /* 1.2.31: оверлей на энергетической шкале ЖИВОГО спектра (при равных калибровках — как есть) */
+ if(ob){var ot=overlayTime>0?overlayTime:0;yO=new Array(ob.length);
+  for(var i=0;i<ob.length;i++)yO[i]=(isCps&&ot>0)?ob[i]/ot:ob[i]}
  var mx=0;
  /* #MX-11 (1.2.31): последний канал — переполнение (всё выше шкалы); в фоне он на порядки выше спектра и
     сплющивал масштаб Y. В максимум не входит, линия в нём упирается в верх графика. */
@@ -639,12 +671,27 @@ async function toggleMode(){
 }
 async function loadOverlay(idx){
  try{var r=await(await fetch("/api/saved/"+idx+"/spectrum.json")).json();overlayBins=r.bins;overlayIdx=idx;
+ overlayCal=(r.calib_set!==false&&calibArraySet(r.calib))?r.calib:null;ovlCache=null;ovlKey="";   /* 1.2.31: калибровка записи — для переноса по энергии */
  overlayTime=(typeof r.time==="number"&&r.time>0)?r.time:0;   /* #WF-CPS-1 */
- document.getElementById("overlay-label").textContent="Overlay: #"+idx+(overlayTime>0?"":tr("ovl.noTime"));
+ ovlView();updateOvlLabel();
  document.getElementById("btn-clear-ovl").style.display="";
  lg(tfmt("log.ovlOk",idx));if(lastD)draw(lastD);loadSaved();}catch(e){lg(tfmt("log.ovlErr",e))}
 }
-function clearOverlay(){overlayBins=null;overlayIdx=-1;overlayTime=0;document.getElementById("overlay-label").textContent="";document.getElementById("btn-clear-ovl").style.display="none";lg(tr("log.ovlClear"));if(lastD)draw(lastD);loadSaved();}
+/* 1.2.31: оверлей, приведённый к калибровке живого спектра; пересчёт — только при смене калибровки (ключ), не на каждый кадр. */
+function ovlView(){
+ if(!overlayBins)return null;
+ var rb=!!(overlayCal&&calib&&!calibSame(overlayCal,calib)),k=rb?JSON.stringify(calib):"";
+ if(ovlCache===null||ovlKey!==k){
+  ovlKey=k;ovlCache=rb?rebinByEnergy(overlayBins,overlayCal,calib):overlayBins;
+  overlayRebinned=rb&&ovlCache!==overlayBins;updateOvlLabel();
+ }
+ return ovlCache;
+}
+function updateOvlLabel(){
+ var el=document.getElementById("overlay-label");if(!el||overlayIdx<0)return;
+ el.textContent="Overlay: #"+overlayIdx+(overlayRebinned?tr("ovl.rebinned"):"")+((!overlayCal&&calib)?tr("ovl.byChannel"):"")+(overlayTime>0?"":tr("ovl.noTime"));
+}
+function clearOverlay(){overlayBins=null;overlayCal=null;ovlCache=null;overlayRebinned=false;overlayIdx=-1;overlayTime=0;document.getElementById("overlay-label").textContent="";document.getElementById("btn-clear-ovl").style.display="none";lg(tr("log.ovlClear"));if(lastD)draw(lastD);loadSaved();}
 async function loadSaved(retry){
  var el=document.getElementById("saved");
  try{
@@ -657,7 +704,7 @@ async function loadSaved(retry){
   for(var i=0;i<r.spectra.length;i++){
    var s=r.spectra[i];var dt=s.saved_at>0?new Date(s.saved_at*1000).toLocaleString(lcl()):'—';
    var onCls=s.index===overlayIdx?' class="on"':'';
-   html+='<tr'+onCls+'><td>'+s.index+'</td><td>'+dt+'</td><td>'+s.counts.toLocaleString(lcl())+'</td><td>'+fmtTime(s.time)+'</td>'+
+   html+='<tr'+onCls+'><td>'+s.index+(s.imp?' <span style="color:#f0c45a;font-size:10.5px">'+tr("saved.impTag")+'</span>':'')+'</td><td>'+dt+'</td><td>'+s.counts.toLocaleString(lcl())+'</td><td>'+fmtTime(s.time)+'</td>'+
     '<td><a href="/api/saved/'+s.index+'/export.xml" style="color:var(--accent)">XML</a> &middot; <a href="/api/saved/'+s.index+'/export.csv" style="color:var(--accent)">CSV</a></td>'+
     '<td><button class="btn sm" onclick="loadOverlay('+s.index+')">'+tr("btn.overlay")+'</button> <button class="btn sm red" onclick="delSaved('+s.index+')">'+tr("btn.del")+'</button></td></tr>';
   }

@@ -27,6 +27,15 @@ check run outside the web server thread (the web interface no longer freezes whi
   on the same network can occupy the single download slot for the duration of an export. The waterfall window, settings
   backup and update check do require it (`X-CSRF-Token`).
 
+### Background import (Saved -> "Import background...") - limits in 1.2.31
+
+- Exactly 8192 channels are accepted (board JSON, BecqMoni XML, N42, board CSV); 1024/4096 channels are rejected. CSV carries no
+  calibration: the overlay is drawn by channel (the page warns).
+- The live time of an imported record in exports is computed from the CURRENT instrument's tau, not the original one, so it is
+  approximate; the overlay uses the acquisition (real) time, so CPS is not affected.
+- The record is marked by an `IMP:` prefix in the serial number (the record file format is unchanged); it is visible in the XML `<Name>`.
+- Reading the request body from the background task can only be verified on the board (not yet done).
+
 ### BUG-AS-08: ⚠ The gateway does not back up the instrument's factory DSP tuning
 
 **Status:** limitation by design + warning (not a gateway-firmware bug).
