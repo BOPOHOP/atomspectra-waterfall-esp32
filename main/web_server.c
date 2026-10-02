@@ -551,6 +551,7 @@ static esp_err_t handle_reset(httpd_req_t *req)
     // У-2: sent=false — прибор -rst не получил (не подключён/ошибка USB); сброс
     // платы выполнен. Н-4/Н-Д1: -rst дошлётся на ближайшем коннекте, если к тому
     // времени набор прибора не принят по таймауту гейта #58 и не было нового Сброса.
+    (void)spectrogram_flush_tail(1200);   // #RST-TAIL: хвост с последней строки до Сброса — строкой водопада, ДО -rst
     bool sent = usb_host_cdc_send(pkt.data, pkt.len) == 0;
     if (sent) {
         spectrum_reset();
@@ -566,8 +567,9 @@ static esp_err_t handle_reset(httpd_req_t *req)
 // Ответ строит ota_gh_check() (main/ota_github_client.c).
 static esp_err_t handle_ota_gh_check(httpd_req_t *req)
 {
-    char resp[512];   // #AWF-6: +html_url (до 200 Б) поверх прежних полей — 256 стало тесно
-    ota_gh_check(resp, sizeof(resp));
+    if (!csrf_check(req)) return ESP_FAIL;   // S-01 (1.2.30): тяжёлый GET — токен обязателен (drive-by с чужой страницы)
+    char resp[560];   // #AWF-6: +html_url (до 200 Б) поверх прежних полей; LK-07: +"state"
+    ota_gh_check_async(resp, sizeof(resp));   // LK-07: проверка в фоне, httpd не ждёт GitHub
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, resp);
     return ESP_OK;
@@ -808,7 +810,7 @@ static esp_err_t handle_boot_config_get(httpd_req_t *req)
 {
     boot_config_t bc;
     boot_config_load(&bc);
-    char resp[380];
+    char resp[420];
     // #FW-42: name_prefix санитизирован в NVS ([A-Za-z0-9_-]) → JSON-escape не нужен.
     // issue #52: + настройки резервных снимков и текущий номер сессии (read-only).
     // AWF-2a финал: field_ap_fallback — прямая семантика (structура тоже
@@ -817,7 +819,7 @@ static esp_err_t handle_boot_config_get(httpd_req_t *req)
         "{\"autostart_spectrum\":%s,\"autostart_waterfall\":%s,"
         "\"clear_spectrum\":%s,\"clear_waterfall\":%s,\"name_prefix\":\"%s\","
         "\"backup_keep\":%u,\"backup_hours\":%u,\"backup_test_minutes\":%s,"
-        "\"field_ap_fallback\":%s,"
+        "\"field_ap_fallback\":%s,\"calib_always\":%s,"
         "\"session\":%" PRIu32 "}",
         bc.autostart_spectrum  ? "true" : "false",
         bc.autostart_waterfall ? "true" : "false",
@@ -827,6 +829,7 @@ static esp_err_t handle_boot_config_get(httpd_req_t *req)
         (unsigned)bc.backup_keep, (unsigned)bc.backup_hours,
         bc.backup_test_minutes ? "true" : "false",
         bc.field_ap_fallback_enabled ? "true" : "false",
+        bc.calib_always_from_device ? "true" : "false",
         boot_config_get_session());
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, resp);
@@ -886,6 +889,8 @@ static esp_err_t handle_boot_config_set(httpd_req_t *req)
         bc.backup_test_minutes = cJSON_IsTrue(it);
     if ((it = cJSON_GetObjectItem(root, "field_ap_fallback")))
         bc.field_ap_fallback_enabled = cJSON_IsTrue(it);
+    if ((it = cJSON_GetObjectItem(root, "calib_always")))     // #59 (1.2.30)
+        bc.calib_always_from_device = cJSON_IsTrue(it);
     cJSON_Delete(root);
     int rc = boot_config_save(&bc);
     httpd_resp_set_type(req, "application/json");
@@ -2148,6 +2153,9 @@ static int kv_get_array(const char *text, const char *key, long *out, int max)
     return n;
 }
 
+// LK-05 (1.2.30): httpd ждёт ответ прибора на -inf и -tc_pot? не дольше SETTINGS_RAW_WAIT_MS на КАЖДУЮ команду (было 2000 мс; ответ здорового
+// прибора — 0,1–0,5 с). Занятый/молчащий прибор — 400 через 1 с вместо 2 с: веб-сервер стоит вдвое меньше.
+#define SETTINGS_RAW_WAIT_MS 1000
 // Общая для /api/settings/backup И /api/settings/snapshot (BUG-AS-08,
 // KNOWN_ISSUES.md:77): read-only -inf/-tc_pot? прибору + ожидание ответа
 // (spectrum_get_info_raw/spectrum_get_tcpot_raw, atomspectra.h). Сама шлёт
@@ -2166,7 +2174,7 @@ static esp_err_t settings_read_raw_or_err(httpd_req_t *req,
 
     spectrum_get_info_raw(line, sizeof(line), &seq_before);
     usb_host_send_text_command("-inf");
-    for (int waited = 0; waited < 2000; waited += 50) {
+    for (int waited = 0; waited < SETTINGS_RAW_WAIT_MS; waited += 50) {
         vTaskDelay(pdMS_TO_TICKS(50));
         spectrum_get_info_raw(line, sizeof(line), &seq_after);
         if (seq_after != seq_before) break;
@@ -2180,7 +2188,7 @@ static esp_err_t settings_read_raw_or_err(httpd_req_t *req,
     spectrum_get_tcpot_raw(line, sizeof(line), &seq_before);
     usb_host_send_text_command("-tc_pot?");
     seq_after = seq_before;
-    for (int waited = 0; waited < 2000; waited += 50) {
+    for (int waited = 0; waited < SETTINGS_RAW_WAIT_MS; waited += 50) {
         vTaskDelay(pdMS_TO_TICKS(50));
         spectrum_get_tcpot_raw(line, sizeof(line), &seq_after);
         if (seq_after != seq_before) break;
@@ -2197,6 +2205,7 @@ static esp_err_t settings_read_raw_or_err(httpd_req_t *req,
 // на скачивание. #FW-17: static 2048Б — не на стеке httpd-воркера.
 static esp_err_t handle_settings_backup(httpd_req_t *req)
 {
+    if (!csrf_check(req)) return ESP_FAIL;   // S-01 (1.2.30): тяжёлый GET — токен обязателен
     static char info_line[2048];
     char tcpot_line[700];
     if (settings_read_raw_or_err(req, info_line, sizeof(info_line),

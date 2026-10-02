@@ -34,9 +34,13 @@ static void sanitize_prefix(char *dst, size_t cap, const char *src)
     dst[j] = '\0';
 }
 
+static volatile bool s_calib_always;
+bool boot_config_calib_always(void) { return s_calib_always; }
+
 void boot_config_load(boot_config_t *out)
 {
     if (!out) return;
+    out->calib_always_from_device = false;
     out->autostart_spectrum  = false;
     out->autostart_waterfall = false;
     out->clear_spectrum      = false;
@@ -75,6 +79,8 @@ void boot_config_load(boot_config_t *out)
         out->backup_hours = (hrs > BOOT_BACKUP_HOURS_MAX) ? BOOT_BACKUP_HOURS_MAX : hrs;
     out->backup_test_minutes = get_flag(h, "bk_tm");
     out->field_ap_fallback_enabled = get_flag(h, "fap_en");
+    out->calib_always_from_device = get_flag(h, "cal_al");
+    s_calib_always = out->calib_always_from_device;
     nvs_close(h);
 }
 
@@ -105,7 +111,9 @@ int boot_config_save(const boot_config_t *in)
         e |= nvs_set_u8 (h, "bk_tm", in->backup_test_minutes ? 1 : 0);
     }
     e |= nvs_set_u8(h, "fap_en", in->field_ap_fallback_enabled ? 1 : 0);
+    e |= nvs_set_u8(h, "cal_al", in->calib_always_from_device ? 1 : 0);
     if (e == ESP_OK) e = nvs_commit(h);
+    if (e == ESP_OK) s_calib_always = in->calib_always_from_device;
     nvs_close(h);
     if (e != ESP_OK) { ESP_LOGW(TAG, "save failed (0x%x)", (int)e); return -1; }
     return 0;

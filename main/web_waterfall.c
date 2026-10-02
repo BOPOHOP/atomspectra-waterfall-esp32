@@ -15,6 +15,7 @@
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,7 +29,7 @@
 static const char *TAG = "wf_web";
 
 #define WF_WS_MAX        4
-#define WS_INFLIGHT_MAX  8   // P2-3: лимит несброшенных кадров на клиента
+#define WS_INFLIGHT_MAX  4   // P2-3: лимит несброшенных кадров на клиента; LK-09 (1.2.30): 8 → 4 (меньше очереди у медленного клиента)
 // #PERF-2 / P-009 (sweep-A): сколько ждать HEAVY-слот, прежде чем отдать 503.
 // Прежние 250 мс исходили из «держатель — автосейв, десяток миллисекунд»; это неверно:
 // разовый автосейв / снимок-бэкап / base.bin держат слот ~0,6–0,7 с (fwrite 33 КиБ
@@ -94,6 +95,13 @@ typedef struct { int fd; size_t len; uint8_t buf[]; } ws_send_t;
 static void ws_async_send(void *arg)
 {
     ws_send_t *a = arg;
+    // LK-09 (1.2.30): после первого сбоя клиент удалён из реестра, но в очереди httpd могли остаться его кадры (до
+    // WS_INFLIGHT_MAX); каждый такой кадр блокировал бы веб-сервер на сокетный таймаут (3 с). Отброшенному клиенту не шлём.
+    bool alive = false;
+    WS_LOCK();
+    for (int i = 0; i < WF_WS_MAX; i++) if (s_ws_fds[i] == a->fd) { alive = true; break; }
+    WS_UNLOCK();
+    if (!alive) { free(a); return; }
     httpd_ws_frame_t fr = { 0 };
     fr.type    = HTTPD_WS_TYPE_BINARY;
     fr.payload = a->buf;
@@ -256,6 +264,7 @@ static bool wf_window_emit(void *ctx, const uint16_t *row, size_t bytes)
 
 static esp_err_t h_window(httpd_req_t *req)
 {
+    if (!web_csrf_check(req)) return ESP_FAIL;   // S-01 (1.2.30): тяжёлый GET (до 4 МБ) — токен обязателен
     if (!http_io_gate_enter_or_503(req)) return ESP_OK;
     /* Потоковая отдача всего кольца (до 256 строк) через единственный 16-КБ
        bounce-буфер: НЕ держим второй 4-МБ буфер в PSRAM рядом с ring → нет
@@ -271,6 +280,13 @@ static esp_err_t h_window(httpd_req_t *req)
     }
 
     uint32_t rows = s.ring_count;
+    // P-01 (1.2.30): ?rows=N — только последние N строк (страница не качает всё кольцо, до 4 МБ, на каждый вход)
+    char q[32], qv[12];
+    if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK &&
+        httpd_query_key_value(q, "rows", qv, sizeof(qv)) == ESP_OK) {
+        uint32_t want = (uint32_t)strtoul(qv, NULL, 10);
+        if (want >= 1 && want < rows) rows = want;
+    }
     uint32_t first = (rows <= s.total_rows) ? (s.total_rows - rows) : 0;
     uint8_t pre[20];
     memcpy(pre, "ASWW", 4);
@@ -1266,6 +1282,80 @@ static void reg(httpd_handle_t srv, const char *uri, httpd_method_t m,
         ESP_LOGE(TAG, "issue#52b: register '%s' failed: %s", uri, esp_err_to_name(rerr));
 }
 
+// LK-08 (1.2.30): долгие выдачи (окно, экспорт, сегмент) идут в отдельной задаче через
+// httpd_req_async_handler_begin — поток httpd свободен на время передачи (опросы UI, WS-кадры).
+#define WF_DL_MAX         1      // одновременно одна выдача: внутренняя RAM под стек задачи ограничена
+#define WF_DL_STACK       6144   // 7168 был на пределе крупнейшего внутреннего блока (7168 Б на гейте 1.2.30); запас смотреть по логу «wf_dl: stack min free»
+static volatile int s_dl_active;
+typedef struct { httpd_req_t *req; esp_err_t (*h)(httpd_req_t *); volatile int *cnt; } wf_dl_job_t;
+
+static void wf_dl_task(void *arg)
+{
+    wf_dl_job_t j = *(wf_dl_job_t *)arg;
+    free(arg);
+    esp_err_t rc = j.h(j.req);
+    ESP_LOGI(TAG, "wf_dl: stack min free %u B (of %d)", (unsigned)uxTaskGetStackHighWaterMark(NULL), WF_DL_STACK);
+    __atomic_fetch_sub(j.cnt, 1, __ATOMIC_SEQ_CST);   // до complete: следующий запрос того же клиента не получит ложный 503
+    // ESP_FAIL = обрыв посреди выдачи (контракт синхронных обработчиков): закрыть сессию, клиент увидит разрыв
+    if (rc != ESP_OK) httpd_sess_trigger_close(j.req->handle, httpd_req_to_sockfd(j.req));
+    httpd_req_async_handler_complete(j.req);
+    vTaskDelete(NULL);
+}
+static esp_err_t wf_dl_busy(httpd_req_t *req)
+{
+    httpd_resp_set_hdr(req, "Retry-After", "2");
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    httpd_resp_sendstr(req, "busy");
+    return ESP_OK;
+}
+
+static esp_err_t wf_dl_async(httpd_req_t *req, esp_err_t (*h)(httpd_req_t *), volatile int *cnt, int cmax)
+{
+    if (__atomic_add_fetch(cnt, 1, __ATOMIC_SEQ_CST) > cmax) {
+        __atomic_fetch_sub(cnt, 1, __ATOMIC_SEQ_CST);
+        return wf_dl_busy(req);
+    }
+    httpd_req_t *cp = NULL;
+    wf_dl_job_t *j = malloc(sizeof(*j));
+    if (!j || httpd_req_async_handler_begin(req, &cp) != ESP_OK) {
+        free(j);
+        __atomic_fetch_sub(cnt, 1, __ATOMIC_SEQ_CST);
+        return wf_dl_busy(req);
+    }
+    j->req = cp; j->h = h; j->cnt = cnt;
+    if (xTaskCreatePinnedToCore(wf_dl_task, "wf_dl", WF_DL_STACK, j, 5, NULL, 1) != pdPASS) {
+        // Живой гейт 1.2.30: крупнейший свободный блок внутренней RAM ~7 КБ — стек может не поместиться. Не отказ, а прежнее
+        // поведение: обработчик выполняется здесь же (поток httpd занят, как до 1.2.30), копия запроса закрывается как обычно.
+        free(j);
+        ESP_LOGW(TAG, "wf_dl: task create failed (int largest %u) -> synchronous fallback",
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+        esp_err_t rc = h(cp);
+        __atomic_fetch_sub(cnt, 1, __ATOMIC_SEQ_CST);
+        if (rc != ESP_OK) httpd_sess_trigger_close(cp->handle, httpd_req_to_sockfd(cp));
+        httpd_req_async_handler_complete(cp);
+    }
+    return ESP_OK;
+}
+
+static esp_err_t h_window_async(httpd_req_t *req)      { return wf_dl_async(req, h_window, &s_dl_active, WF_DL_MAX); }
+static esp_err_t h_export_aswf_async(httpd_req_t *req) { return wf_dl_async(req, h_export_aswf, &s_dl_active, WF_DL_MAX); }
+static esp_err_t h_export_n42_async(httpd_req_t *req)  { return wf_dl_async(req, h_export_n42, &s_dl_active, WF_DL_MAX); }
+static esp_err_t h_segment_async(httpd_req_t *req)     { return wf_dl_async(req, h_segment, &s_dl_active, WF_DL_MAX); }
+
+// LK-02/03/04 (1.2.30): старт/стоп/очистка/удаление сегмента ждут FSLOCK и окна flash секунды —
+// тоже в отдельной задаче, со своим счётчиком (долгая выдача не блокирует Стоп).
+#define WF_CTL_MAX        1
+static volatile int s_ctl_active;
+static esp_err_t h_start_async(httpd_req_t *req)   { return wf_dl_async(req, h_start, &s_ctl_active, WF_CTL_MAX); }
+static esp_err_t h_stop_async(httpd_req_t *req)    { return wf_dl_async(req, h_stop, &s_ctl_active, WF_CTL_MAX); }
+// Очистка не идёт поверх выдачи окна/экспорта/сегмента (раньше их сериализовал один поток httpd): иначе unlink открытого файла → «delete»
+static esp_err_t h_clear_async(httpd_req_t *req)
+{
+    if (s_dl_active) return wf_dl_busy(req);
+    return wf_dl_async(req, h_clear, &s_ctl_active, WF_CTL_MAX);
+}
+static esp_err_t h_segdel_async(httpd_req_t *req)  { return wf_dl_async(req, h_segment_delete, &s_ctl_active, WF_CTL_MAX); }
+
 void web_waterfall_register(httpd_handle_t server)
 {
     s_server = server;
@@ -1275,18 +1365,18 @@ void web_waterfall_register(httpd_handle_t server)
 
     reg(server, "/waterfall",            HTTP_GET,  h_page);
     reg(server, "/api/waterfall/status", HTTP_GET,  h_status);
-    reg(server, "/api/waterfall/start",  HTTP_POST, h_start);
-    reg(server, "/api/waterfall/stop",   HTTP_POST, h_stop);
-    reg(server, "/api/waterfall/clear",  HTTP_POST, h_clear);
+    reg(server, "/api/waterfall/start",  HTTP_POST, h_start_async);
+    reg(server, "/api/waterfall/stop",   HTTP_POST, h_stop_async);
+    reg(server, "/api/waterfall/clear",  HTTP_POST, h_clear_async);
     reg(server, "/api/waterfall/config", HTTP_POST, h_config);
-    reg(server, "/api/waterfall/window", HTTP_GET,  h_window);
-    reg(server, "/api/waterfall/export.aswf", HTTP_GET, h_export_aswf);
-    reg(server, "/api/waterfall/export.n42",  HTTP_GET, h_export_n42);
+    reg(server, "/api/waterfall/window", HTTP_GET,  h_window_async);
+    reg(server, "/api/waterfall/export.aswf", HTTP_GET, h_export_aswf_async);
+    reg(server, "/api/waterfall/export.n42",  HTTP_GET, h_export_n42_async);
     // #REC-11-A1: листинг и отдача сегментов (СТРОГО read-only).
     reg(server, "/api/waterfall/segments", HTTP_GET, h_segments);
-    reg(server, "/api/waterfall/segment",  HTTP_GET, h_segment);
+    reg(server, "/api/waterfall/segment",  HTTP_GET, h_segment_async);
     // #REC-11 pull: удаление сегмента по ack от PC-клиента (CSRF, только завершённый).
-    reg(server, "/api/waterfall/segment/delete", HTTP_POST, h_segment_delete);
+    reg(server, "/api/waterfall/segment/delete", HTTP_POST, h_segdel_async);
     // #REC-11-A2: конфиг/статус автономной выгрузки сегментов.
     reg(server, "/api/waterfall/offload",  HTTP_GET,  h_offload_get);
     reg(server, "/api/waterfall/offload",  HTTP_POST, h_offload_set);

@@ -39,7 +39,7 @@ static inline bool ota_busy_is_busy_pure(ota_busy_owner_t state)
     return state != OTA_BUSY_NONE;
 }
 
-// #OTA-VR (гейт 1.2.29, 30.09): esp_ota_set_boot_partition() сама проверяет образ (IDF esp_ota_ops.c:443).
+// #OTA-VR (гейт 1.2.29, 30.09): esp_ota_set_boot_partition() сама проверяет образ (IDF esp_ota_ops.c, функция esp_ota_set_boot_partition; номер строки версионно-зависим, не приводим).
 // Валидный образ был отвергнут «Checksum failed» сразу после успешного esp_ota_end(), повтор той же OTA
 // прошёл: чтение уже записанного образа изредка даёт неверные данные. Проверка детерминирована для
 // записанных байт -- битый образ отвергается КАЖДЫМ повтором, поэтому повтор безопасен. Повторяем
