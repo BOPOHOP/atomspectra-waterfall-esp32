@@ -362,7 +362,7 @@ var LOGMAX=500;
 function lgCount(n){var c=document.getElementById("log-count");if(c)c.textContent=n?String(n):""}
 function lg(m,at){if(!logEl)return;var a=(logEl.textContent+(at||new Date()).toLocaleTimeString()+"  "+m).split("\n").filter(Boolean).slice(-LOGMAX);logEl.textContent=a.join("\n")+"\n";logEl.scrollTop=logEl.scrollHeight;lgCount(a.length)}
 function clearLog(){logEl.textContent="";lgCount(0)}
-function saveLog(){var d=new Date(),z=function(n){return(n<10?"0":"")+n},u=URL.createObjectURL(new Blob([logEl.textContent],{type:"text/plain;charset=utf-8"})),a=document.createElement("a");a.href=u;a.download="atomspectra-exchange-"+d.getFullYear()+z(d.getMonth()+1)+z(d.getDate())+"-"+z(d.getHours())+z(d.getMinutes())+z(d.getSeconds())+".txt";document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(u)},1000)}
+function saveLog(){var d=new Date(),z=function(n){return(n<10?"0":"")+n},u=URL.createObjectURL(new Blob(["# "+d.toLocaleString()+"\n"+logEl.textContent],{type:"text/plain;charset=utf-8"})),a=document.createElement("a");a.href=u;a.download="atomspectra-exchange-"+d.getFullYear()+z(d.getMonth()+1)+z(d.getDate())+"-"+z(d.getHours())+z(d.getMinutes())+z(d.getSeconds())+".txt";document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(u)},1000)}
 /* #UI-1: подтянуть текстовые ответы прибора из /api/devlog и показать их в логе команд («← ...») */
 async function pollDevLog(){try{var r=await(await fetch("/api/devlog?since="+devSeq)).json();if(r.lines&&r.lines.length){r.lines.forEach(function(e){var t=(e.text||"").replace(/\n+$/,"").replace(/\n/g," ⏎ ");lg("← "+t,(typeof r.up_ms==="number"&&typeof e.t==="number")?new Date(Date.now()-((r.up_ms-e.t)>>>0)):undefined)})}if(typeof r.next==="number")devSeq=r.next}catch(e){}}
 function fmtTime(s){s=Math.round(s);var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return(h>0?h+"h ":"")+(m>0?m+"m ":"")+ss+"s"}
@@ -729,14 +729,6 @@ document.getElementById("cal-head").onclick=function(){
  var open=b.style.display==="none";
  b.style.display=open?"block":"none";
  document.getElementById("cal-arrow").textContent=open?"▼":"▶";
-};
-
-document.getElementById("log-head").onclick=function(){
- var b=document.getElementById("log-body");
- var open=b.style.display==="none";
- b.style.display=open?"block":"none";
- document.getElementById("log-arrow").textContent=open?"▼":"▶";
- if(open)logEl.scrollTop=logEl.scrollHeight;
 };
 
 document.getElementById("log-head").onclick=function(){

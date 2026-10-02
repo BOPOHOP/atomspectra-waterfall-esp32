@@ -4,6 +4,7 @@
 set -u; cd "$(dirname "$0")"; T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; RC=0
 mut() {   # mut <name> <file> <sed-expr> ; "baseline" — без правки
     rm -rf "$T/main" "$T/web" "$T/scripts"; cp -r ../../main "$T/main"; cp -r ../../web "$T/web"; mkdir "$T/scripts"; cp ../../scripts/waterfall_n42.py ../../scripts/wf_pull_client.py "$T/scripts/"   # web/ — для need ../web/index.html
+    sed -i 's/\r$//' "$T"/main/*.c "$T"/main/*.h "$T"/web/*.html 2>/dev/null   # рабочая копия на Windows в CRLF — мутанты с якорем $ не применялись
     if [ "$1" != baseline ]; then cp "$T/main/$2" "$T/o"; sed -i "$3" "$T/main/$2"
         cmp -s "$T/o" "$T/main/$2" && { echo "== $1: SED DID NOT APPLY"; RC=1; return; }; fi
     local out n; out=$(bash wiring_check.sh "$T/main"); n=$(grep -c 'WIRING FAIL' <<<"$out")
@@ -113,6 +114,9 @@ mut M87_i60_pagenow     ../web/index.html     's/lg("← "+t,(typeof r.up_ms==="
 # WP10 (1.2.30)
 mut M76_p37_nocut       ../web/index.html     's/" ⏎ ");/" . ");/' '" ⏎ ");'
 mut M98_exch_nosave     ../web/index.html     's/a.download="atomspectra-exchange-"/a.download="x-"/' 'a.download="atomspectra-exchange-"'
+mut M99_exch_noclear    ../web/index.html     's/onclick="clearLog()"//' 'onclick="clearLog()"'
+mut M100_exch_dupclick  ../web/index.html     's/^async function initCalib(){/document.getElementById("log-head").onclick=function(){};\nasync function initCalib(){/' 'document.getElementById("log-head").onclick=function(){'
+mut M101_exch_nohdr     ../web/index.html     's/new Blob(\["# "+d.toLocaleString()+"\\n"+logEl.textContent\]/new Blob([logEl.textContent]/' 'new Blob(["# "+d.toLocaleString()'
 mut M77_p38_silent      ../web/waterfall.html 's/ }).catch(function(){oflSetMsg(t("ofl.err"),"err");});/ }).catch(function(){});/' 'oflSetMsg(t("ofl.err"),"err");});'
 mut M78_start_nolog     ../web/waterfall.html 's/if(!r.ok)lg("start: HTTP "+r.status);//' 'lg("start: HTTP "'
 # LK-02/03/04 (1.2.30)

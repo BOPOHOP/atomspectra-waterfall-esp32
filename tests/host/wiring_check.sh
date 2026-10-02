@@ -157,6 +157,9 @@ need web_waterfall.c 3 '&s_ctl_active, WF_CTL_MAX); }'
 # WP10 (1.2.30): P3-7 — сначала обрезка первой строки, потом счётчик «(+N)»; P3-8 — отказ загрузки offload виден; Старт/Стоп показывают не-200
 need ../web/index.html 1 '.replace(/\n/g," ⏎ ");'   # журнал обмена: полный текст ответа (без обрезки), для сохранения в файл
 need ../web/index.html 1 'a.download="atomspectra-exchange-"'
+need ../web/index.html 1 'onclick="clearLog()"'
+need ../web/index.html 1 'document.getElementById("log-head").onclick=function(){'   # ровно один обработчик (дубль был в первой версии)
+need ../web/index.html 1 'new Blob(["# "+d.toLocaleString()+"\n"+logEl.textContent]'
 need ../web/waterfall.html 2 ' }).catch(function(){oflSetMsg(t("ofl.err"),"err");});'
 need ../web/waterfall.html 1 'if(!r.ok)lg("start: HTTP "+r.status);'
 need ../web/waterfall.html 1 'if(!r.ok)lg("stop: HTTP "+r.status);'
