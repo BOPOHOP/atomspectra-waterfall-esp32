@@ -222,22 +222,9 @@ static void handle_rx_packet(void)
     }
 }
 
-static unsigned packets_good = 0;
-static unsigned packets_bad = 0;
-
 static void feed_shproto(const uint8_t *d, size_t n) {
-    static char printed = 0;
     for (size_t i = 0; i < n; i++) {
         shproto_byte_received(&s_rx_packet, d[i]);
-//	if (s_rx_packet.dropped)  {
-//		packets_bad++;
-//		printed = 0;
-//	}
-//	if ((s_rx_packet.dropped || s_rx_packet.ready) && !s_rx_packet.started && !printed && (packets_good%1000 == 0  || packets_bad%1000 == 0)) {
-//        	ESP_LOGI(TAG, "shproto pkts: %u good, %u bad", packets_good, packets_bad);
-//		printed = 1;
-//	}
-//        if (s_rx_packet.ready) { packets_good++; s_rx_packet.ready = false; handle_rx_packet(); }
         if (s_rx_packet.ready) { s_rx_packet.ready = false; handle_rx_packet(); }
         // #FW-53: dropped ставится один раз на SHPROTO_FINISH (CRC/короткий кадр) и
         // держится до следующего SHPROTO_START — сбрасывать сразу, иначе инкремент

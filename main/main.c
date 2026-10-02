@@ -183,7 +183,6 @@ void app_main(void)
     if (autosave_sig) spectrum_add_commit_listener(autosave_sig);
 
     int info_tick = 0, autosave_tick = 0;
-    int autostart_tick = 0;
     // issue #52: планировщик резервных снимков. Срок следующего снимка — в
     // микросекундах монотонного таймера, а не в числе итераций (тело цикла
     // блокирующее, длительность итерации плавает). Счётчик снимков живёт в RAM:
@@ -236,18 +235,7 @@ void app_main(void)
         if (usb_host_cdc_is_connected() && ++info_tick >= 180) {
             info_tick = 0;
             usb_host_send_text_command("-inf");
-            ESP_LOGI(TAG, "sent cmd -inf");
         }
-        if (usb_host_cdc_is_connected() && autostart_tick >= 0 && ++autostart_tick >= 18 && autostart_tick < 30) {
-            ESP_LOGI(TAG, "cmd -cal");
-            usb_host_send_text_command("-cal");
-	    autostart_tick = 30;
-        }
-        // if (usb_host_cdc_is_connected() && autostart_tick >= 0 && ++autostart_tick >= 40) {
-        //     ESP_LOGI(TAG, "cmd -sta");
-        //     autostart_tick = -1;
-        //     usb_host_send_text_command("-sta");
-        // }
         if (++autosave_tick >= HIST_DROP_E3_AUTOSAVE_TICKS) {
             autosave_tick = 0;
             spectrum_autosave_consume_abort();
@@ -427,8 +415,5 @@ void app_main(void)
         } else if (backup_cfg.backup_keep == 0) {
             backup_due_us = 0;      // выключено — период начнём заново при включении
         }
-        // #WF-1: отложенная запись калибровки (s_calib_dirty). Внутри сама берёт
-        // SPEC_LOCK только на снапшот; flash-запись — вне лока и вне CDC/httpd.
-        spectrum_save_calibration();
     }
 }
