@@ -22,7 +22,6 @@ need usb_host_cdc.c 1 'spectrum_usb_session_bump();'
 need usb_host_cdc.c 1 'if (!spectrum_reset_still_undelivered(g)) {'
 need usb_host_cdc.c 1 'if (!s_rst_pending) {'
 need usb_host_cdc.c 1 'if (s_cdc_dev && s_rst_pending) rst_pending_dispatch();'
-need usb_host_cdc.c 1 'spectrum_calib_set_serial_only(!spectrum_calibration_is_missing());'
 need wifi_manager.c 2 'if (tcp_bridge_client_active(WIFI_RETURN_BRIDGE_IDLE_MS)) {'
 need tcp_bridge.c  1 'setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof(ka)) < 0 ||'
 need monitor.c     1 'if (!prev_valid || resync != prev_resync) {'
@@ -115,9 +114,94 @@ dk=$(awk '{c=$0; sub(/\r$/,"",c); sub(/^[ \t]+/,"",c)}
 # P-03 (Codeaudit): журнал главной страницы существует и показывается (в копии main/ без web/ — пропуск)
 if [ -f ../web/index.html ]; then
     need ../web/index.html 1 '<pre id="log" style="display:none;'
-    need ../web/index.html 1 'function lg(m){if(!logEl)return;logEl.style.display="";'
+    need ../web/index.html 1 'function lg(m,at){if(!logEl)return;logEl.style.display="";'
     need ../web/index.html 1 '.row + .row, #log + .row{'                     # pass2 C: pre#log рвал .row + .row
+    # S-01 (1.2.30): страницы шлют CSRF-токен на тяжёлых GET
+    need ../web/service.html   2 'await gget("/api/settings/backup");'
+    need ../web/system.html    1 'await gget("/api/ota/github/check")'
+    need ../web/waterfall.html 1 'hf.call(window,"/api/waterfall/window?rows=64",{headers:{"X-CSRF-Token":csrfToken}})'
 fi
+# S-01 (1.2.30): тяжёлые GET требуют CSRF-токен на стороне платы (отступ: закомментированная строка не считается)
+need web_server.c    2 '    if (!csrf_check(req)) return ESP_FAIL;   // S-01 (1.2.30)'
+need web_waterfall.c 1 '    if (!web_csrf_check(req)) return ESP_FAIL;   // S-01 (1.2.30)'
+# LK-07 (1.2.30): проверка релиза GitHub — не в задаче httpd; решение запуск/ожидание/готовое — ota_gh_check_state.h
+need web_server.c        1 '    ota_gh_check_async(resp, sizeof(resp));'
+need ota_github_client.c 1 '    ota_chk_act_t act = ota_chk_decide(s_chk_state, age_ms, OTA_GH_CHECK_KEEP_MS);'
+need ota_github_client.c 1 '        if (xTaskCreatePinnedToCore(ota_gh_check_task, "ota_gh_chk", OTA_GH_CHK_STACK, NULL, 3, NULL, 1) != pdPASS) {'
+need ota_github_client.c 1 '    s_chk_state = OTA_CHK_DONE;'
+# WP5 (1.2.30): журнал отладки отдаётся потоком по кускам, без malloc на всё кольцо; счётчик байт растёт при записи
+need debug_log_ring.c 1 '    char *chunk = malloc(DBGLOG_CHUNK);'
+need debug_log_ring.c 1 '? dbglog_chunk_plan(s_bytes_total, s_used, want, end, DBGLOG_CHUNK, &off, &len) : DBGLOG_CHUNK_OVERWRITTEN;'
+need debug_log_ring.c 1 '    s_bytes_total += len;'
+need debug_log_ring.c 0 'tmp = malloc(used + 1);'
+# LK-09 (1.2.30): отброшенному WS-клиенту кадры из очереди не шлём (не ждём сокетный таймаут на каждом); очередь ≤ 4 кадров
+need web_waterfall.c 1 '    if (!alive) { free(a); return; }'
+need web_waterfall.c 1 '    for (int i = 0; i < WF_WS_MAX; i++) if (s_ws_fds[i] == a->fd) { alive = true; break; }'
+need web_waterfall.c 1 '#define WS_INFLIGHT_MAX  4'
+# LK-08/P-01 (1.2.30): долгие выдачи — в отдельной задаче (httpd свободен), одна за раз; окно страницы — последние N строк
+need web_waterfall.c 1 '    if (!j || httpd_req_async_handler_begin(req, &cp) != ESP_OK) {'
+need web_waterfall.c 1 '#define WF_DL_MAX         1'
+need web_waterfall.c 1 '    reg(server, "/api/waterfall/window", HTTP_GET,  h_window_async);'
+need web_waterfall.c 1 '    reg(server, "/api/waterfall/export.aswf", HTTP_GET, h_export_aswf_async);'
+need web_waterfall.c 1 '    reg(server, "/api/waterfall/export.n42",  HTTP_GET, h_export_n42_async);'
+need web_waterfall.c 1 '    reg(server, "/api/waterfall/segment",  HTTP_GET, h_segment_async);'
+need web_waterfall.c 1 '        if (want >= 1 && want < rows) rows = want;'
+# LK-02/03/04 (1.2.30): старт/стоп/очистка/удаление сегмента — в отдельной задаче со своим счётчиком
+need web_waterfall.c 1 '    reg(server, "/api/waterfall/start",  HTTP_POST, h_start_async);'
+need web_waterfall.c 1 '    reg(server, "/api/waterfall/stop",   HTTP_POST, h_stop_async);'
+need web_waterfall.c 1 '    reg(server, "/api/waterfall/clear",  HTTP_POST, h_clear_async);'
+need web_waterfall.c 1 '    reg(server, "/api/waterfall/segment/delete", HTTP_POST, h_segdel_async);'
+need web_waterfall.c 3 '&s_ctl_active, WF_CTL_MAX); }'
+# WP10 (1.2.30): P3-7 — сначала обрезка первой строки, потом счётчик «(+N)»; P3-8 — отказ загрузки offload виден; Старт/Стоп показывают не-200
+need ../web/index.html 1 'if(ls.length>3){var h0=ls[0];if(h0.length>100)h0=h0.slice(0,100)+"…";t=h0+"  … (+"+(ls.length-1)+")"}else if(t.length>120)t=t.slice(0,120)+"…";'
+need ../web/waterfall.html 2 ' }).catch(function(){oflSetMsg(t("ofl.err"),"err");});'
+need ../web/waterfall.html 1 'if(!r.ok)lg("start: HTTP "+r.status);'
+need ../web/waterfall.html 1 'if(!r.ok)lg("stop: HTTP "+r.status);'
+# Разбор кода 1.2.30 (release-gate-1.2.30-code.md): P2-1 обрыв → закрыть сессию, P3-1 Очистка не поверх выдачи, P3-2 счётчик до complete, P3-3 ядро 1,
+# P2-2 журнал: обрыв потока = ESP_FAIL (не «успешный» 200), P2-3 клиент окна с токеном, P1-1 режим шва по sha256
+need web_waterfall.c 1 '    if (rc != ESP_OK) httpd_sess_trigger_close(j.req->handle, httpd_req_to_sockfd(j.req));'
+need web_waterfall.c 1 '    if (s_dl_active) return wf_dl_busy(req);'
+need web_waterfall.c 1 '    if (xTaskCreatePinnedToCore(wf_dl_task, "wf_dl", WF_DL_STACK, j, 5, NULL, 1) != pdPASS) {'
+need debug_log_ring.c 2 'err = ESP_FAIL; break; }'
+need ../scripts/waterfall_n42.py 1 'headers={"X-CSRF-Token": tok}'
+need ../scripts/wf_pull_client.py 1 '        return h is not None and h == hashlib.sha256(blob).hexdigest()'
+# Живой гейт 1.2.30 (WP5): DONE — штатный конец среза, не обрыв (иначе каждый ответ журнала завершался ESP_FAIL без финального чанка)
+need debug_log_ring.c 1 '        if (cr == DBGLOG_CHUNK_DONE) break;'
+# Живой гейт 1.2.30: не хватило внутренней RAM под стек задачи — откат на прежнее синхронное поведение, а не отказ; стеки уменьшены
+need web_waterfall.c 1 '        esp_err_t rc = h(cp);'
+need web_waterfall.c 1 '#define WF_DL_STACK       6144'
+need ota_github_client.c 1 '            sync_fb = true;'
+need ota_github_client.c 1 '#define OTA_GH_CHK_STACK 6144'
+# #59 (1.2.30): настройка «всегда читать калибровку из прибора» — NVS, API, UI и оба решения в usb_host_cdc (нужен -cal; применять ли коэффициенты)
+need boot_config.c 1 '    out->calib_always_from_device = get_flag(h, "cal_al");'
+need boot_config.c 1 '    e |= nvs_set_u8(h, "cal_al", in->calib_always_from_device ? 1 : 0);'
+need web_server.c 1 '        bc.calib_always_from_device = cJSON_IsTrue(it);'
+need usb_host_cdc.c 1 '        calib_autoread_needed_pref(spectrum_calibration_is_missing(), spectrum_serial_is_missing(), boot_config_calib_always()))'
+need usb_host_cdc.c 1 '    spectrum_calib_set_serial_only(calib_request_serial_only(spectrum_calibration_is_missing(), boot_config_calib_always()));'
+need ../web/system.html 1 '  calib_always:document.getElementById("bc-calib-always").checked'
+# #60 (1.2.30): у строки журнала прибора — время ПРИЁМА (запись, выдача, страница), а не «сейчас»
+need usb_host_cdc.c 1 '    s_devlog_ms[slot] = (uint32_t)(esp_timer_get_time() / 1000);'
+need usb_host_cdc.c 1 '            tms = s_devlog_ms[slot];'
+need usb_host_cdc.c 1 '"%s{\"seq\":%" PRIu32 ",\"t\":%" PRIu32 ",\"text\":\"",'
+need ../web/index.html 1 'lg("← "+t,(typeof r.up_ms==="number"&&typeof e.t==="number")?new Date(Date.now()-((r.up_ms-e.t)>>>0)):undefined)'
+# LK-05 (1.2.30): httpd ждёт прибор на -inf / -tc_pot? не дольше 1 с на команду (было 2 с)
+need web_server.c 1 '#define SETTINGS_RAW_WAIT_MS 1000'
+need web_server.c 2 '    for (int waited = 0; waited < SETTINGS_RAW_WAIT_MS; waited += 50) {'
+# #RST-TAIL (1.2.30): строка водопада перед -rst — вызов в трёх точках отправки (отступ в строке: закомментированный вызов не считается)
+# и ДО передачи команды прибору; wf_task берёт решение из wf_tail_plan.h и отдаёт s_tail_done после оборота.
+need web_server.c   1 '    (void)spectrogram_flush_tail(1200);'
+need tcp_bridge.c   1 '        if (saw_rst) (void)spectrogram_flush_tail(1200);'
+need usb_host_cdc.c 1 '    if (cmd_is_device_reset(cmd0)) (void)spectrogram_flush_tail(1200);'
+need spectrogram.c  1 '        if (!wf_tail_should_row(tail_force, now_time, s_prev_time, iv)) continue;'
+need spectrogram.c  1 '        if (tail_force) { s_tail_force = false; s_tail_inflight = true; }'
+need spectrogram.c  1 '        if (s_tail_inflight) { s_tail_inflight = false; if (s_tail_done) xSemaphoreGive(s_tail_done); }'
+need spectrogram.c  1 '    xSemaphoreGive(s_commit_sig);            // разбудить wf_task вне очереди'
+rt=$(awk '/^    \(void\)spectrogram_flush_tail/{f=FNR} f && FNR==f+1 && /bool sent = usb_host_cdc_send\(pkt\.data/{ok=1} END{print (!f || ok) ? "ok" : "bad"}' web_server.c)
+[ "$rt" = ok ] || { echo "WIRING FAIL web_server.c: spectrogram_flush_tail must precede usb_host_cdc_send in handle_reset ($rt)"; RC=1; }
+rt=$(awk '/^        if \(saw_rst\) \(void\)spectrogram_flush_tail/{f=FNR} f && FNR==f+1 && /int rc = usb_host_cdc_send\(buf, n\);/{ok=1} END{print (!f || ok) ? "ok" : "bad"}' tcp_bridge.c)
+[ "$rt" = ok ] || { echo "WIRING FAIL tcp_bridge.c: spectrogram_flush_tail must precede usb_host_cdc_send ($rt)"; RC=1; }
+rt=$(awk '/^    if \(cmd_is_device_reset\(cmd0\)\) \(void\)spectrogram_flush_tail/{f=FNR} f && FNR==f+1 && /int rc = usb_host_cdc_send\(pkt\.data, pkt\.len\);/{ok=1} END{print (!f || ok) ? "ok" : "bad"}' usb_host_cdc.c)
+[ "$rt" = ok ] || { echo "WIRING FAIL usb_host_cdc.c: spectrogram_flush_tail must precede usb_host_cdc_send ($rt)"; RC=1; }
 # F-09 (класс): результат cJSON_PrintUnformatted проверен на NULL в 3 строках после вызова (все *.c)
 f09=$(awk 'match($0,/char \*[A-Za-z_]+ = cJSON_PrintUnformatted\(/){v=substr($0,RSTART+6,RLENGTH-6); sub(/ =.*/,"",v); k=3; want=FILENAME":"FNR; next}
   k>0 { if (index($0,"!" v) || index($0, v " ?")) k=0; else if (--k==0) print want }' ./*.c)

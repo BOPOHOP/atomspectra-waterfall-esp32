@@ -1,0 +1,21 @@
+# WP9 (1.2.30): ДИАГНОСТИЧЕСКАЯ сборка Ф3 — отдельный образ, в релиз НЕ идёт.
+# Сборка: scripts/build_diag.sh (defaults + этот overlay, свой sdkconfig и каталог build-diag).
+# Включено: TWDT с паникой (зависшая задача -> дамп вместо тихого зависания),
+# статистика задач (vTaskList/run-time stats), heap poisoning (порча кучи ловится при free),
+# посмертный дамп в раздел coredump (partitions_diag.csv).
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_diag.csv"
+CONFIG_ESP_TASK_WDT_EN=y
+CONFIG_ESP_TASK_WDT_INIT=y
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=15
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=y
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=y
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID=y
+CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS=y
+CONFIG_HEAP_POISONING_COMPREHENSIVE=y
+CONFIG_HEAP_TASK_TRACKING=y
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y

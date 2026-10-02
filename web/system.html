@@ -232,6 +232,8 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 <div style="margin-top:6px;padding-top:6px;border-top:1px solid #1c241c">
 <label class="boot-row" style="border-bottom:none"><input type="checkbox" id="bc-ap-fallback"><span data-i18n="boot.apFallback">Переходить в полевую точку доступа при потере Wi-Fi</span></label>
 <div class="mut" style="font-size:10.5px;line-height:1.4" data-i18n="boot.apFallbackApply">Действует сразу, без перезагрузки платы.</div>
+<label class="boot-row" style="border-bottom:none"><input type="checkbox" id="bc-calib-always"><span data-i18n="boot.calibAlways">Всегда читать калибровку из прибора при старте набора</span></label>
+<div class="mut" style="font-size:10.5px;line-height:1.4" data-i18n="boot.calibAlwaysNote">Калибровка прибора заменяет заданную на плате (удобно при смене прибора). Выключено: плата читает её, только если своя не задана.</div>
 </div>
 </section>
 </div>
@@ -387,6 +389,8 @@ var DICT={
   "btn.rebootEsp":"Reboot ESP","btn.refresh":"Обновить",
   "boot.titleBoot":"Старт платы","boot.secSpec":"Спектр","boot.secWf":"Водопад","boot.secNet":"Сеть",
   "boot.apFallback":"Переходить в полевую точку доступа при потере Wi-Fi",
+  "boot.calibAlways":"Всегда читать калибровку из прибора при старте набора",
+  "boot.calibAlwaysNote":"Калибровка прибора заменяет заданную на плате (удобно при смене прибора). Выключено: плата читает её, только если своя не задана.",
   "boot.apFallbackHint":"Выкл (по умолчанию) — во время работы плата в Field AP не уходит, переподключается к роутеру бесконечно. Страховка сохраняется всегда: если Wi-Fi не заработал 5 минут с момента включения питания, Field AP поднимется в любом случае. Вкл — плата уходит в Field AP через 5 минут без роутера и возвращается сама, когда роутер снова виден и с платой никто не работает 10 минут.",
   "boot.apFallbackApply":"Действует сразу, без перезагрузки платы.",
   "boot.titleSpec":"Старт платы · Спектр",
@@ -462,6 +466,8 @@ var DICT={
   "btn.rebootEsp":"Reboot ESP","btn.refresh":"Refresh",
   "boot.titleBoot":"Board start","boot.secSpec":"Spectrum","boot.secWf":"Waterfall","boot.secNet":"Network",
   "boot.apFallback":"Fall back to the field access point when Wi-Fi is lost",
+  "boot.calibAlways":"Always read the calibration from the instrument when acquisition starts",
+  "boot.calibAlwaysNote":"The instrument calibration replaces the one set on the board (handy when swapping instruments). Off: the board reads it only when its own is not set.",
   "boot.apFallbackHint":"Off (default) — during operation the board never enters Field AP, it keeps reconnecting to the router forever. The safety net still applies: if Wi-Fi hasn't come up for 5 minutes from power-on, Field AP is raised regardless. On — the board enters Field AP after 5 minutes without the router and returns on its own once the router is visible again and no one has used the board for 10 minutes.",
   "boot.apFallbackApply":"Takes effect immediately, no reboot needed.",
   "boot.titleSpec":"Board start · Spectrum",
@@ -545,7 +551,8 @@ async function ghCheck(){
  st.className="mut";st.textContent=t("ghota.checking");if(btn)btn.disabled=true;
  ibtn.disabled=true;ghInstallable=false;
  try{
-  var r=await(await fetch("/api/ota/github/check")).json();
+  var r;for(var i=0;i<45;i++){r=await(await gget("/api/ota/github/check")).json();if(r.state!=="checking")break;await new Promise(function(z){setTimeout(z,1000)});}  /* LK-07: плата проверяет в фоне, опрашиваем до готового ответа */
+  if(!r||r.state==="checking")throw 0;
   ghLatestTag=r.latest||"";
   if(r.installable){
    ghInstallable=true;st.className="err";st.innerHTML=tfmt("ghota.available",r.latest)+ghLinkHtml(r.html_url);
@@ -618,6 +625,8 @@ function ghPollReboot(){
 function ac(){return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#34d3c0';}
 
 async function loadCsrf(){try{var r=await(await fetch("/api/csrf-token")).json();csrfToken=r.token||""}catch(e){}}
+/* S-01 (1.2.30): тяжёлые GET требуют CSRF-токен; токен меняется при каждом старте платы — на 403 берём новый и повторяем один раз. */
+async function gget(url,opts){opts=opts||{};if(!csrfToken)await loadCsrf();var f=function(){return fetch(url,Object.assign({},opts,{headers:{"X-CSRF-Token":csrfToken}}))};var r=await f();if(r.status===403){await loadCsrf();r=await f();}return r;}
 /* CSRF-1: токен меняется при каждом старте платы — вкладка, открытая до перезагрузки, получала 403 молча. На 403 берём новый токен и повторяем один раз. */
 async function post(url,opts){opts=opts||{};opts.method="POST";var h=opts.headers||{};opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});var r=await fetch(url,opts);if(r.status===403){await loadCsrf();opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});r=await fetch(url,opts)}return r}
 
@@ -852,6 +861,7 @@ async function loadBootConfig(){
   document.getElementById("bc-clr-wf").checked=!!r.clear_waterfall;
   var fb=document.getElementById("bc-ap-fallback");
   if(fb)fb.checked=(r.field_ap_fallback===true);    /* нет ключа (апгрейд) = ВЫКЛ */
+  var ca=document.getElementById("bc-calib-always"); if(ca)ca.checked=(r.calib_always===true);   /* #59: нет ключа = ВЫКЛ */
   /* issue #52: те же данные несут настройки резервных снимков. */
   var k=document.getElementById("bk-keep"),h=document.getElementById("bk-hours"),
       se=document.getElementById("bk-session");
@@ -903,7 +913,8 @@ async function saveBootConfig(statusId){
   autostart_waterfall:document.getElementById("bc-as-wf").checked,
   clear_spectrum:document.getElementById("bc-clr-spec").checked,
   clear_waterfall:document.getElementById("bc-clr-wf").checked,
-  field_ap_fallback:document.getElementById("bc-ap-fallback").checked
+  field_ap_fallback:document.getElementById("bc-ap-fallback").checked,
+  calib_always:document.getElementById("bc-calib-always").checked
  };
  try{
   var r=await(await post("/api/boot-config",{headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();

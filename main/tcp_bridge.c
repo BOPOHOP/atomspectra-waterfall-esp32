@@ -1,6 +1,7 @@
 #include "atomspectra.h"
 #include "shproto.h"
 #include "acq_intent.h"      /* P1-a: cmd_is_device_reset() */
+#include "spectrogram.h"     /* #RST-TAIL: spectrogram_flush_tail() */
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
@@ -174,6 +175,7 @@ static void tcp_rx_task(void *arg)
         // и сторож набора не должен перебивать его «Стоп» своим -sta.
         usb_host_cdc_acq_intent_external();
         bool saw_rst = tcp_scan_for_reset_cmd(buf, n);
+        if (saw_rst) (void)spectrogram_flush_tail(1200);   // #RST-TAIL: хвост строкой водопада, ДО передачи -rst прибору
         int rc = usb_host_cdc_send(buf, n);
         if (saw_rst) {
             if (rc == 0) {

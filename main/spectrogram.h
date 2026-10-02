@@ -132,6 +132,9 @@ void   spectrogram_time_synced(void);
 // #FW-55 (P-016): финализировать открытый сегмент перед штатным ребутом/OTA.
 // Без вызова теряется всё накопленное в текущем сегменте (до WF_SEG_MAX_ROWS строк).
 void   spectrogram_prepare_reboot(void);
+// #RST-TAIL (1.2.30): перед отправкой -rst прибору закрыть внеочередную строку водопада (хвост до одного шага записи).
+// Блокирует до timeout_ms; true — строка закрыта или хвоста нет, false — таймаут (Сброс выполняется без хвоста).
+bool   spectrogram_flush_tail(uint32_t timeout_ms);
 int    spectrogram_start(void);
 int    spectrogram_stop(void);
 /* #FW-65: 0 = seg_* gone and counters match flash; -1 = recording (no

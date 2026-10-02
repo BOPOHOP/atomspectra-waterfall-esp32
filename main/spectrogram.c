@@ -8,6 +8,7 @@
 #include "wf_seg_rebuild_range.h"  // М3: [g0,g1) для leftover после неудачной очистки (host-pure)
 #include "calib_export.h"
 #include "wf_ref_plan.h"        // #AUD-DUP1: опора первой строки после перезагрузки (host-pure)
+#include "wf_tail_plan.h"       // #RST-TAIL: писать ли строку на этом тике (host-pure)
 #include "boot_config.h"         // #AUD-DUP1: boot_config_get_session() — опора годна одну загрузку       // R7 (sweep-A): единый признак «калибровка есть» в шапке
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -281,6 +282,12 @@ typedef struct { uint32_t idx; uint32_t epoch; } wf_del_req_t;
 // #FW-13 фикс №2: коммит свипа спектра (конец USB-burst) будит producer — снапшот
 // и flash-запись строки уходят в тихое окно, а не в случайную фазу 1-с тика.
 static SemaphoreHandle_t s_commit_sig;
+// #RST-TAIL: внеочередная строка перед Сбросом. Обработчик Сброса ставит s_tail_force и будит wf_task;
+// wf_task закрывает строку вне очереди (wf_tail_should_row) и в начале следующего оборота отдаёт s_tail_done.
+static volatile bool s_tail_force;
+static volatile bool s_tail_inflight;
+static SemaphoreHandle_t s_tail_done;
+static SemaphoreHandle_t s_tail_mtx;
 // #FW-8 F2: отдельный listener для wf_fs_task — ждать quiet между слайсами baseline/fsync.
 static SemaphoreHandle_t s_fs_quiet_sig;
 static TaskHandle_t      s_wf_fs_task;
@@ -1294,6 +1301,8 @@ void spectrogram_init(void)
     if (s_commit_sig) spectrum_add_commit_listener(s_commit_sig);
     s_fs_quiet_sig = xSemaphoreCreateBinary();
     if (s_fs_quiet_sig) spectrum_add_commit_listener(s_fs_quiet_sig);
+    s_tail_done = xSemaphoreCreateBinary();   // #RST-TAIL
+    s_tail_mtx  = xSemaphoreCreateMutex();
     // wf_fs_task (consumer, prio 2 < producer): весь flash-I/O (opendir/readdir +
     // snprintf шапки на стеке → 8192). Producer prio 3 всегда вытесняет — такт точнее.
     xTaskCreatePinnedToCore(wf_fs_task, "wf_fs", 8192, NULL, 2, &s_wf_fs_task, 1);
@@ -1476,9 +1485,12 @@ static void wf_task(void *arg)
         // и запись строки легли в тихое окно. Таймаут 1500 мс — fallback-тик при
         // молчащем/отключённом приборе (прежнее поведение).
         s_wf_busy = false;   /* LK-16: вне итерации — prepare_reboot может читать s_prev */
+        if (s_tail_inflight) { s_tail_inflight = false; if (s_tail_done) xSemaphoreGive(s_tail_done); }   /* #RST-TAIL */
         if (s_commit_sig) xSemaphoreTake(s_commit_sig, pdMS_TO_TICKS(1500));
         else vTaskDelay(pdMS_TO_TICKS(1000));
 
+        bool tail_force = s_tail_force;   /* #RST-TAIL */
+        if (tail_force) { s_tail_force = false; s_tail_inflight = true; }
         s_wf_busy = true;    /* до проверки recording: пара с prepare_reboot (Деккер) */
         __sync_synchronize();
         if (!s_status.recording) continue;
@@ -1492,7 +1504,7 @@ static void wf_task(void *arg)
             if (rs == s_wf_resync_seen) s_pre_rst_valid = false;
         }
         uint32_t now_time = spectrum_get_current()->total_time_sec;
-        if (now_time >= s_prev_time && now_time - s_prev_time < iv) continue;
+        if (!wf_tail_should_row(tail_force, now_time, s_prev_time, iv)) continue;   /* #RST-TAIL: force — хвост перед Сбросом */
 
         uint32_t resync_seq;
         spectrum_get_snapshot_wf(s_wf_snap, &resync_seq);
@@ -1925,6 +1937,24 @@ static void wf_ref_save(void) {
     }
 
     ESP_LOGW(TAG, "prepare_reboot: reference saved (total=%" PRIu32 " t=%" PRIu32 ")", h.prev_total, h.prev_time);
+}
+
+// #RST-TAIL (1.2.30): закрыть внеочередную строку (хвост с последней записанной строки до «сейчас») ПЕРЕД отправкой
+// -rst прибору: по команде прибор обнуляет счётчики, и хвост (до одного шага записи) иначе пропадал.
+// true — строка закрыта либо хвоста нет (запись не идёт/не инициализировано); false — таймаут: Сброс всё равно
+// выполняется, хвост теряется как раньше.
+bool spectrogram_flush_tail(uint32_t timeout_ms)
+{
+    if (!s_tail_mtx || !s_tail_done || !s_commit_sig || !s_status.recording) return true;
+    if (xSemaphoreTake(s_tail_mtx, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) return false;
+    xSemaphoreTake(s_tail_done, 0);          // сбросить устаревший сигнал прежнего вызова
+    s_tail_force = true;
+    xSemaphoreGive(s_commit_sig);            // разбудить wf_task вне очереди
+    bool ok = xSemaphoreTake(s_tail_done, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+    if (!ok) s_tail_force = false;           // wf_task не успел — не оставлять флаг на потом
+    xSemaphoreGive(s_tail_mtx);
+    if (!ok) ESP_LOGW(TAG, "flush_tail: timeout %" PRIu32 " ms -- reset goes without the tail row", timeout_ms);
+    return ok;
 }
 
 void spectrogram_prepare_reboot(void)

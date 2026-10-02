@@ -3,7 +3,7 @@
 # Каждый мутант (копия main/ во временном каталоге) обязан дать ровно 1 строку WIRING FAIL; baseline — 0.
 set -u; cd "$(dirname "$0")"; T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; RC=0
 mut() {   # mut <name> <file> <sed-expr> ; "baseline" — без правки
-    rm -rf "$T/main" "$T/web"; cp -r ../../main "$T/main"; cp -r ../../web "$T/web"   # web/ — для need ../web/index.html
+    rm -rf "$T/main" "$T/web" "$T/scripts"; cp -r ../../main "$T/main"; cp -r ../../web "$T/web"; mkdir "$T/scripts"; cp ../../scripts/waterfall_n42.py ../../scripts/wf_pull_client.py "$T/scripts/"   # web/ — для need ../web/index.html
     if [ "$1" != baseline ]; then cp "$T/main/$2" "$T/o"; sed -i "$3" "$T/main/$2"
         cmp -s "$T/o" "$T/main/$2" && { echo "== $1: SED DID NOT APPLY"; RC=1; return; }; fi
     local out n; out=$(bash wiring_check.sh "$T/main"); n=$(grep -c 'WIRING FAIL' <<<"$out")
@@ -58,4 +58,72 @@ mut M39_no_pause    ota_busy.c           's/if (b->n++) vTaskDelay(pdMS_TO_TICKS
 mut M40_web_comment web_server.c         's/    err = ota_set_boot_verified(update);/    \/\/ err = ota_set_boot_verified(update);/' "line 'err = ota_set_boot_verified(update);'"
 mut M41_end_no_ret  web_server.c         '/"ota_end: invalid image");/{n;d}' 'esp_ota_end() failure is not final'
 mut M42_gh_fail_nop ota_github_client.c  's/install_fail(0, "set_boot_partition_failed"); goto done;/;/' 'set_boot_partition_failed'
+# #RST-TAIL (1.2.30): вызов перед -rst в трёх точках, порядок до передачи, решение wf_task, отдача done, пробуждение
+mut M43_tail_web_del    web_server.c     '/^    (void)spectrogram_flush_tail(1200);/d' "(void)spectrogram_flush_tail(1200);'"
+mut M44_tail_tcp_del    tcp_bridge.c     '/^        if (saw_rst) (void)spectrogram_flush_tail(1200);/d' 'if (saw_rst) (void)spectrogram_flush_tail(1200);'
+mut M45_tail_usb_del    usb_host_cdc.c   '/^    if (cmd_is_device_reset(cmd0)) (void)spectrogram_flush_tail(1200);/d' 'if (cmd_is_device_reset(cmd0)) (void)spectrogram_flush_tail(1200);'
+mut M46_tail_web_cmt    web_server.c     's/^    (void)spectrogram_flush_tail(1200);/    \/\/ (void)spectrogram_flush_tail(1200);/' "(void)spectrogram_flush_tail(1200);'"
+mut M47_tail_web_after  web_server.c     '/^    (void)spectrogram_flush_tail(1200);/d; /bool sent = usb_host_cdc_send(pkt.data/a\    (void)spectrogram_flush_tail(1200);' 'must precede usb_host_cdc_send in handle_reset'
+mut M48_tail_noforce    spectrogram.c    's/wf_tail_should_row(tail_force, now_time/wf_tail_should_row(false, now_time/' 'wf_tail_should_row(tail_force'
+mut M49_tail_nodone     spectrogram.c    '/^        if (s_tail_inflight) { s_tail_inflight = false;/d' 's_tail_inflight = false; if (s_tail_done)'
+mut M50_tail_nowake     spectrogram.c    '/^    xSemaphoreGive(s_commit_sig);            \/\/ разбудить wf_task вне очереди/d' 'разбудить wf_task вне очереди'
+# S-01 (1.2.30): CSRF на тяжёлых GET — плата (3 обработчика) и страницы (токен в заголовке)
+mut M51_s01_check_del   web_server.c     '0,/    if (!csrf_check(req)) return ESP_FAIL;   \/\/ S-01 (1.2.30)/{/    if (!csrf_check(req)) return ESP_FAIL;   \/\/ S-01 (1.2.30)/d}' '// S-01 (1.2.30)'
+mut M52_s01_window_del  web_waterfall.c  '/    if (!web_csrf_check(req)) return ESP_FAIL;   \/\/ S-01 (1.2.30)/d' 'web_csrf_check(req)) return ESP_FAIL;   // S-01'
+mut M53_s01_ui_nohdr    ../web/waterfall.html 's/hf.call(window,"\/api\/waterfall\/window?rows=64",{headers:{"X-CSRF-Token":csrfToken}})/hf.call(window,"\/api\/waterfall\/window?rows=64")/' '/api/waterfall/window'
+mut M54_s01_ui_plain    ../web/system.html    's/await gget("\/api\/ota\/github\/check")/await fetch("\/api\/ota\/github\/check")/' 'gget("/api/ota/github/check")'
+# LK-07 (1.2.30): проверка GitHub в фоне — обработчик зовёт async (не sync), задача стартует, состояние переходит в DONE
+mut M55_lk07_sync       web_server.c          's/    ota_gh_check_async(resp, sizeof(resp));/    ota_gh_check(resp, sizeof(resp));/' 'ota_gh_check_async(resp, sizeof(resp));'
+mut M56_lk07_nodecide   ota_github_client.c   's/    ota_chk_act_t act = ota_chk_decide(s_chk_state, age_ms, OTA_GH_CHECK_KEEP_MS);/    ota_chk_act_t act = OTA_CHK_ACT_START;/' 'ota_chk_decide(s_chk_state'
+mut M57_lk07_nodone     ota_github_client.c   '/^    s_chk_state = OTA_CHK_DONE;/d' 's_chk_state = OTA_CHK_DONE;'
+# LK-05 (1.2.30): предел ожидания прибора в httpd — константа 1000 мс, оба цикла на ней
+mut M58_lk05_const      web_server.c          's/#define SETTINGS_RAW_WAIT_MS 1000/#define SETTINGS_RAW_WAIT_MS 2000/' '#define SETTINGS_RAW_WAIT_MS 1000'
+mut M59_lk05_loop       web_server.c          '0,/    for (int waited = 0; waited < SETTINGS_RAW_WAIT_MS; waited += 50) {/s//    for (int waited = 0; waited < 2000; waited += 50) {/' 'waited < SETTINGS_RAW_WAIT_MS'
+# WP5 (1.2.30): журнал потоком — счётчик байт, куски через план, нет копии всего кольца
+mut M60_wp5_nocount     debug_log_ring.c      '/^    s_bytes_total += len;/d' 's_bytes_total += len;'
+mut M61_wp5_noplan      debug_log_ring.c      's/? dbglog_chunk_plan(s_bytes_total, s_used, want, end, DBGLOG_CHUNK, \&off, \&len) : DBGLOG_CHUNK_OVERWRITTEN;/? DBGLOG_CHUNK_OK : DBGLOG_CHUNK_OVERWRITTEN;/' 'dbglog_chunk_plan(s_bytes_total'
+mut M62_wp5_wholecopy   debug_log_ring.c      's/    char \*chunk = malloc(DBGLOG_CHUNK);/    char *chunk = malloc(s_cap);/' 'char *chunk = malloc(DBGLOG_CHUNK);'
+# LK-09 (1.2.30): проверка «клиент ещё в реестре» перед отправкой кадра и предел очереди
+mut M63_lk09_noalive    web_waterfall.c       '/    if (!alive) { free(a); return; }/d' 'if (!alive) { free(a); return; }'
+mut M64_lk09_always     web_waterfall.c       's/    if (!alive) { free(a); return; }/    if (false) { free(a); return; }/' 'if (!alive) { free(a); return; }'
+mut M65_lk09_inflight   web_waterfall.c       's/#define WS_INFLIGHT_MAX  4 /#define WS_INFLIGHT_MAX  8 /' '#define WS_INFLIGHT_MAX  4'
+# Разбор кода 1.2.30
+mut M79_p21_noclose     web_waterfall.c       's/    if (rc != ESP_OK) httpd_sess_trigger_close(j.req->handle, httpd_req_to_sockfd(j.req));//' 'httpd_sess_trigger_close(j.req->handle'
+mut M80_p31_clear_over  web_waterfall.c       's/    if (s_dl_active) return wf_dl_busy(req);//' 'if (s_dl_active) return wf_dl_busy(req);'
+mut M81_p33_unpinned    web_waterfall.c       's/xTaskCreatePinnedToCore(wf_dl_task, "wf_dl", WF_DL_STACK, j, 5, NULL, 1)/xTaskCreate(wf_dl_task, "wf_dl", WF_DL_STACK, j, 5, NULL)/' 'xTaskCreatePinnedToCore(wf_dl_task'
+mut M82_p22_silent200   debug_log_ring.c      's/if (cr != DBGLOG_CHUNK_OK) { err = ESP_FAIL; break; }/if (cr != DBGLOG_CHUNK_OK) break;/' 'err = ESP_FAIL; break; }'
+mut M83_p23_notoken     ../scripts/waterfall_n42.py 's/headers={"X-CSRF-Token": tok}, //' 'headers={"X-CSRF-Token": tok}'
+mut M84_p11_sizeonly    ../scripts/wf_pull_client.py 's/return h is not None and h == hashlib.sha256(blob).hexdigest()/return h is not None/' 'h == hashlib.sha256(blob).hexdigest()'
+# Живой гейт 1.2.30
+mut M97_gate_log_done   debug_log_ring.c      '/        if (cr == DBGLOG_CHUNK_DONE) break;/d' 'if (cr == DBGLOG_CHUNK_DONE) break;'
+mut M93_gate_dl_nofb    web_waterfall.c       's/        esp_err_t rc = h(cp);/        esp_err_t rc = ESP_OK;/' 'esp_err_t rc = h(cp);'
+mut M94_gate_chk_nofb   ota_github_client.c   's/            sync_fb = true;/            sync_fb = false;/' 'sync_fb = true;'
+mut M95_gate_stack_dl   web_waterfall.c       's/#define WF_DL_STACK       6144/#define WF_DL_STACK       8192/' '#define WF_DL_STACK       6144'
+mut M96_gate_stack_chk  ota_github_client.c   's/#define OTA_GH_CHK_STACK 6144/#define OTA_GH_CHK_STACK 8192/' '#define OTA_GH_CHK_STACK 6144'
+# #59 (1.2.30)
+mut M88_i59_nostore     boot_config.c         's/    e |= nvs_set_u8(h, "cal_al", in->calib_always_from_device ? 1 : 0);//' 'nvs_set_u8(h, "cal_al"'
+mut M89_i59_noapi       web_server.c          's/        bc.calib_always_from_device = cJSON_IsTrue(it);/        (void)it;/' 'bc.calib_always_from_device = cJSON_IsTrue(it);'
+mut M90_i59_oldneed     usb_host_cdc.c        's/calib_autoread_needed_pref(spectrum_calibration_is_missing(), spectrum_serial_is_missing(), boot_config_calib_always())/calib_autoread_needed(spectrum_calibration_is_missing(), spectrum_serial_is_missing())/' 'calib_autoread_needed_pref(spectrum_calibration_is_missing()'
+mut M91_i59_oldserial   usb_host_cdc.c        's/calib_request_serial_only(spectrum_calibration_is_missing(), boot_config_calib_always())/!spectrum_calibration_is_missing()/' 'calib_request_serial_only(spectrum_calibration_is_missing()'
+mut M92_i59_nouisave    ../web/system.html    's/,\n  calib_always:document.getElementById("bc-calib-always").checked//; /^  calib_always:document/d' 'calib_always:document.getElementById("bc-calib-always").checked'
+# #60 (1.2.30)
+mut M85_i60_nostamp     usb_host_cdc.c        '/    s_devlog_ms\[slot\] = (uint32_t)(esp_timer_get_time() \/ 1000);/d' 's_devlog_ms[slot] = '
+mut M86_i60_nofield     usb_host_cdc.c        's/\\"seq\\":%" PRIu32 ",\\"t\\":%" PRIu32 ",\\"text/\\"seq\\":%" PRIu32 ",\\"text/' '\"t\":%" PRIu32'
+mut M87_i60_pagenow     ../web/index.html     's/lg("← "+t,(typeof r.up_ms==="number"\&\&typeof e.t==="number")?new Date(Date.now()-((r.up_ms-e.t)>>>0)):undefined)/lg("← "+t)/' 'typeof r.up_ms==="number"'
+# WP10 (1.2.30)
+mut M76_p37_nocut       ../web/index.html     's/if(h0.length>100)h0=/if(h0.length>1000)h0=/' 'if(h0.length>100)h0='
+mut M77_p38_silent      ../web/waterfall.html 's/ }).catch(function(){oflSetMsg(t("ofl.err"),"err");});/ }).catch(function(){});/' 'oflSetMsg(t("ofl.err"),"err");});'
+mut M78_start_nolog     ../web/waterfall.html 's/if(!r.ok)lg("start: HTTP "+r.status);//' 'lg("start: HTTP "'
+# LK-02/03/04 (1.2.30)
+mut M71_lk02_sync_start web_waterfall.c       's/HTTP_POST, h_start_async);/HTTP_POST, h_start);/' 'h_start_async);'
+mut M72_lk02_sync_stop  web_waterfall.c       's/HTTP_POST, h_stop_async);/HTTP_POST, h_stop);/' 'h_stop_async);'
+mut M73_lk03_sync_clear web_waterfall.c       's/HTTP_POST, h_clear_async);/HTTP_POST, h_clear);/' 'h_clear_async);'
+mut M74_lk04_sync_segdl web_waterfall.c       's/HTTP_POST, h_segdel_async);/HTTP_POST, h_segment_delete);/' 'h_segdel_async);'
+mut M75_lk02_shared_cnt web_waterfall.c       's/h_stop, \&s_ctl_active, WF_CTL_MAX/h_stop, \&s_dl_active, WF_CTL_MAX/' '&s_ctl_active, WF_CTL_MAX); }'
+# LK-08/P-01 (1.2.30)
+mut M66_lk08_sync_win   web_waterfall.c       's/HTTP_GET,  h_window_async);/HTTP_GET,  h_window);/' 'h_window_async);'
+mut M67_lk08_sync_n42   web_waterfall.c       's/HTTP_GET, h_export_n42_async);/HTTP_GET, h_export_n42);/' 'h_export_n42_async);'
+mut M68_lk08_sync_seg   web_waterfall.c       's/HTTP_GET, h_segment_async);/HTTP_GET, h_segment);/' 'h_segment_async);'
+mut M69_lk08_max8       web_waterfall.c       's/#define WF_DL_MAX         1/#define WF_DL_MAX         8/' '#define WF_DL_MAX         1'
+mut M70_p01_norows      web_waterfall.c       's/if (want >= 1 \&\& want < rows) rows = want;/(void)want;/' 'rows = want;'
 exit $RC
