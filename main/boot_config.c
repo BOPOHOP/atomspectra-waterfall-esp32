@@ -122,6 +122,7 @@ int boot_config_save(const boot_config_t *in)
 // issue #52: счётчик сессий. Отдельный ключ, отдельные open/commit — намеренно
 // не в boot_config_save(), чтобы сохранение настроек из UI не двигало нумерацию
 // снимков.
+static uint32_t s_boot_sess;   // 1.2.31: номер на загрузке — для /api/status boot_count
 uint32_t boot_config_bump_session(uint32_t floor_value)
 {
     nvs_handle_t h;
@@ -153,8 +154,11 @@ uint32_t boot_config_bump_session(uint32_t floor_value)
         return 0;
     }
     ESP_LOGI(TAG, "board session #%" PRIu32, s);
+    if (s_boot_sess == 0) s_boot_sess = s;   // первый успешный бамп = загрузка
     return s;
 }
+
+uint32_t boot_config_get_boot_session(void) { return s_boot_sess; }
 
 uint32_t boot_config_get_session(void)
 {

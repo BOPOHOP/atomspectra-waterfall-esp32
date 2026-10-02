@@ -48,6 +48,7 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_text_accum_r3.c \
        test_round3_misc.c \
        test_wf_ref_plan.c \
+       test_session_plan.c \
        test_wf_rst_keep.c \
        test_wf_tail_plan.c \
        test_ota_gh_check_state.c \

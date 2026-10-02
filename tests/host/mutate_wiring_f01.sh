@@ -144,4 +144,13 @@ mut M110_mx12_notemp     monitor.c             's/, (uint16_t)dur, t_dc);/, (uin
 mut M111_mx12_sign       web_server.c          's/smp\[i\].t_dc < 0 ? "-" : ""/""/' 't_dc < 0 ? "-" : ""'
 mut M112_mx12_pagetemp   ../web/monitor.html   's/,pend\[k\]\[3\]);/);/' 'pend[k][3]);'
 mut M113_mx12_csv        ../web/monitor.html   's/"rel_err_pct","temp_c"\]/"rel_err_pct"]/' '"rel_err_pct","temp_c"]'
+# 1.2.31: новая сессия платы после Сброса
+mut MS1_s_reset_open   spectrum.c            '/if (session_reset_opens(s_spectrum.valid/d' 'session_reset_opens('
+mut MS2_s_snap_guard   spectrum.c            '/if (!session_snap_current(s_sess_req, expect_req))/d' 'session_snap_current('
+mut MS3_s_no_bump      main.c                's/session_apply_bump(&ss, req_now, boot_config_bump_session(ss.sess));/(void)req_now;/' 'session_apply_bump('
+mut MS4_s_seen_boot    main.c                '/ss.seen_req = spectrum_session_req();/d' 'ss.seen_req = spectrum_session_req();'
+mut MS5_s_expect_req   main.c                's/backup_cfg.backup_keep, ss.seen_req);/backup_cfg.backup_keep, 0);/' 'backup_cfg.backup_keep, ss.seen_req);'
+mut MS6_s_wf_ref_cache spectrogram.c         's/h.boot_session = boot_config_get_session();/h.boot_session = boot_config_get_boot_session();/' 'h.boot_session = boot_config_get_session();'
+mut MS7_s_boot_count   web_server.c          's/"boot_count", boot_config_get_boot_session()/"boot_count", boot_config_get_session()/' '"boot_count"'
+mut MS8_s_status_sess  web_server.c          '/"session", boot_config_get_session());/d' '"session", boot_config_get_session()'
 exit $RC

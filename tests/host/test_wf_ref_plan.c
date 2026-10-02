@@ -91,7 +91,7 @@ static void test_pick_rejects(void)
     make_valid(&h, bins);
     CHECK(wf_ref_pick(&h, bins, OK_BYTES, N, 41) == WF_REF_FORCE_RESYNC);
 
-    /* (h) cur_session two boots later */
+    /* (h) cur_session = S+2: ещё одна загрузка ИЛИ Сброс (1.2.31) до перезагрузки */
     make_valid(&h, bins);
     CHECK(wf_ref_pick(&h, bins, OK_BYTES, N, 43) == WF_REF_FORCE_RESYNC);
 

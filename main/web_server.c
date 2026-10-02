@@ -154,7 +154,8 @@ static void status_add_base_info(cJSON *root)
     esp_reset_reason_t rr = esp_reset_reason();
     cJSON_AddStringToObject(root, "reset_reason", reset_reason_str(rr));
     cJSON_AddNumberToObject(root, "reset_reason_code", (int)rr);
-    cJSON_AddNumberToObject(root, "boot_count", boot_config_get_session());
+    cJSON_AddNumberToObject(root, "boot_count", boot_config_get_boot_session());   // #AUD-DIAG-1: номер загрузки
+    cJSON_AddNumberToObject(root, "session", boot_config_get_session());           // 1.2.31: растёт и на Сбросе
     cJSON_AddNumberToObject(root, "uptime_s", (double)(esp_timer_get_time() / 1000000));
     char elf_sha[17];
     esp_app_get_elf_sha256(elf_sha, sizeof(elf_sha));

@@ -7,6 +7,7 @@
 #include "spectrum_hist_stage.h"
 #include "http_io_gate.h"
 #include "backup_plan.h"   // issue #52: разбор имени снимка и план ротации
+#include "session_plan.h"   // 1.2.31: Сброс → запрос новой сессии
 #include "spectrum_restore_plan.h"  // AWF-1: выбор источника восстановления
 #include "spectrum_base_plan.h"     // AWF-3: сброс прибора и слияние база+прибор
 #include "ota_busy.h"   // sweep-B задача 2: не стартовать периодический автосейв во время OTA
@@ -131,6 +132,7 @@ static uint32_t  s_base_total_counts;
 static uint32_t  s_dev_resets;                    // #7: счётчик сворачиваний с боота шлюза
 static spectrum_hist_stage_t s_hist_stage;        // непрерывность свипа (idle = UINT32_MAX)
 static uint32_t  s_reset_gen;                     // AUD-ASW126 #1/#12: httpd Reset
+static uint32_t  s_sess_req;   // 1.2.31: запросы новой сессии (Сброс непустого спектра), под SPEC_LOCK
 static uint32_t  s_stage_reset_gen;               // снимок gen на offset==0 (CDC)
 // AWF-4: момент spectrum_reset() (esp_timer, мкс) — гейт правдоподобности STAT
 // на первом коммите после Reset (spectrum_reset_stat_is_plausible).
@@ -800,6 +802,7 @@ static bool reset_mark_create(char state)
 static void reset_state_zero(void)
 {
     SPEC_LOCK();
+    if (session_reset_opens(s_spectrum.valid, s_spectrum.total_time_sec)) s_sess_req++;
     s_reset_gen++;
     s_reset_at_us = esp_timer_get_time();   // AWF-4: t0 для гейта правдоподобности STAT
     s_reset_gate.armed = true;              // issue #58
@@ -911,6 +914,12 @@ uint32_t spectrum_reset_gen(void)
 {
     SPEC_LOCK(); uint32_t g = s_reset_gen; SPEC_UNLOCK();
     return g;
+}
+
+uint32_t spectrum_session_req(void)
+{
+    SPEC_LOCK(); uint32_t r = s_sess_req; SPEC_UNLOCK();
+    return r;
 }
 
 bool spectrum_reset_still_undelivered(uint32_t pending_gen)
@@ -1098,7 +1107,7 @@ static bool atomic_write_snapshot(const char *tmp_path, const char *final_path,
     return true;
 }
 
-int spectrum_backup_save(uint32_t sess, uint32_t seq, int keep)
+int spectrum_backup_save(uint32_t sess, uint32_t seq, int keep, uint32_t expect_req)
 {
     if (keep <= 0) return -1;
 
@@ -1117,6 +1126,7 @@ int spectrum_backup_save(uint32_t sess, uint32_t seq, int keep)
     if (!snap) return -3;
     SPEC_LOCK();
     if (!s_spectrum.valid) { SPEC_UNLOCK(); free(snap); return -1; }
+    if (!session_snap_current(s_sess_req, expect_req)) { SPEC_UNLOCK(); free(snap); return -5; }  // Сброс после решения: снимок нового объекта не под старым номером
     s_spectrum.saved_at = time(NULL);
     memcpy(snap, &s_spectrum, sizeof(*snap));
     SPEC_UNLOCK();

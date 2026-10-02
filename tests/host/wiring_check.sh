@@ -33,7 +33,15 @@ need spectrogram.c 1 'if (dr.epoch != s_wf_epoch)'
 need spectrogram.c 1 'bool fin = (i >= 0 && s_seg_reg[i].finalized);'
 # #AUD-DIAG-1 R1/R2: причина сброса, номер загрузки и SHA ELF в /api/status
 need web_server.c  1 'cJSON_AddStringToObject(root, "reset_reason", reset_reason_str(rr));'
-need web_server.c  1 'cJSON_AddNumberToObject(root, "boot_count", boot_config_get_session());'
+need web_server.c  1 'cJSON_AddNumberToObject(root, "boot_count", boot_config_get_boot_session());'
+# 1.2.31: новая сессия платы после Сброса непустого спектра
+need web_server.c  1 'cJSON_AddNumberToObject(root, "session", boot_config_get_session());'
+need spectrum.c    1 'if (session_reset_opens(s_spectrum.valid, s_spectrum.total_time_sec)) s_sess_req++;'
+need spectrum.c    1 'if (!session_snap_current(s_sess_req, expect_req))'
+need main.c        1 'session_apply_bump(&ss, req_now, boot_config_bump_session(ss.sess));'
+need main.c        1 'ss.seen_req = spectrum_session_req();'
+need main.c        1 'backup_cfg.backup_keep, ss.seen_req);'
+need spectrogram.c 1 'h.boot_session = boot_config_get_session();'   # I2: живой NVS, не кеш загрузки
 need web_server.c  1 'cJSON_AddStringToObject(root, "elf_sha", elf_sha);'
 # #AUD-F01 (класс P-016): каждый вызов esp_restart() (*.c/*.h, все подкаталоги, в любом месте строки) —
 # среди 3 предыдущих строк КОДА (комментарии и пустые не в счёт) есть spectrogram_prepare_reboot();
