@@ -135,5 +135,9 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # (esp-tls "Use SPIRAM for mbedTLS buffers" в MENUCONFIG.in).
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 
+# 1.2.32: аппаратному AES нужна DMA-память во внутренней RAM; при её нехватке TLS к GitHub
+# падал ("esp-aes: Failed to allocate memory" -> sums_download_failed). Софт-AES DMA не требует.
+CONFIG_MBEDTLS_HARDWARE_AES=n
+
 # AWF-5 (2026-09-27): 3584 мало, если включён журнал платы (перехватчик кладёт 512 Б на стек каждой задачи)
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192

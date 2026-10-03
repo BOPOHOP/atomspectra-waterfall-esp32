@@ -183,4 +183,7 @@ mut MI26_idx_tag       ../web/index.html    's/(s.imp?/(s.imx?/' "(s.imp?' <span
 # разбор 1.2.31
 mut M115_serial_page     ../web/saved.html     's/|\["[^]]*\]\/g,"?")\.substring/\/g,"?").substring/' '["\\]/g,"?")'
 mut M114_zoom_visn      ../web/index.html     's/PW\*visN(N)); if(ch<0||ch>=N)return null;/PW*N); if(ch<0||ch>=N)return null;/' 'PW*visN(N)); if(ch<0||ch>=N)return null;'
+mut MU1_view_cps  ../web/index.html 's/function setCps(v){isCps=v;viewSave();/function setCps(v){isCps=v;/' 'function setCps(v){isCps=v;viewSave();'
+mut MU2_ovl_toggle ../web/index.html 's/onclick="toggleOverlay(/onclick="loadOverlay(/' 'onclick="toggleOverlay('
+mut MU3_ovl_restore ../web/index.html 's/localStorage.getItem("aswf-ovl")/localStorage.getItem("aswf-ovx")/' 'localStorage.getItem("aswf-ovl")'
 exit $RC

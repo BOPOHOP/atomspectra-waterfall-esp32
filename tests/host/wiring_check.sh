@@ -270,5 +270,11 @@ need ../web/index.html 1 "(s.imp?' <span"
 need ../web/index.html 1 'var ch=Math.floor((cx-PL)/PW*visN(N)); if(ch<0||ch>=N)return null;'
 need ../web/saved.html 1 '.replace(/[^\x20-\x7E]|["\\]/g,"?").substring(0,43);}'
 need spectrum_import_plan.h 1 "b[72 + n] == '\"'"
+need ../web/index.html 1 'function setCps(v){isCps=v;viewSave();'
+need ../web/index.html 1 'function setKev(v,ns){isKev=v;if(!ns)viewSave();'
+need ../web/index.html 1 'function viewRestore(){'
+need ../web/index.html 1 'onclick="toggleOverlay('
+need ../web/index.html 1 'localStorage.getItem("aswf-ovl")'
+need ../web/index.html 0 'X.setLineDash([5,4]);X.beginPath();for(var i=0;i<Math.min(yO.length'
 [ "$RC" -eq 0 ] && echo "wiring: OK"
 exit $RC
