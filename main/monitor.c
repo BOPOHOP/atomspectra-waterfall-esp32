@@ -35,8 +35,8 @@ static const char *TAG = "monitor";
 // восстанавливает ровно то, что осталось на плате. При 6 ч суточное наблюдение
 // теряло данные от одного случайного F5. Цена: 422 КБ PSRAM вместо 211 из 8 МБ.
 // Не хватит — monitor_init штатно падает в internal-fallback (1 ч), не в отказ.
-#define MON_RING_PSRAM     43200   // 12 ч при 1 Гц: 43200 × 10 Б ≈ 422 КБ PSRAM
-#define MON_RING_INTERNAL   3600   // fallback без PSRAM: 1 ч ≈ 35 КБ internal
+#define MON_RING_PSRAM     43200   // 12 ч при 1 Гц: 43200 × 12 Б ≈ 506 КБ PSRAM (с 1.2.31 — с температурой)
+#define MON_RING_INTERNAL   3600   // fallback без PSRAM: 1 ч ≈ 42 КБ internal
 
 static monitor_sample_t *s_ring;
 static uint32_t s_cap;       // фактическая ёмкость кольца (см. monitor_init)
