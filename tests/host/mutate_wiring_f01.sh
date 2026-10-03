@@ -186,4 +186,8 @@ mut M114_zoom_visn      ../web/index.html     's/PW\*visN(N)); if(ch<0||ch>=N)re
 mut MU1_view_cps  ../web/index.html 's/function setCps(v){isCps=v;viewSave();/function setCps(v){isCps=v;/' 'function setCps(v){isCps=v;viewSave();'
 mut MU2_ovl_toggle ../web/index.html 's/onclick="toggleOverlay(/onclick="loadOverlay(/' 'onclick="toggleOverlay('
 mut MU3_ovl_restore ../web/index.html 's/localStorage.getItem("aswf-ovl")/localStorage.getItem("aswf-ovx")/' 'localStorage.getItem("aswf-ovl")'
+mut MU4_f1_check  wifi_manager.c 's/wifi_setup_should_return(s_unverified, s_got_ip_this_boot, s_retry_count + 1, elapsed_s)/(0)/' 'wifi_setup_should_return(s_unverified, s_got_ip_this_boot, s_retry_count + 1, elapsed_s)'
+mut MU5_f1_flag   wifi_manager.c 's/nvs_set_u8(nvs, "unver", 1);/nvs_set_u8(nvs, "unvx", 1);/' 'nvs_set_u8(nvs, "unver", 1);'
+mut MU6_f1_clear  wifi_manager.c 's/nvs_erase_key(uv, "unver");/nvs_erase_key(uv, "unvx");/' 'nvs_erase_key(uv, "unver");'
+mut MU7_f1_timer  wifi_manager.c 's/if (s_unverified) return_to_setup_and_reboot();/if (0) return_to_setup_and_reboot();/' 'if (s_unverified) return_to_setup_and_reboot();'
 exit $RC

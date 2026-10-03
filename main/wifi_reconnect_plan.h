@@ -38,3 +38,18 @@ static inline bool wifi_reconnect_should_fallback(bool ap_fallback_enabled,
     if (!ap_fallback_enabled && got_ip_this_boot) return false;
     return elapsed_disconnected_s >= WIFI_RECONNECT_FALLBACK_S;
 }
+
+// #AWF-F1 (1.2.32, Макс): сеть, введённую в портале настройки, плата ни разу не
+// проверяла — неверный пароль оставался в NVS. Пока признак «не проверена» стоит
+// (ставит портал, снимает первая выданная IP) и подключиться не удалось за
+// WIFI_SETUP_VERIFY_FAILS неудач подряд (не раньше WIFI_SETUP_VERIFY_MIN_S с),
+// плата стирает сеть и снова открывает портал. Платы без признака (все настроенные
+// раньше) не затронуты.
+#define WIFI_SETUP_VERIFY_FAILS 5
+#define WIFI_SETUP_VERIFY_MIN_S 15u
+static inline bool wifi_setup_should_return(bool unverified, bool got_ip_this_boot,
+                                            int fails, uint32_t elapsed_s)
+{
+    return unverified && !got_ip_this_boot &&
+           fails >= WIFI_SETUP_VERIFY_FAILS && elapsed_s >= WIFI_SETUP_VERIFY_MIN_S;
+}

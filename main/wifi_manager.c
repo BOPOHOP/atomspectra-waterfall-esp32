@@ -200,6 +200,7 @@ static esp_err_t handle_setup_connect(httpd_req_t *req)
         // поэтому по умолчанию выкл — это gate оператора, здесь не трогаем.
         // Подробности и последствия — INSTALL.md, раздел "9. Безопасность".
         nvs_set_str(nvs, "pass", pass ? pass : "");
+        nvs_set_u8(nvs, "unver", 1);   // #AWF-F1: сеть не проверена до первой выданной IP
         nvs_commit(nvs);
         nvs_close(nvs);
         ESP_LOGI(TAG, "WiFi config saved: SSID=%s", ssid);
@@ -353,6 +354,23 @@ static void start_field_ap(void)
 /* ---- STA fallback → полевой AP (FIELD-2a, способ A4: ребут+одноразовый флаг) ---- */
 
 static bool s_fb_rebooting;
+static void fb_reboot_now(void);
+static bool s_unverified;   // #AWF-F1: сеть из портала ещё не проверена (NVS wifi/unver)
+
+// #AWF-F1: сеть из портала не подключилась — стереть её и открыть портал заново.
+static void return_to_setup_and_reboot(void)
+{
+    nvs_handle_t nvs;
+    if (nvs_open("wifi", NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_erase_key(nvs, "ssid");
+        nvs_erase_key(nvs, "pass");
+        nvs_erase_key(nvs, "unver");
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    ESP_LOGW(TAG, "AWF-F1: new network did not connect -> setup portal");
+    fb_reboot_now();
+}
 
 static void fb_reboot_task(void *arg)
 {
@@ -370,7 +388,11 @@ static void set_fb_flag_and_reboot(void)
         nvs_close(nvs);
     }
     ESP_LOGW(TAG, "FIELD-2a: STA no IP -> reboot into field AP");
+    fb_reboot_now();
+}
 
+static void fb_reboot_now(void)
+{
     if (s_fb_rebooting) return;
     s_fb_rebooting = true;
     /* #RB-STK-1: вызывают esp_timer (стек 3584) и sys_evt (4096) — подготовка с LittleFS и записью опоры идёт в своей задаче */
@@ -384,8 +406,10 @@ static void set_fb_flag_and_reboot(void)
 static void fallback_timer_cb(void *arg)
 {
     (void)arg;
-    if (!wifi_is_connected())
-        set_fb_flag_and_reboot();
+    if (!wifi_is_connected()) {
+        if (s_unverified) return_to_setup_and_reboot();   // #AWF-F1
+        else set_fb_flag_and_reboot();
+    }
 }
 
 // AWF-2a финал (решение оператора 25.09): настройка «Переходить в Field AP при
@@ -485,7 +509,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
         // уводить плату в поле раньше, чем роутер успевает подняться.
         if (s_disconnect_started_us == 0) s_disconnect_started_us = esp_timer_get_time();
         uint32_t elapsed_s = (uint32_t)((esp_timer_get_time() - s_disconnect_started_us) / 1000000);
-        if (wifi_reconnect_should_fallback(ap_fallback_enabled(), s_got_ip_this_boot, elapsed_s)) {
+        if (wifi_setup_should_return(s_unverified, s_got_ip_this_boot, s_retry_count + 1, elapsed_s)) {
+            return_to_setup_and_reboot();   // #AWF-F1
+        } else if (wifi_reconnect_should_fallback(ap_fallback_enabled(), s_got_ip_this_boot, elapsed_s)) {
             ESP_LOGE(TAG, "WiFi down %us (reason=%u) -> field AP", (unsigned)elapsed_s, (unsigned)reason);
             set_fb_flag_and_reboot();
         } else {
@@ -503,6 +529,11 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "Connected, IP: " IPSTR, IP2STR(&event->ip_info.ip));
         s_got_ip_this_boot = true;   // AWF-2a доработка
+        if (s_unverified) {          // #AWF-F1: сеть подтверждена
+            s_unverified = false;
+            nvs_handle_t uv;
+            if (nvs_open("wifi", NVS_READWRITE, &uv) == ESP_OK) { nvs_erase_key(uv, "unver"); nvs_commit(uv); nvs_close(uv); }
+        }
         s_retry_count = 0;
         s_disconnect_started_us = 0;   // AWF-2a (#1): серия реконнектов закрыта
         if (s_reconnect_timer) esp_timer_stop(s_reconnect_timer);
@@ -536,6 +567,9 @@ void wifi_manager_init(void)
     if (nvs_open("wifi", NVS_READONLY, &nvs) == ESP_OK) {
         nvs_get_u8(nvs, "ap_mode", &ap_mode);
         nvs_get_u8(nvs, "ap_fb_once", &ap_fb_once);
+        uint8_t unver = 0;
+        nvs_get_u8(nvs, "unver", &unver);
+        s_unverified = (unver != 0);
         nvs_close(nvs);
     }
 

@@ -276,5 +276,9 @@ need ../web/index.html 1 'function viewRestore(){'
 need ../web/index.html 1 'onclick="toggleOverlay('
 need ../web/index.html 1 'localStorage.getItem("aswf-ovl")'
 need ../web/index.html 0 'X.setLineDash([5,4]);X.beginPath();for(var i=0;i<Math.min(yO.length'
+need wifi_manager.c 1 'wifi_setup_should_return(s_unverified, s_got_ip_this_boot, s_retry_count + 1, elapsed_s)'
+need wifi_manager.c 1 'nvs_set_u8(nvs, "unver", 1);'
+need wifi_manager.c 1 'nvs_erase_key(uv, "unver");'
+need wifi_manager.c 1 'if (s_unverified) return_to_setup_and_reboot();'
 [ "$RC" -eq 0 ] && echo "wiring: OK"
 exit $RC

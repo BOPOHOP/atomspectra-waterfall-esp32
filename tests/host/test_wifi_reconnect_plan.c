@@ -30,4 +30,12 @@ void test_wifi_reconnect_plan(void)
     // ВЫКЛ, но IP в этой загрузке ЕЩЁ НЕ БЫЛО (страховка) -> прежний порог.
     CHECK(!wifi_reconnect_should_fallback(false, false, 299));
     CHECK( wifi_reconnect_should_fallback(false, false, 300));
+
+    // #AWF-F1: непроверенная сеть из портала — назад в портал после 5 неудач и >=15 с.
+    CHECK( wifi_setup_should_return(true,  false, 5, 15));
+    CHECK( wifi_setup_should_return(true,  false, 9, 108));
+    CHECK(!wifi_setup_should_return(true,  false, 4, 100));   // мало неудач
+    CHECK(!wifi_setup_should_return(true,  false, 5, 14));    // слишком рано
+    CHECK(!wifi_setup_should_return(false, false, 50, 1000)); // сеть проверена/настроена раньше
+    CHECK(!wifi_setup_should_return(true,  true,  50, 1000)); // IP в этой загрузке была
 }
