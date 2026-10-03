@@ -45,6 +45,7 @@
 #include "ota_github_client.h"    // AWF-5: обновление с GitHub
 #include "ota_busy.h"              // AWF-5 P1-фикс: общий замок с GitHub-install
 #include "ota_timeout_budget.h"    // D4 (sweep-B задача 1): host-тест границы
+#include "spectrum_import_plan.h"  // 1.2.31: импорт фона (разбор тела ASI1) + путь удаления записи (host-тест)
 #include "snapshot_file.h"         // У4 (раунд 3): слепок DSP — tmp + rename (host-тест)
 #include <dirent.h>
 
@@ -154,7 +155,8 @@ static void status_add_base_info(cJSON *root)
     esp_reset_reason_t rr = esp_reset_reason();
     cJSON_AddStringToObject(root, "reset_reason", reset_reason_str(rr));
     cJSON_AddNumberToObject(root, "reset_reason_code", (int)rr);
-    cJSON_AddNumberToObject(root, "boot_count", boot_config_get_session());
+    cJSON_AddNumberToObject(root, "boot_count", boot_config_get_boot_session());   // #AUD-DIAG-1: номер загрузки
+    cJSON_AddNumberToObject(root, "session", boot_config_get_session());           // 1.2.31: растёт и на Сбросе
     cJSON_AddNumberToObject(root, "uptime_s", (double)(esp_timer_get_time() / 1000000));
     char elf_sha[17];
     esp_app_get_elf_sha256(elf_sha, sizeof(elf_sha));
@@ -300,8 +302,9 @@ static esp_err_t render_spectrum_json(httpd_req_t *req, const spectrum_data_t *s
     // спектры и автоснимки (/api/saved/<i>/spectrum.json, /api/backup/<name>/
     // spectrum.json), раньше только "calib" без "calib_set".
     {
-        int q = snprintf(buf, 4096, ",\"calib_set\":%s",
-            calib_is_missing(sp->calibration, CALIB_COEFFS, sp->calib_valid) ? "false" : "true");
+        // 1.2.31: saved_at — дата конца набора (экспорт с одной платы → импорт на другую сохраняет дату)
+        int q = snprintf(buf, 4096, ",\"calib_set\":%s,\"saved_at\":%ld",
+            calib_is_missing(sp->calibration, CALIB_COEFFS, sp->calib_valid) ? "false" : "true", (long)sp->saved_at);
         httpd_resp_send_chunk(req, buf, q);
     }
     httpd_resp_sendstr_chunk(req, "}");
@@ -525,8 +528,14 @@ static esp_err_t handle_monitor_series(httpd_req_t *req)
         "{\"epoch\":%" PRIu32 ",\"next_seq\":%" PRIu32 ",\"first_seq\":%" PRIu32
         ",\"interval_base\":1,\"samples\":[", epoch, next, first);
     for (size_t i = 0; i < n; i++) {
-        pos += snprintf(buf + pos, 2048 - pos, "%s[%" PRIu32 ",%u,%" PRIu32 "]",
-                        i ? "," : "", smp[i].end_sec, (unsigned)smp[i].dur, smp[i].counts);
+        // #MX-12 (1.2.31): 4-й элемент — температура T1, °C (null — нет данных)
+        if (smp[i].t_dc == MON_T_NONE)
+            pos += snprintf(buf + pos, 2048 - pos, "%s[%" PRIu32 ",%u,%" PRIu32 ",null]",
+                            i ? "," : "", smp[i].end_sec, (unsigned)smp[i].dur, smp[i].counts);
+        else
+            pos += snprintf(buf + pos, 2048 - pos, "%s[%" PRIu32 ",%u,%" PRIu32 ",%s%d.%d]",
+                            i ? "," : "", smp[i].end_sec, (unsigned)smp[i].dur, smp[i].counts,
+                            smp[i].t_dc < 0 ? "-" : "", abs(smp[i].t_dc) / 10, abs(smp[i].t_dc) % 10);
         if (pos > 1900) { httpd_resp_send_chunk(req, buf, pos); pos = 0; }
     }
     pos += snprintf(buf + pos, 2048 - pos, "]}");
@@ -923,6 +932,70 @@ static esp_err_t handle_save(httpd_req_t *req)
     return ESP_OK;
 }
 
+// 1.2.31: импорт фонового спектра. POST /api/import (НЕ под /api/saved/: ветка POST там — удаление), тело ASI1 = 32896 Б
+// собирает браузер (cJSON-разбор на плате невозможен: внутренняя RAM ~16 КБ, крупнейший блок ~7 КБ). Плата только
+// принимает, проверяет (spectrum_import_decode) и пишет файл tmp+rename под воротами flash (spectrum_import_to_flash).
+static esp_err_t import_reply(httpd_req_t *req, const char *status, const char *err)
+{
+    char r[64];
+    snprintf(r, sizeof(r), "{\"ok\":false,\"err\":\"%s\"}", err);
+    httpd_resp_set_status(req, status);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, r);
+    return ESP_OK;
+}
+// Итог записи: idx >= 0 — номер новой записи; -2 мало места; -4 слоты исчерпаны; -5 flash занят; прочее — ошибка ФС.
+static esp_err_t import_reply_idx(httpd_req_t *req, int idx)
+{
+    if (idx >= 0) {
+        char r[48];
+        snprintf(r, sizeof(r), "{\"ok\":true,\"index\":%d}", idx);
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_sendstr(req, r);
+        return ESP_OK;
+    }
+    if (idx == -2) return import_reply(req, "507 Insufficient Storage", "nospace");
+    if (idx == -4) return import_reply(req, "409 Conflict", "exhausted");
+    if (idx == -5) { httpd_resp_set_hdr(req, "Retry-After", "2"); return import_reply(req, "503 Service Unavailable", "busy"); }
+    return import_reply(req, "500 Internal Server Error", "fserr");
+}
+// Приём тела: куски по 4096, бюджет подряд идущих таймаутов — как у OTA (httpd recv_wait_timeout = 3 с). Без ворот flash.
+static bool import_recv_body(httpd_req_t *req, uint8_t *b)
+{
+    size_t got = 0; uint32_t streak = 0;
+    while (got < SPEC_IMPORT_SIZE) {
+        size_t want = SPEC_IMPORT_SIZE - got; if (want > 4096) want = 4096;
+        int r = httpd_req_recv(req, (char *)b + got, want);
+        if (r == HTTPD_SOCK_ERR_TIMEOUT && !ota_timeout_budget_exceeded(++streak, OTA_MAX_CONSECUTIVE_TIMEOUTS)) continue;
+        if (r <= 0) return false;
+        streak = 0; got += (size_t)r;
+    }
+    return true;
+}
+// Тело задачи web_async_run (стек 6144 Б, на нём только скаляры): буферы — в PSRAM, внутреннюю RAM не трогаем.
+static esp_err_t handle_import_job(httpd_req_t *req)
+{
+    uint8_t *b = heap_caps_malloc(SPEC_IMPORT_SIZE, MALLOC_CAP_SPIRAM);
+    spectrum_data_t *sp = heap_caps_malloc(sizeof(*sp), MALLOC_CAP_SPIRAM);
+    if (!b || !sp) { free(b); free(sp); import_reply(req, "500 Internal Server Error", "oom"); return ESP_FAIL; }
+    bool rx = import_recv_body(req, b);
+    imp_err_t e = rx ? spectrum_import_decode(b, SPEC_IMPORT_SIZE, sp) : IMP_BAD_SIZE;
+    free(b);
+    if (!rx) { free(sp); import_reply(req, "408 Request Timeout", "recv_timeout"); return ESP_FAIL; }   // тело не дочитано — закрыть сессию
+    if (e != IMP_OK) { free(sp); return import_reply(req, "400 Bad Request", imp_err_str(e)); }
+    if (!http_io_gate_enter_wait_or_503(req, SAVED_FLASH_GATE_WAIT_MS)) { free(sp); return ESP_OK; }
+    int idx = spectrum_import_to_flash(sp);
+    http_io_gate_leave();
+    free(sp);
+    return import_reply_idx(req, idx);
+}
+static esp_err_t handle_import(httpd_req_t *req)
+{
+    if (!csrf_check(req)) return ESP_FAIL;
+    if (req->content_len != SPEC_IMPORT_SIZE) { import_reply(req, "400 Bad Request", "bad_size"); return ESP_FAIL; }
+    return web_async_run(req, handle_import_job);
+}
+
 // #3/Codeaudit P1: буфер листинга — см. комментарий у handle_list.
 #define SAVED_LIST_BUF_CAP (64 * 1024)
 
@@ -1001,9 +1074,13 @@ static esp_err_t handle_list(httpd_req_t *req)
         fread(&time_sec, 4, 1, f);
         fseek(f, offsetof(spectrum_data_t, saved_at), SEEK_SET);
         fread(&saved_at, sizeof(time_t), 1, f);
+        // 1.2.31: признак импорта — префикс "IMP:" в serial_number (формат файла записи не менялся: чтение отвергает иной размер)
+        char tag[4] = {0};
+        fseek(f, offsetof(spectrum_data_t, serial_number), SEEK_SET);
+        if (fread(tag, 1, 4, f) != 4) memset(tag, 0, sizeof(tag));
         fclose(f);
-        int n = snprintf(item, sizeof(item), "%s{\"index\":%d,\"counts\":%" PRIu32 ",\"time\":%" PRIu32 ",\"saved_at\":%ld}",
-            count > 0 ? "," : "", i, counts, time_sec, (long)saved_at);
+        int n = snprintf(item, sizeof(item), "%s{\"index\":%d,\"counts\":%" PRIu32 ",\"time\":%" PRIu32 ",\"saved_at\":%ld%s}",
+            count > 0 ? "," : "", i, counts, time_sec, (long)saved_at, memcmp(tag, "IMP:", 4) ? "" : ",\"imp\":true");
         // #3: буфер вместо chunk-отправки — см. комментарий над handle_list.
         // issue #52: резерв считается от ФАКТИЧЕСКОГО хвоста (LIST_TAIL_RESERVE),
         // а не от прежней константы 32, рассчитанной на короткий хвост.
@@ -1718,9 +1795,11 @@ static esp_err_t handle_backup_delete(httpd_req_t *req)
 static esp_err_t handle_saved_delete(httpd_req_t *req)
 {
     if (!csrf_check(req)) return ESP_FAIL;
-    int idx = parse_saved_index(req->uri);
+    // 1.2.31: удаление — ТОЛЬКО точный путь /api/saved/<i>/delete. Раньше любой POST /api/saved/* (в т.ч. /api/saved/abc)
+    // шёл через atoi и стирал spec_0000.bin. Остальное — 404, ничего не удаляется (saved_delete_index — host-тест).
+    int idx = saved_delete_index(req->uri);
     if (idx < 0) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad index");
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Unknown saved action");
         return ESP_FAIL;
     }
     if (!http_io_gate_enter_wait_or_503(req, SAVED_FLASH_GATE_WAIT_MS)) return ESP_OK;
@@ -2748,10 +2827,10 @@ void web_server_init(void)
     config.core_id = 1;
     // #WF-2/#MON-1/#FIELD-4/#FW-50/issue #52/AWF-5: О9 (release-gate-firmware-
     // v1.2.28-code.md) — пересчитано 2026-09-28 теми же командами (см. ниже):
-    // 61 в uris[] + 19 reg + 1 /ws/waterfall = 81, не 79 (комментарий отстал
+    // 62 в uris[] (1.2.31: +/api/import) + 19 reg + 1 /ws/waterfall = 82, не 79 (комментарий отстал
     // от кода при добавлении эндпоинтов после 2026-09-27). С лимитом 80 запас был бы всего +1 —
     // ПОСЛЕДНИЙ обработчик молча не регистрировался бы → тихий 404 (та самая
-    // авария, которой лимит 45 стоил цикла reconnect). 90 даёт запас +11.
+    // авария, которой лимит 45 стоил цикла reconnect). 90 даёт запас +8 (82 из 90).
     // Добавляешь эндпоинт — пересчитай:
     //   awk '/httpd_uri_t uris\[\]/,/^    };/' main/web_server.c | grep -cE '^\s*\{"/'
     //   grep -cE '^\s*reg\(server' main/web_waterfall.c   (+1 на /ws/waterfall)
@@ -2815,6 +2894,7 @@ void web_server_init(void)
         {"/api/export.spe",              HTTP_GET,  handle_export_spe,       NULL},
         {"/api/saved/*",                 HTTP_GET,  handle_saved_get,        NULL},
         {"/api/saved/*",                 HTTP_POST, handle_saved_delete,     NULL},
+        {"/api/import",                  HTTP_POST, handle_import,           NULL},  // 1.2.31: НЕ под /api/saved/* (там POST = удаление)
         {"/api/backup/*",                HTTP_GET,  handle_backup_get,       NULL},  // issue #52
         {"/api/backup/*",                HTTP_POST, handle_backup_delete,    NULL},  // issue #52
         {"/api/device",                  HTTP_GET,  handle_device,           NULL},

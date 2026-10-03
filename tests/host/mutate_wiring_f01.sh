@@ -4,6 +4,7 @@
 set -u; cd "$(dirname "$0")"; T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; RC=0
 mut() {   # mut <name> <file> <sed-expr> ; "baseline" — без правки
     rm -rf "$T/main" "$T/web" "$T/scripts"; cp -r ../../main "$T/main"; cp -r ../../web "$T/web"; mkdir "$T/scripts"; cp ../../scripts/waterfall_n42.py ../../scripts/wf_pull_client.py "$T/scripts/"   # web/ — для need ../web/index.html
+    sed -i 's/\r$//' "$T"/main/*.c "$T"/main/*.h "$T"/web/*.html 2>/dev/null   # рабочая копия на Windows в CRLF — мутанты с якорем $ не применялись
     if [ "$1" != baseline ]; then cp "$T/main/$2" "$T/o"; sed -i "$3" "$T/main/$2"
         cmp -s "$T/o" "$T/main/$2" && { echo "== $1: SED DID NOT APPLY"; RC=1; return; }; fi
     local out n; out=$(bash wiring_check.sh "$T/main"); n=$(grep -c 'WIRING FAIL' <<<"$out")
@@ -38,7 +39,7 @@ mut M22_cjson_try    main.c               '/if (t_cjson_try) return;/d'
 mut M23_rx_delete    tcp_bridge.c         's/retry in 1 s"); vTaskDelay(pdMS_TO_TICKS(1000)); }/"); vTaskDelete(NULL); return; }/'
 mut M24_barrier_set  spectrogram.c        '/s_wf_busy = true;    \/\* до проверки/{n;d}' 'Dekker barrier'
 mut M25_barrier_wait spectrogram.c        '$!N;s/ *__sync_synchronize();\n\( *for (int i = 0; i < 200\)/\1/;P;D' 'Dekker barrier'
-mut M26_css_log      ../web/index.html    's/\.row + \.row, #log + \.row{/.row + .row{/' '#log + .row{'
+mut M26_log_open     ../web/index.html    's/id="log-body" style="display:none;/id="log-body" style="display:block;/' 'id="log-body" style="display:none;'
 # #OTA-VR: повтор проверки образа в обоих путях OTA, отказ esp_ota_end() окончателен
 mut M27_web_no_retry web_server.c         's/err = ota_set_boot_verified(update);/err = ESP_OK;/' "line 'err = ota_set_boot_verified(update);'"
 mut M28_web_direct   web_server.c         '$a static void mut28(const esp_partition_t *p) { esp_ota_set_boot_partition(p); }' "'esp_ota_set_boot_partition(' x1"
@@ -111,7 +112,11 @@ mut M85_i60_nostamp     usb_host_cdc.c        '/    s_devlog_ms\[slot\] = (uint3
 mut M86_i60_nofield     usb_host_cdc.c        's/\\"seq\\":%" PRIu32 ",\\"t\\":%" PRIu32 ",\\"text/\\"seq\\":%" PRIu32 ",\\"text/' '\"t\":%" PRIu32'
 mut M87_i60_pagenow     ../web/index.html     's/lg("← "+t,(typeof r.up_ms==="number"\&\&typeof e.t==="number")?new Date(Date.now()-((r.up_ms-e.t)>>>0)):undefined)/lg("← "+t)/' 'typeof r.up_ms==="number"'
 # WP10 (1.2.30)
-mut M76_p37_nocut       ../web/index.html     's/if(h0.length>100)h0=/if(h0.length>1000)h0=/' 'if(h0.length>100)h0='
+mut M76_p37_nocut       ../web/index.html     's/" ⏎ ");/" . ");/' '" ⏎ ");'
+mut M98_exch_nosave     ../web/index.html     's/a.download="atomspectra-exchange-"/a.download="x-"/' 'a.download="atomspectra-exchange-"'
+mut M99_exch_noclear    ../web/index.html     's/onclick="clearLog()"//' 'onclick="clearLog()"'
+mut M100_exch_dupclick  ../web/index.html     's/^async function initCalib(){/document.getElementById("log-head").onclick=function(){};\nasync function initCalib(){/' 'document.getElementById("log-head").onclick=function(){'
+mut M101_exch_nohdr     ../web/index.html     's/new Blob(\["# "+d.toLocaleString()+"\\n"+logEl.textContent\]/new Blob([logEl.textContent]/' 'new Blob(["# "+d.toLocaleString()'
 mut M77_p38_silent      ../web/waterfall.html 's/ }).catch(function(){oflSetMsg(t("ofl.err"),"err");});/ }).catch(function(){});/' 'oflSetMsg(t("ofl.err"),"err");});'
 mut M78_start_nolog     ../web/waterfall.html 's/if(!r.ok)lg("start: HTTP "+r.status);//' 'lg("start: HTTP "'
 # LK-02/03/04 (1.2.30)
@@ -126,4 +131,56 @@ mut M67_lk08_sync_n42   web_waterfall.c       's/HTTP_GET, h_export_n42_async);/
 mut M68_lk08_sync_seg   web_waterfall.c       's/HTTP_GET, h_segment_async);/HTTP_GET, h_segment);/' 'h_segment_async);'
 mut M69_lk08_max8       web_waterfall.c       's/#define WF_DL_MAX         1/#define WF_DL_MAX         8/' '#define WF_DL_MAX         1'
 mut M70_p01_norows      web_waterfall.c       's/if (want >= 1 \&\& want < rows) rows = want;/(void)want;/' 'rows = want;'
+# #MX-3..#MX-12 (1.2.31)
+mut M102_mx3_cpuauto     ../web/system.html    's/,{mn:0,mx:100});/);/' '{mn:0,mx:100}'
+mut M103_mx4_nohint      ../web/index.html     's/acqSince=(acqHint===false)?now-6000:now;/acqSince=now;/' 'acqSince=(acqHint===false)'
+mut M104_mx6_bigstatus   ../web/index.html     's/data-i18n="status.connecting" style="font-size:11.5px;/data-i18n="status.connecting" style="/' 'style="font-size:11.5px;'
+mut M105_mx7_nodays      ../web/index.html     's/(dd>0?dd+tr("t.d")+" ":"")//' 'dd+tr("t.d")'
+mut M106_mx8_nosma       ../web/index.html     's/var sma=smaCps(d.time,d.total);/var sma=null;/' 'var sma=smaCps('
+mut M107_mx9_cursor      ../web/index.html     's/var bw=PW\/visN(N);/var bw=PW\/N;/' 'var bw=PW/visN(N);'
+mut M108_mx10_nopow      ../web/index.html     's/Math.pow(v\/mx,1\/Math.E)/(v\/mx)/' 'Math.pow(v/mx,1/Math.E)'
+mut M109_mx11_lastch     ../web/index.html     's/var NM=(NV>=N)?N-1:NV;/var NM=NV;/' 'var NM=(NV>=N)?N-1:NV;'
+mut M110_mx12_notemp     monitor.c             's/, (uint16_t)dur, t_dc);/, (uint16_t)dur, 0);/' '(uint16_t)dur, t_dc);'
+mut M111_mx12_sign       web_server.c          's/smp\[i\].t_dc < 0 ? "-" : ""/""/' 't_dc < 0 ? "-" : ""'
+mut M112_mx12_pagetemp   ../web/monitor.html   's/,pend\[k\]\[3\]);/);/' 'pend[k][3]);'
+mut M113_mx12_csv        ../web/monitor.html   's/"rel_err_pct","temp_c"\]/"rel_err_pct"]/' '"rel_err_pct","temp_c"]'
+# 1.2.31: новая сессия платы после Сброса
+mut MS1_s_reset_open   spectrum.c            '/if (session_reset_opens(s_spectrum.valid/d' 'session_reset_opens('
+mut MS2_s_snap_guard   spectrum.c            '/if (!session_snap_current(s_sess_req, expect_req))/d' 'session_snap_current('
+mut MS3_s_no_bump      main.c                's/session_apply_bump(&ss, req_now, boot_config_bump_session(ss.sess));/(void)req_now;/' 'session_apply_bump('
+mut MS4_s_seen_boot    main.c                '/ss.seen_req = spectrum_session_req();/d' 'ss.seen_req = spectrum_session_req();'
+mut MS5_s_expect_req   main.c                's/backup_cfg.backup_keep, ss.seen_req);/backup_cfg.backup_keep, 0);/' 'backup_cfg.backup_keep, ss.seen_req);'
+mut MS6_s_wf_ref_cache spectrogram.c         's/h.boot_session = boot_config_get_session();/h.boot_session = boot_config_get_boot_session();/' 'h.boot_session = boot_config_get_session();'
+mut MS7_s_boot_count   web_server.c          's/"boot_count", boot_config_get_boot_session()/"boot_count", boot_config_get_session()/' '"boot_count"'
+mut MS8_s_status_sess  web_server.c          '/"session", boot_config_get_session());/d' '"session", boot_config_get_session()'
+# 1.2.31: импорт фона + дефект «любой POST /api/saved/* удаляет запись» (MI1 — именно он; MI2/MI19 — импорт под /api/saved/*)
+mut MI1_del_atoi       web_server.c         's/int idx = saved_delete_index(req->uri);/int idx = parse_saved_index(req->uri);/' 'saved_delete_index(req->uri)'
+mut MI2_route_saved    web_server.c         's#{"/api/import", #{"/api/saved/import", #' '"/api/import"'
+mut MI3_route_handler  web_server.c         's/HTTP_POST, handle_import,/HTTP_POST, handle_save,/' 'HTTP_POST, handle_import,'
+mut MI4_size           web_server.c         's/req->content_len != SPEC_IMPORT_SIZE/req->content_len > SPEC_IMPORT_SIZE/' 'content_len != SPEC_IMPORT_SIZE'
+mut MI5_sync           web_server.c         's/return web_async_run(req, handle_import_job);/return handle_import_job(req);/' 'web_async_run(req, handle_import_job)'
+mut MI6_buf_internal   web_server.c         's/heap_caps_malloc(SPEC_IMPORT_SIZE, MALLOC_CAP_SPIRAM)/malloc(SPEC_IMPORT_SIZE)/' 'heap_caps_malloc(SPEC_IMPORT_SIZE'
+mut MI7_sp_internal    web_server.c         's/heap_caps_malloc(sizeof(\*sp), MALLOC_CAP_SPIRAM)/malloc(sizeof(*sp))/' 'heap_caps_malloc(sizeof(*sp)'
+mut MI8_budget         web_server.c         's/!ota_timeout_budget_exceeded(++streak, OTA_MAX_CONSECUTIVE_TIMEOUTS)/1/' 'ota_timeout_budget_exceeded(++streak'
+mut MI9_no_decode      web_server.c         's/imp_err_t e = rx ? spectrum_import_decode(b, SPEC_IMPORT_SIZE, sp) : IMP_BAD_SIZE;/imp_err_t e = IMP_OK;/' 'spectrum_import_decode(b'
+mut MI10_no_gate       web_server.c         '/if (!http_io_gate_enter_wait_or_503(req, SAVED_FLASH_GATE_WAIT_MS)) { free(sp); return ESP_OK; }/d' 'http_io_gate_enter_wait_or_503(req, SAVED_FLASH_GATE_WAIT_MS)) { free(sp)'
+mut MI11_no_write      web_server.c         's/int idx = spectrum_import_to_flash(sp);/int idx = 0;/' 'spectrum_import_to_flash(sp)'
+mut MI12_no_csrf       web_server.c         '/^static esp_err_t handle_import(httpd_req_t \*req)/,/^}/{/csrf_check(req)/d}' 'handle_import without csrf_check'
+mut MI13_json_saved_at web_server.c         's/,\\"saved_at\\":%ld",/",/' 'saved_at\":%ld'
+mut MI14_list_imp      web_server.c         's/memcmp(tag, "IMP:", 4) ? "" : ",\\"imp\\":true"/""/' 'memcmp(tag, "IMP:", 4)'
+mut MI15_slot_dup      spectrum.c           's/int idx = spec_find_free_slot(path, sizeof(path));   \/\/ 1.2.31/int idx = 0;   \/\/ 1.2.31/' 'spec_find_free_slot'
+mut MI16_no_flash_lock spectrum.c           '/if (!flash_quiet_writer_lock(flash_quiet_writer_lock_ticks())) return -5;/d' 'return -5;'
+mut MI17_tmp_name      spectrum.c           's#SPEC_DIR "/import.tmp"#SPEC_DIR "/spec_import.bin"#' '/import.tmp'
+mut MI18_own_counter   web_waterfall.c      's/return wf_dl_async(req, h, &s_dl_active, WF_DL_MAX);/static volatile int s_own; return wf_dl_async(req, h, \&s_own, WF_DL_MAX);/' 'return wf_dl_async(req, h, &s_dl_active'
+mut MI19_page_post     ../web/saved.html    's#post("/api/import"#post("/api/saved/import"#' 'post("/api/import"'
+mut MI20_page_btn      ../web/saved.html    's/getElementById("btn-imp").onclick=/getElementById("btn-imp").onmouseover=/' 'btn-imp'
+mut MI21_page_crc      ../web/saved.html    's/impCrc(u8,128,buf.byteLength,impCrc(u8,0,124,0))/0/' 'dv.setUint32(124,impCrc'
+mut MI22_page_tag      ../web/saved.html    's/(s.imp?/(s.imx?/' "(s.imp?'<span"
+mut MI23_ovl_raw       ../web/index.html    's/var ob=ovlView();/var ob=overlayBins;/' 'var ob=ovlView();'
+mut MI24_ovl_no_rebin  ../web/index.html    's/ovlCache=rb?rebinByEnergy(overlayBins,overlayCal,calib):overlayBins;/ovlCache=overlayBins;/' 'rebinByEnergy(overlayBins'
+mut MI25_ovl_no_cal    ../web/index.html    's/overlayCal=(r.calib_set!==false&&calibArraySet(r.calib))?r.calib:null;/overlayCal=null;/' 'overlayCal=(r.calib_set'
+mut MI26_idx_tag       ../web/index.html    's/(s.imp?/(s.imx?/' "(s.imp?' <span"
+# разбор 1.2.31
+mut M115_serial_page     ../web/saved.html     's/|\["[^]]*\]\/g,"?")\.substring/\/g,"?").substring/' '["\\]/g,"?")'
+mut M114_zoom_visn      ../web/index.html     's/PW\*visN(N)); if(ch<0||ch>=N)return null;/PW*N); if(ch<0||ch>=N)return null;/' 'PW*visN(N)); if(ch<0||ch>=N)return null;'
 exit $RC

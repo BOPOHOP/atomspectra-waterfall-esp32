@@ -33,7 +33,15 @@ need spectrogram.c 1 'if (dr.epoch != s_wf_epoch)'
 need spectrogram.c 1 'bool fin = (i >= 0 && s_seg_reg[i].finalized);'
 # #AUD-DIAG-1 R1/R2: причина сброса, номер загрузки и SHA ELF в /api/status
 need web_server.c  1 'cJSON_AddStringToObject(root, "reset_reason", reset_reason_str(rr));'
-need web_server.c  1 'cJSON_AddNumberToObject(root, "boot_count", boot_config_get_session());'
+need web_server.c  1 'cJSON_AddNumberToObject(root, "boot_count", boot_config_get_boot_session());'
+# 1.2.31: новая сессия платы после Сброса непустого спектра
+need web_server.c  1 'cJSON_AddNumberToObject(root, "session", boot_config_get_session());'
+need spectrum.c    1 'if (session_reset_opens(s_spectrum.valid, s_spectrum.total_time_sec)) s_sess_req++;'
+need spectrum.c    1 'if (!session_snap_current(s_sess_req, expect_req))'
+need main.c        1 'session_apply_bump(&ss, req_now, boot_config_bump_session(ss.sess));'
+need main.c        1 'ss.seen_req = spectrum_session_req();'
+need main.c        1 'backup_cfg.backup_keep, ss.seen_req);'
+need spectrogram.c 1 'h.boot_session = boot_config_get_session();'   # I2: живой NVS, не кеш загрузки
 need web_server.c  1 'cJSON_AddStringToObject(root, "elf_sha", elf_sha);'
 # #AUD-F01 (класс P-016): каждый вызов esp_restart() (*.c/*.h, все подкаталоги, в любом месте строки) —
 # среди 3 предыдущих строк КОДА (комментарии и пустые не в счёт) есть spectrogram_prepare_reboot();
@@ -113,9 +121,11 @@ dk=$(awk '{c=$0; sub(/\r$/,"",c); sub(/^[ \t]+/,"",c)}
 [ "$dk" = ok ] || { echo "WIRING FAIL spectrogram.c: Dekker barrier around s_wf_busy missing ($dk)"; RC=1; }
 # P-03 (Codeaudit): журнал главной страницы существует и показывается (в копии main/ без web/ — пропуск)
 if [ -f ../web/index.html ]; then
-    need ../web/index.html 1 '<pre id="log" style="display:none;'
-    need ../web/index.html 1 'function lg(m,at){if(!logEl)return;logEl.style.display="";'
-    need ../web/index.html 1 '.row + .row, #log + .row{'                     # pass2 C: pre#log рвал .row + .row
+    # #59/#60 (1.2.30): журнал обмена с прибором — свёрнутая секция под калибровкой, с сохранением в файл
+    need ../web/index.html 1 '<pre id="log" style="margin:0 0 8px;'
+    need ../web/index.html 1 'id="log-body" style="display:none;'
+    need ../web/index.html 1 'onclick="saveLog()"'
+    need ../web/index.html 1 'function lg(m,at){if(!logEl)return;var a='
     # S-01 (1.2.30): страницы шлют CSRF-токен на тяжёлых GET
     need ../web/service.html   2 'await gget("/api/settings/backup");'
     need ../web/system.html    1 'await gget("/api/ota/github/check")'
@@ -153,7 +163,11 @@ need web_waterfall.c 1 '    reg(server, "/api/waterfall/clear",  HTTP_POST, h_cl
 need web_waterfall.c 1 '    reg(server, "/api/waterfall/segment/delete", HTTP_POST, h_segdel_async);'
 need web_waterfall.c 3 '&s_ctl_active, WF_CTL_MAX); }'
 # WP10 (1.2.30): P3-7 — сначала обрезка первой строки, потом счётчик «(+N)»; P3-8 — отказ загрузки offload виден; Старт/Стоп показывают не-200
-need ../web/index.html 1 'if(ls.length>3){var h0=ls[0];if(h0.length>100)h0=h0.slice(0,100)+"…";t=h0+"  … (+"+(ls.length-1)+")"}else if(t.length>120)t=t.slice(0,120)+"…";'
+need ../web/index.html 1 '.replace(/\n/g," ⏎ ");'   # журнал обмена: полный текст ответа (без обрезки), для сохранения в файл
+need ../web/index.html 1 'a.download="atomspectra-exchange-"'
+need ../web/index.html 1 'onclick="clearLog()"'
+need ../web/index.html 1 'document.getElementById("log-head").onclick=function(){'   # ровно один обработчик (дубль был в первой версии)
+need ../web/index.html 1 'new Blob(["# "+d.toLocaleString()+"\n"+logEl.textContent]'
 need ../web/waterfall.html 2 ' }).catch(function(){oflSetMsg(t("ofl.err"),"err");});'
 need ../web/waterfall.html 1 'if(!r.ok)lg("start: HTTP "+r.status);'
 need ../web/waterfall.html 1 'if(!r.ok)lg("stop: HTTP "+r.status);'
@@ -206,5 +220,55 @@ rt=$(awk '/^    if \(cmd_is_device_reset\(cmd0\)\) \(void\)spectrogram_flush_tai
 f09=$(awk 'match($0,/char \*[A-Za-z_]+ = cJSON_PrintUnformatted\(/){v=substr($0,RSTART+6,RLENGTH-6); sub(/ =.*/,"",v); k=3; want=FILENAME":"FNR; next}
   k>0 { if (index($0,"!" v) || index($0, v " ?")) k=0; else if (--k==0) print want }' ./*.c)
 [ -z "$f09" ] || { echo "WIRING FAIL cJSON_PrintUnformatted without NULL check: $f09"; RC=1; }
+# #MX-3..#MX-12 (1.2.31): замечания пользователя по странице спектра, «Системе» и «Мониторингу»
+need ../web/system.html  1 "spark(\"cpuc\",cpu,'#f0c45a',{mn:0,mx:100});"              # MX-3: CPU прибора в шкале 0–100 %
+need ../web/index.html   1 'acqSince=(acqHint===false)?now-6000:now;'                     # MX-4: начальное состояние из acq_intent
+need ../web/index.html   0 '<span class="ac">CPS <span>'                                   # MX-5: CPS не дублируется в строке статуса
+need ../web/index.html   1 '<div class="status" id="status" data-i18n="status.connecting" style="font-size:11.5px;'   # MX-6
+need ../web/index.html   2 '(dd>0?dd+tr("t.d")+" ":"")'                                   # MX-7: дни в обоих форматах времени
+need ../web/index.html   1 'var sma=smaCps(d.time,d.total);'                               # MX-8
+need ../web/monitor.html 1 'aswf-sma-win"),e=document.getElementById("smaWin")'           # MX-8: окно SMA помнится
+need ../web/index.html   1 'function visN(N){if(!xRange||!isKev||!calib)return N;'          # MX-9
+need ../web/index.html   1 'var bw=PW/visN(N);'                                            # MX-9: курсор в том же масштабе
+need ../web/index.html   1 'Math.pow(v/mx,1/Math.E)'                                       # MX-10
+need ../web/index.html   1 'var NM=(NV>=N)?N-1:NV;'                                         # MX-11: канал переполнения вне масштаба
+need monitor.c           1 'ring_push(tsec, counts - prev_counts, (uint16_t)dur, t_dc);'   # MX-12
+need web_server.c        1 'smp[i].t_dc < 0 ? "-" : ""'                                     # MX-12: знак при -0.x
+need ../web/monitor.html 1 'pushBase(pend[k][0],pend[k][1],pend[k][2],pend[k][3]);'         # MX-12
+need ../web/monitor.html 1 '"rel_err_pct","temp_c"]'                                       # MX-12: колонка в CSV
+# 1.2.31: импорт фона в «Сохранённые» (design-1.2.31-import.md) + дефект «любой POST /api/saved/* удаляет запись»
+need web_server.c 1 '#include "spectrum_import_plan.h"'
+line web_server.c 1 'int idx = saved_delete_index(req->uri);'                       # удаление — только /api/saved/<i>/delete, иначе 404
+need web_server.c 1 'HTTP_POST, handle_import,'                                    # маршрут импорта НЕ под /api/saved/* (там POST = удаление)
+need web_server.c 1 '"/api/import"'
+need web_server.c 1 'if (req->content_len != SPEC_IMPORT_SIZE) { import_reply(req, "400 Bad Request", "bad_size"); return ESP_FAIL; }'
+need web_server.c 1 'return web_async_run(req, handle_import_job);'                # асинхронная задача, общий счётчик s_dl_active
+need web_server.c 1 'uint8_t *b = heap_caps_malloc(SPEC_IMPORT_SIZE, MALLOC_CAP_SPIRAM);'      # буферы — в PSRAM, не во внутренней RAM
+need web_server.c 1 'spectrum_data_t *sp = heap_caps_malloc(sizeof(*sp), MALLOC_CAP_SPIRAM);'
+need web_server.c 1 'if (r == HTTPD_SOCK_ERR_TIMEOUT && !ota_timeout_budget_exceeded(++streak, OTA_MAX_CONSECUTIVE_TIMEOUTS)) continue;'
+need web_server.c 1 'imp_err_t e = rx ? spectrum_import_decode(b, SPEC_IMPORT_SIZE, sp) : IMP_BAD_SIZE;'
+need web_server.c 1 'if (!http_io_gate_enter_wait_or_503(req, SAVED_FLASH_GATE_WAIT_MS)) { free(sp); return ESP_OK; }'   # запись под воротами flash
+need web_server.c 1 'int idx = spectrum_import_to_flash(sp);'
+imp=$(awk '{c=$0; sub(/\r$/,"",c)} c ~ /^static esp_err_t handle_import\(httpd_req_t \*req\)/{f=1} f && c ~ /csrf_check\(req\)/{ok=1} f && c == "}"{f=0} END{print ok ? "ok" : "bad"}' web_server.c)
+[ "$imp" = ok ] || { echo "WIRING FAIL web_server.c: handle_import without csrf_check ($imp)"; RC=1; }
+need web_server.c 1 '",\"calib_set\":%s,\"saved_at\":%ld",'                          # дата набора в JSON записи (экспорт → импорт на другой плате)
+need web_server.c 1 'memcmp(tag, "IMP:", 4) ? "" : ",\"imp\":true"'                # метка импорта в /api/list
+need spectrum.c   2 'int idx = spec_find_free_slot(path, sizeof(path));'            # «Сохранить» и импорт — один поиск слота
+need spectrum.c   1 'if (!flash_quiet_writer_lock(flash_quiet_writer_lock_ticks())) return -5;'
+need spectrum.c   1 'if (idx >= 0 && !atomic_write_snapshot(SPEC_DIR "/import.tmp", path, sp)) idx = -3;'   # tmp+rename, имя не spec_*
+need web_waterfall.c 1 'return wf_dl_async(req, h, &s_dl_active, WF_DL_MAX);'      # web_async_run: тот же счётчик, максимум одна задача 6144 Б
+need ../web/saved.html 1 'r=await post("/api/import",{headers:{"Content-Type":"application/octet-stream"},body:body});'
+need ../web/saved.html 1 'document.getElementById("btn-imp").onclick=function(){document.getElementById("imp-file").click();};'
+need ../web/saved.html 1 "(s.imp?'<span"                                         # метка «фон, импорт» в списке
+need ../web/saved.html 1 'dv.setUint32(124,impCrc(u8,128,buf.byteLength,impCrc(u8,0,124,0)),true);'
+need ../web/index.html 1 'var ob=ovlView();'                                       # оверлей рисуется по энергетической шкале живого спектра
+need ../web/index.html 1 'ovlKey=k;ovlCache=rb?rebinByEnergy(overlayBins,overlayCal,calib):overlayBins;'
+need ../web/index.html 1 'overlayCal=(r.calib_set!==false&&calibArraySet(r.calib))?r.calib:null;'
+need ../web/index.html 0 'yO=new Array(overlayBins.length)'
+need ../web/index.html 1 "(s.imp?' <span"
+# разбор 1.2.31: подписи увеличенного окна — по видимым каналам; serial импорта без кавычки и обратного слэша
+need ../web/index.html 1 'var ch=Math.floor((cx-PL)/PW*visN(N)); if(ch<0||ch>=N)return null;'
+need ../web/saved.html 1 '.replace(/[^\x20-\x7E]|["\\]/g,"?").substring(0,43);}'
+need spectrum_import_plan.h 1 "b[72 + n] == '\"'"
 [ "$RC" -eq 0 ] && echo "wiring: OK"
 exit $RC

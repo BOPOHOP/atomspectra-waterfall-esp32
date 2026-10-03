@@ -274,11 +274,14 @@ uint32_t spectrum_reset_unconfirmed_count(void);
 // для монитора CPS; НЕ копирует 32 КБ bins (в отличие от spectrum_get_snapshot).
 // resync_seq (может быть NULL) — счётчик переноса опоры У-3/Н-8.
 void spectrum_get_totals(uint32_t *counts, uint32_t *time_sec, uint32_t *resync_seq);
+float spectrum_get_t1(void);   // #MX-12: температура T1 прибора, NaN — нет данных
 // Н-3.3: метка reset.mark на flash и -rst до прибора не дошёл (Сброс без прибора
 // до перезагрузки, спектр после него не сохранён). Вызывать после spectrum_restore_autosave().
 bool spectrum_reset_mark_undelivered(void);
 // Н-Д1: поколение сброса (для досылки -rst) и «тот же сброс ещё не выполнен».
 uint32_t spectrum_reset_gen(void);
+// 1.2.31: счётчик запросов новой сессии платы (Сброс непустого спектра). Читает main-task.
+uint32_t spectrum_session_req(void);
 bool spectrum_reset_still_undelivered(uint32_t pending_gen);
 // Н-Д2: новый сеанс USB (вызывать в задаче разбора при сбросе RX-пути).
 void spectrum_usb_session_bump(void);
@@ -286,6 +289,9 @@ const device_info_t   *spectrum_get_device_info(void);
 int  spectrum_save_to_flash(void);  // >=0 idx; -1 нет валидного спектра; -2 мало места; -3 ошибка FS (#FW-24)
 int  spectrum_load_from_flash(int index, spectrum_data_t *out);
 int  spectrum_delete_from_flash(int index);
+// 1.2.31: импорт проверенного спектра (spectrum_import_decode) в spec_NNNN.bin. Под http_io_gate.
+// >=0 индекс; -2 мало места; -3 ошибка ФС; -4 слоты исчерпаны; -5 писатель flash занят.
+int  spectrum_import_to_flash(const spectrum_data_t *sp);
 
 // issue #52: автоматические резервные снимки в BACKUP_DIR.
 // Записывает текущий спектр как bk_<sess>_<seq>.bin и удаляет старые, чтобы
@@ -295,7 +301,8 @@ int  spectrum_delete_from_flash(int index);
 //   keep  — X из настроек (>0; 0 означает «выключено» и сюда не доходит).
 // 0 при успехе; -1 нет валидного спектра; -2 мало места; -3 ошибка ФС.
 // Ротация выполняется ДО записи и её отказ фатален (иначе каталог растёт молча).
-int  spectrum_backup_save(uint32_t sess, uint32_t seq, int keep);
+// expect_req — spectrum_session_req(), при котором назначен sess; изменился → -5, ничего не записано.
+int  spectrum_backup_save(uint32_t sess, uint32_t seq, int keep, uint32_t expect_req);
 
 // Читает снимок по имени файла ("bk_3_12.bin"). 0 при успехе, -1 иначе.
 int  spectrum_backup_load(const char *name, spectrum_data_t *out);

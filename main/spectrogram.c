@@ -1904,6 +1904,9 @@ static void wf_ref_save(void) {
     wf_ref_hdr_t h = {0};
     h.magic        = WF_REF_MAGIC;
     h.channels     = WF_CHANNELS;
+    /* 1.2.31: ЖИВОЕ значение NVS, не boot_config_get_boot_session(): Сброс между этим
+     * сохранением и esp_restart даёт cur = S+2 -> resync (безопасно); кеш загрузки дал бы
+     * ложный отказ после любого Сброса за загрузку. */
     h.boot_session = boot_config_get_session();
 
     LOCK();
