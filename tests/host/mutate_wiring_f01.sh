@@ -180,4 +180,7 @@ mut MI23_ovl_raw       ../web/index.html    's/var ob=ovlView();/var ob=overlayB
 mut MI24_ovl_no_rebin  ../web/index.html    's/ovlCache=rb?rebinByEnergy(overlayBins,overlayCal,calib):overlayBins;/ovlCache=overlayBins;/' 'rebinByEnergy(overlayBins'
 mut MI25_ovl_no_cal    ../web/index.html    's/overlayCal=(r.calib_set!==false&&calibArraySet(r.calib))?r.calib:null;/overlayCal=null;/' 'overlayCal=(r.calib_set'
 mut MI26_idx_tag       ../web/index.html    's/(s.imp?/(s.imx?/' "(s.imp?' <span"
+# разбор 1.2.31
+mut M115_serial_page     ../web/saved.html     's/|\["[^]]*\]\/g,"?")\.substring/\/g,"?").substring/' '["\\]/g,"?")'
+mut M114_zoom_visn      ../web/index.html     's/PW\*visN(N)); if(ch<0||ch>=N)return null;/PW*N); if(ch<0||ch>=N)return null;/' 'PW*visN(N)); if(ch<0||ch>=N)return null;'
 exit $RC

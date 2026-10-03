@@ -30,6 +30,7 @@ mut I11_prefix       's#"IMP:", 4)#"IMP;", 4)#'                                 
 mut I12_zero_calib   's#(ord >= 0 && !any) ? IMP_BAD_CALIB#0 ? IMP_BAD_CALIB#'                            test_imp_calib
 mut I13_serial_nul   's#if (n == 48) return IMP_BAD_SERIAL;##'                                            test_imp_serial
 mut I14_saved_at     's#(sa <= 0xFFFFFFFFull)#(1)#'                                                       test_imp_30days
+mut I15_serial_quote "s#|| b\[72 + n\] == '\"' || b\[72 + n\] == '\\\\\\\\')#)#"                              test_imp_serial
 # дефект «любой POST /api/saved/* удаляет запись»: разбор пути удаления (handle_saved_delete зовёт saved_delete_index)
 mut D1_no_suffix     's#if (strncmp(p, suf, sizeof(suf) - 1) != 0) return -1;#if (strncmp(p, suf, sizeof(suf) - 1) != 0) return v;#' test_saved_delete_uri
 mut D2_tail          's#if (\*p != .\\0. && \*p != .?.) return -1;##'                                      test_saved_delete_uri

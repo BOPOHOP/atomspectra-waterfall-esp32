@@ -26,4 +26,6 @@ mut R2_no_mono       index.html rebin_test.mjs 's/||!calMono(ca,n)//'           
 mut R3_overflow      index.html rebin_test.mjs 's/ out\[n-1\]+=src\[n-1\];//'                                2
 mut R4_no_same       index.html rebin_test.mjs 's/||calSame(ca,cb))return src/)return src/'                  1
 mut R5_clip_above    index.html rebin_test.mjs 's/out\[ehi<=bmin?0:n-1\]+=v/out[0]+=v/'                      1
+mut baseline_undef   index.html undef_calls_test.mjs   -                                                      0
+mut U1_calibsame     index.html undef_calls_test.mjs   's/!calSame(overlayCal,calib)/!calibSame(overlayCal,calib)/' 1
 exit $RC

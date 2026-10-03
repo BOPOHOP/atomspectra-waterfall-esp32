@@ -416,7 +416,7 @@ function impDetect(txt){
  if(/^Channel\s*,\s*Counts/.test(s))return"csv";
  return null;
 }
-function impSer(s){return String(s||"").replace(/^IMP:/,"").replace(/[^\x20-\x7E]/g,"?").substring(0,43);}
+function impSer(s){return String(s||"").replace(/^IMP:/,"").replace(/[^\x20-\x7E]|["\\]/g,"?").substring(0,43);}   /* кавычка и обратный слэш ломали JSON выдачи записи */
 function impNum(x){var n=Number(x);return isFinite(n)?n:NaN;}
 function impUnxml(s){return s.replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&amp;/g,"&");}
 function impTag(s,re){var m=re.exec(s);return m?m[1]:null;}

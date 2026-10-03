@@ -680,7 +680,7 @@ async function loadOverlay(idx){
 /* 1.2.31: оверлей, приведённый к калибровке живого спектра; пересчёт — только при смене калибровки (ключ), не на каждый кадр. */
 function ovlView(){
  if(!overlayBins)return null;
- var rb=!!(overlayCal&&calib&&!calibSame(overlayCal,calib)),k=rb?JSON.stringify(calib):"";
+ var rb=!!(overlayCal&&calib&&!calSame(overlayCal,calib)),k=rb?JSON.stringify(calib):"";
  if(ovlCache===null||ovlKey!==k){
   ovlKey=k;ovlCache=rb?rebinByEnergy(overlayBins,overlayCal,calib):overlayBins;
   overlayRebinned=rb&&ovlCache!==overlayBins;updateOvlLabel();
@@ -1078,7 +1078,7 @@ window.openZoomOverlay=function(sourcesFn,opts){
     if(typeof lastD==="undefined"||!lastD||!lastD.bins||!lastD.bins.length)return null;
     var cx=frac*1200; if(cx<PL||cx>PR)return null;
     var N=lastD.bins.length;
-    var ch=Math.floor((cx-PL)/PW*N); if(ch<0||ch>=N)return null;
+    var ch=Math.floor((cx-PL)/PW*visN(N)); if(ch<0||ch>=N)return null;   /* #MX-9: подпись в масштабе диапазона X */
     /* #UI-29: cps (отсчёты/время), E (энергия канала), t (время набора) */
     var cnt=lastD.bins[ch];
     var cps=(lastD.time>0)?(cnt/lastD.time):0;

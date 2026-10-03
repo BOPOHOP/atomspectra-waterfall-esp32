@@ -115,6 +115,11 @@ static void test_imp_serial(void)
     CHECK(dec(SPEC_IMPORT_SIZE) == IMP_BAD_SERIAL);
     mk_body(g_body); memset(g_body + 72, 'A', 48); put_crc(g_body);
     CHECK(dec(SPEC_IMPORT_SIZE) == IMP_BAD_SERIAL);
+    // кавычка и обратный слэш ломали бы JSON выдачи записи (serial без экранирования)
+    mk_body(g_body); g_body[72] = '"'; put_crc(g_body);
+    CHECK(dec(SPEC_IMPORT_SIZE) == IMP_BAD_SERIAL);
+    mk_body(g_body); g_body[72] = 'A'; g_body[73] = '\\'; put_crc(g_body);
+    CHECK(dec(SPEC_IMPORT_SIZE) == IMP_BAD_SERIAL);
     mk_body(g_body); memset(g_body + 72, 0, 48); put_crc(g_body);
     CHECK(dec(SPEC_IMPORT_SIZE) == IMP_OK);                  // пустой серийник допустим
 }

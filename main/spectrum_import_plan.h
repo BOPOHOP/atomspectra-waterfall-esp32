@@ -57,7 +57,7 @@ static inline imp_err_t imp_take_calib(const uint8_t *b, spectrum_data_t *o)
 static inline imp_err_t imp_take_serial(const uint8_t *b, spectrum_data_t *o)
 {
     size_t n = 0;
-    while (n < 48 && b[72 + n] != 0) { if (b[72 + n] < 0x20 || b[72 + n] > 0x7E) return IMP_BAD_SERIAL; n++; }
+    while (n < 48 && b[72 + n] != 0) { if (b[72 + n] < 0x20 || b[72 + n] > 0x7E || b[72 + n] == '"' || b[72 + n] == '\\') return IMP_BAD_SERIAL; n++; }
     if (n == 48) return IMP_BAD_SERIAL;
     memset(o->serial_number, 0, sizeof(o->serial_number));
     memcpy(o->serial_number, "IMP:", 4); memcpy(o->serial_number + 4, b + 72, n);

@@ -266,5 +266,9 @@ need ../web/index.html 1 'ovlKey=k;ovlCache=rb?rebinByEnergy(overlayBins,overlay
 need ../web/index.html 1 'overlayCal=(r.calib_set!==false&&calibArraySet(r.calib))?r.calib:null;'
 need ../web/index.html 0 'yO=new Array(overlayBins.length)'
 need ../web/index.html 1 "(s.imp?' <span"
+# разбор 1.2.31: подписи увеличенного окна — по видимым каналам; serial импорта без кавычки и обратного слэша
+need ../web/index.html 1 'var ch=Math.floor((cx-PL)/PW*visN(N)); if(ch<0||ch>=N)return null;'
+need ../web/saved.html 1 '.replace(/[^\x20-\x7E]|["\\]/g,"?").substring(0,43);}'
+need spectrum_import_plan.h 1 "b[72 + n] == '\"'"
 [ "$RC" -eq 0 ] && echo "wiring: OK"
 exit $RC
