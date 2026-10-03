@@ -16,16 +16,19 @@ function fails(name, fn, k) { try { fn(); ok(name, false); } catch (e) { ok(name
 ok("fixture: 8192 bins, sum " + SUM, bins.length === 8192 && bins.reduce((x, y) => x + y, 0) === SUM);
 // Экспорты платы побайтно по форматным строкам web_server.c: render_spectrum_json / _xml / _n42 / _csv (один и тот же спектр).
 const SA = 1790000000, LOST = 5, pad = (n) => String(n).padStart(2, "0");
-function ldt(t) { const d = new Date(t * 1000); return [d.getFullYear(), pad(d.getMonth() + 1), pad(d.getDate()), pad(d.getHours()), pad(d.getMinutes()), pad(d.getSeconds())]; }
+// Плата: localtime_r без TZ = UTC без пояса -> getUTC*. ldl (местное) - файлы BecqMoni и N42 (признака платы в N42 нет, см. saved.html impBoardXml).
+function ldt(t) { const d = new Date(t * 1000); return [d.getUTCFullYear(), pad(d.getUTCMonth() + 1), pad(d.getUTCDate()), pad(d.getUTCHours()), pad(d.getUTCMinutes()), pad(d.getUTCSeconds())]; }
+function ldl(t) { const d = new Date(t * 1000); return [d.getFullYear(), pad(d.getMonth() + 1), pad(d.getDate()), pad(d.getHours()), pad(d.getMinutes()), pad(d.getSeconds())]; }
 const jsonTxt = `{"bins":[${bins.join(",")}],"total":${SUM},"cpu":3,"cps":${Math.floor(SUM / T)},"lost":${LOST},"time":${T},"live":${T}.0,"serial":"SN-123","dead":0,"calib":[${cal.map((c) => c.toPrecision(15)).join(",")}],"calib_set":true,"saved_at":${SA}}`;
-function xmlTxt(name, nch) {
-    const s = ldt(SA - T), e = ldt(SA), f = (x) => `${x[0]}-${x[1]}-${x[2]}T${x[3]}:${x[4]}:${x[5]}`;
-    return `<?xml version="1.0" encoding="utf-8"?>\r\n<ResultDataFile><ResultDataList><ResultData>\r\n<SampleInfo>\r\n<Name>${name}</Name>\r\n</SampleInfo>\r\n<StartTime>${f(s)}</StartTime>\r\n<EndTime>${f(e)}</EndTime>\r\n` +
+const ZG = "00000000-0000-0000-0000-000000000000", RG = "3f2a9c1e-7b44-4d0a-9e51-0c8d2b6a47f3";
+function xmlTxt(name, nch, foreign) {   // foreign: BecqMoni - настоящий Guid и местное время; иначе плата - нулевой Guid и UTC
+    const s = (foreign ? ldl : ldt)(SA - T), e = (foreign ? ldl : ldt)(SA), f = (x) => `${x[0]}-${x[1]}-${x[2]}T${x[3]}:${x[4]}:${x[5]}`;
+    return `<?xml version="1.0" encoding="utf-8"?>\r\n<ResultDataFile><ResultDataList><ResultData>\r\n<SampleInfo>\r\n<Name>${name}</Name>\r\n</SampleInfo>\r\n<DeviceConfigReference><Name>Atom Spectra</Name><Guid>${foreign ? RG : ZG}</Guid></DeviceConfigReference>\r\n<StartTime>${f(s)}</StartTime>\r\n<EndTime>${f(e)}</EndTime>\r\n` +
         `<EnergySpectrum><NumberOfChannels>${nch}</NumberOfChannels><EnergyCalibration><PolynomialOrder>4</PolynomialOrder><Coefficients>${cal.map((c) => `<Coefficient>${c.toPrecision(15)}</Coefficient>`).join("\r\n")}</Coefficients></EnergyCalibration>` +
         `<ValidPulseCount>${SUM}</ValidPulseCount><TotalPulseCount>${SUM + LOST}</TotalPulseCount><MeasurementTime>${T}</MeasurementTime><LiveTime>${T}.0</LiveTime><Spectrum>\r\n` +
         bins.map((v) => `<DataPoint>${v}</DataPoint>\r\n`).join("") + `</Spectrum></EnergySpectrum></ResultData></ResultDataList></ResultDataFile>\r\n`;
 }
-const n42Txt = (() => { const s = ldt(SA - T); return `﻿<?xml version="1.0"?>\r\n<RadInstrumentData xmlns="http://physics.nist.gov/N42/2011/N42">\r\n  <EnergyCalibration id="SpectrumCalibration-0">\r\n    <CoefficientValues>${cal.map((c) => c.toPrecision(15) + " ").join("")}</CoefficientValues>\r\n  </EnergyCalibration>\r\n` +
+const n42Txt = (() => { const s = ldl(SA - T); return `﻿<?xml version="1.0"?>\r\n<RadInstrumentData xmlns="http://physics.nist.gov/N42/2011/N42">\r\n  <EnergyCalibration id="SpectrumCalibration-0">\r\n    <CoefficientValues>${cal.map((c) => c.toPrecision(15) + " ").join("")}</CoefficientValues>\r\n  </EnergyCalibration>\r\n` +
     `  <RadMeasurement id="SpectrumMeasurement-0">\r\n    <StartDateTime>${s[2]}.${s[1]}.${s[0]} ${s[3]}:${s[4]}:${s[5]}</StartDateTime>\r\n    <RealTimeDuration>PT${T}S</RealTimeDuration>\r\n    <Spectrum id="SpectrumData">\r\n      <LiveTimeDuration>PT${T}.0S</LiveTimeDuration>\r\n      <ChannelData compressionCode="None">${bins.map((v) => v + " ").join("")}</ChannelData>\r\n    </Spectrum>\r\n    <GrossCounts><TotalCounts>${SUM + LOST}</TotalCounts></GrossCounts>\r\n  </RadMeasurement>\r\n</RadInstrumentData>`; })();
 const csvTxt = `Channel,Counts (TotalTime=${T}.0s)\r\n` + bins.map((v, i) => `${i},${v}\r\n`).join("");
 const MT = 1700000000000;     // File.lastModified — запасная дата, из файла должна браться дата набора
@@ -36,7 +39,7 @@ for (const f of ["json", "xml", "n42", "csv"]) {
 }
 ok("lost: json/xml/n42 = 5, csv = 0", P.json.lost === LOST && P.xml.lost === LOST && P.n42.lost === LOST && P.csv.lost === 0);
 ok("калибровка: json/xml/n42 5 коэфф., csv нет (+предупреждение)", [P.json, P.xml, P.n42].every((p) => p.calib && p.calib.length === 5 && Math.abs(p.calib[1] - cal[1]) < 1e-12) && P.csv.calib === null && P.csv.warn.includes("imp.warnNoCal"));
-ok("дата конца набора: json/xml/n42 = saved_at, csv = lastModified", P.json.savedAt === SA && P.xml.savedAt === SA && P.n42.savedAt === SA && P.csv.savedAt === MT / 1000);
+ok("дата конца набора: json/n42 = saved_at (xml - отдельно, по признаку источника), csv = lastModified", P.json.savedAt === SA && P.n42.savedAt === SA && P.csv.savedAt === MT / 1000);
 ok("серийник: json/xml = SN-123", P.json.serial === "SN-123" && P.xml.serial === "SN-123");
 ok("серийник IMP: не наращивается при повторном импорте", L.impParse(jsonTxt.replace('"SN-123"', '"IMP:SN-123"'), "a.json", MT).serial === "SN-123");
 // Кодирование ASI1: длина, заголовок, CRC (независимо — node:zlib.crc32), общий вектор с C-реализацией (tests/host).
@@ -66,6 +69,9 @@ ok("калибровка не монотонна: отброшена, импор
 ok("calib_set=false: калибровка не берётся", L.impParse(jb((o) => { o.calib_set = false; }), "x", MT).calib === null);
 ok("total в файле != сумме каналов: предупреждение", L.impParse(jb((o) => { o.total = SUM * 2; }), "x", MT).warn.includes("imp.warnTotal"));
 ok("xml: часы платы не синхронизированы (1970) -> дата из lastModified", L.impParse(xmlTxt("x", 8192).replace(/<EndTime>[^<]*/, "<EndTime>1970-01-01T00:00:10"), "x", MT).savedAt === MT / 1000);
+ok("xml платы (нулевой Guid): EndTime = UTC, не зависит от пояса браузера", P.xml.savedAt === SA);
+const fx2 = L.impParse(xmlTxt("SN-123", 8192, true), "b.xml", MT);
+ok("xml чужой (BecqMoni, настоящий Guid): EndTime = местное время", fx2.savedAt === SA && fx2.bins.length === 8192);
 ok("xml: имя с &amp; и кириллицей -> ASCII", L.impParse(xmlTxt("A&amp;B Ж", 8192), "x", MT).serial === "A&B ?");
 // Реальный N42 водопада (scripts/example-waterfall.n42): много измерений -> отказ; одно измерение (CountedZeroes) -> 8192 канала.
 const wf = readFileSync("scripts/example-waterfall.n42", "utf8");

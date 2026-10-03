@@ -467,6 +467,8 @@ function impLocal(y,mo,d,h,mi,s,utc){
  var t=(utc?Date.UTC(y,mo-1,d,h,mi,s):new Date(y,mo-1,d,h,mi,s).getTime())/1000;
  return t>1577836800?Math.floor(t):0;
 }
+/* XML платы: localtime_r без TZ = UTC без пояса. Признак — нулевой Guid в DeviceConfigReference (web_server.c); BecqMoni пишет настоящий. Иначе время местное. */
+function impBoardXml(txt){return/<DeviceConfigReference>[\s\S]*?<Guid>\s*0{8}-0{4}-0{4}-0{4}-0{12}\s*<\/Guid>/.test(txt);}
 /* XML BecqMoni (/api/saved/<i>/export.xml): число DataPoint обязано совпасть с NumberOfChannels. */
 function impParseXml(txt,mt){
  var pts=txt.match(/<DataPoint>[^<]*<\/DataPoint>/g)||[],b=pts.map(function(x){var v=x.replace(/<[^>]*>/g,"").trim();return/^\d+$/.test(v)?Number(v):NaN;});
@@ -474,7 +476,7 @@ function impParseXml(txt,mt){
  if(nc!==null&&Number(nc)!==b.length)impFail("format",["NumberOfChannels "+nc+" != DataPoint "+b.length]);
  var cf=(txt.match(/<Coefficient>[^<]*<\/Coefficient>/g)||[]).map(function(x){return Number(x.replace(/<[^>]*>/g,"").trim());});
  var v=impNum(impTag(txt,/<ValidPulseCount>\s*(\d+)/)),tp=impNum(impTag(txt,/<TotalPulseCount>\s*(\d+)/));
- var et=/<EndTime>\s*(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)/.exec(txt),sa=et?impLocal(+et[1],+et[2],+et[3],+et[4],+et[5],+et[6],false):0;
+ var et=/<EndTime>\s*(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)/.exec(txt),sa=et?impLocal(+et[1],+et[2],+et[3],+et[4],+et[5],+et[6],impBoardXml(txt)):0;
  var nm=impTag(txt,/<SampleInfo>[\s\S]*?<Name>([^<]*)<\/Name>/);
  return{bins:b,time:impNum(impTag(txt,/<MeasurementTime>\s*([\d.]+)/)),lost:(tp>v)?tp-v:0,calib:cf.length?cf:null,
   savedAt:sa||Math.floor(mt/1000),serial:nm?impUnxml(nm):"",declTotal:v};
