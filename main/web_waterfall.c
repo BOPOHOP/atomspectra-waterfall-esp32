@@ -1337,6 +1337,12 @@ static esp_err_t wf_dl_async(httpd_req_t *req, esp_err_t (*h)(httpd_req_t *), vo
     return ESP_OK;
 }
 
+// 1.2.31: внешняя обёртка на тот же счётчик (объявлена в web_waterfall.h): импорт фона из web_server.c.
+// Синхронный запасной путь wf_dl_async при отказе xTaskCreate для импорта приемлем: 32896 Б по Wi-Fi + запись ≈ одно «Сохранить».
+esp_err_t web_async_run(httpd_req_t *req, esp_err_t (*h)(httpd_req_t *))
+{
+    return wf_dl_async(req, h, &s_dl_active, WF_DL_MAX);
+}
 static esp_err_t h_window_async(httpd_req_t *req)      { return wf_dl_async(req, h_window, &s_dl_active, WF_DL_MAX); }
 static esp_err_t h_export_aswf_async(httpd_req_t *req) { return wf_dl_async(req, h_export_aswf, &s_dl_active, WF_DL_MAX); }
 static esp_err_t h_export_n42_async(httpd_req_t *req)  { return wf_dl_async(req, h_export_n42, &s_dl_active, WF_DL_MAX); }

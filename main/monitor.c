@@ -17,6 +17,7 @@
 #include "atomspectra.h"
 
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 #include <inttypes.h>
 
@@ -34,8 +35,8 @@ static const char *TAG = "monitor";
 // восстанавливает ровно то, что осталось на плате. При 6 ч суточное наблюдение
 // теряло данные от одного случайного F5. Цена: 422 КБ PSRAM вместо 211 из 8 МБ.
 // Не хватит — monitor_init штатно падает в internal-fallback (1 ч), не в отказ.
-#define MON_RING_PSRAM     43200   // 12 ч при 1 Гц: 43200 × 10 Б ≈ 422 КБ PSRAM
-#define MON_RING_INTERNAL   3600   // fallback без PSRAM: 1 ч ≈ 35 КБ internal
+#define MON_RING_PSRAM     43200   // 12 ч при 1 Гц: 43200 × 12 Б ≈ 506 КБ PSRAM (с 1.2.31 — с температурой)
+#define MON_RING_INTERNAL   3600   // fallback без PSRAM: 1 ч ≈ 42 КБ internal
 
 static monitor_sample_t *s_ring;
 static uint32_t s_cap;       // фактическая ёмкость кольца (см. monitor_init)
@@ -49,12 +50,13 @@ static uint32_t s_epoch;     // эпоха серии; растёт при от�
 static SemaphoreHandle_t s_lock;
 static SemaphoreHandle_t s_commit_sig;   // отдаёт spectrum.c на каждом коммите свипа
 
-static void ring_push(uint32_t end_sec, uint32_t dcounts, uint16_t dur)
+static void ring_push(uint32_t end_sec, uint32_t dcounts, uint16_t dur, int16_t t_dc)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s_ring[s_head].end_sec = end_sec;
     s_ring[s_head].counts  = dcounts;
     s_ring[s_head].dur     = dur;
+    s_ring[s_head].t_dc    = t_dc;
     s_head = (s_head + 1) % s_cap;
     if (s_count < s_cap) s_count++;   // при переполнении старые вытесняются, seq растёт дальше
     s_last_seq++;
@@ -146,7 +148,9 @@ static void monitor_task(void *arg)
             prev_counts = counts; prev_time = tsec;
             continue;
         }
-        ring_push(tsec, counts - prev_counts, (uint16_t)dur);
+        float t1 = spectrum_get_t1();
+        int16_t t_dc = (isfinite(t1) && t1 > -100.0f && t1 < 200.0f) ? (int16_t)lroundf(t1 * 10.0f) : MON_T_NONE;
+        ring_push(tsec, counts - prev_counts, (uint16_t)dur, t_dc);
         prev_counts = counts; prev_time = tsec;
     }
 }

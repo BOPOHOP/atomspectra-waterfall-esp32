@@ -125,7 +125,7 @@ canvas{ width:100%; height:auto; display:block; }
 <button class="xu" id="xu-h" onclick="setXUnit('h')" data-i18n="chart.xu.h">ч</button>
 </span>
 <label class="mut" style="font-size:11px;margin-left:auto;display:flex;align-items:center;gap:8px"><span data-i18n="chart.smaWin">Окно SMA, отсчётов</span>
-<input type="number" id="smaWin" min="2" max="200" step="1" value="10" oninput="drawChart()" style="width:64px;background:#0d110c;color:var(--txt);border:1px solid #2a322a;padding:4px 8px;border-radius:6px;font-family:inherit;font-size:12px"></label>
+<input type="number" id="smaWin" min="2" max="200" step="1" value="10" oninput="try{localStorage.setItem('aswf-sma-win',this.value)}catch(e){};drawChart()" style="width:64px;background:#0d110c;color:var(--txt);border:1px solid #2a322a;padding:4px 8px;border-radius:6px;font-family:inherit;font-size:12px"></label>
 </div>
 <canvas id="chart" width="1400" height="300"></canvas>
 </section>
@@ -140,6 +140,7 @@ canvas{ width:100%; height:auto; display:block; }
 <th data-i18n="tbl.counts">Импульсы</th>
 <th data-i18n="tbl.cps">CPS</th>
 <th data-i18n="tbl.rel">δ, %</th>
+<th>T, &deg;C</th>
 </tr></thead>
 <tbody id="tbody"></tbody>
 </table>
@@ -250,6 +251,7 @@ var anchorWall=0, anchorEnd=0;
 // --- Персист (#MON-1: localStorage — НЕ источник истории, только параметры
 // сессии; сама история восстанавливается с платы дотягиванием по seq) ---
 var LS_KEY="aswf-mon-sess";
+(function(){try{var v=localStorage.getItem("aswf-sma-win"),e=document.getElementById("smaWin");if(v&&e)e.value=v}catch(_){}})();   // #MX-8: окно SMA помнится и читается страницей спектра
 function saveState(){
  try{
   localStorage.setItem(LS_KEY,JSON.stringify({r:running,iv:intervalSec(),ss:sessStart,sp:sessStopSeq,ep:boardEpoch,aw:anchorWall,ae:anchorEnd}));
@@ -368,9 +370,10 @@ function handleEpoch(r){
 // (dead-time-корректно): копим подряд идущие сэмплы, пока Σdur < интервала
 // усреднения, затем закрываем. Формулы прежние: cps=ΣN/Σt, σ=√ΣN/Σt (Poisson),
 // δ%=100/√ΣN.
-function pushBase(end,dur,cnt){
- if(!bucket)bucket={devStart:end-dur,devEnd:end,dur:0,counts:0};
+function pushBase(end,dur,cnt,tc){
+ if(!bucket)bucket={devStart:end-dur,devEnd:end,dur:0,counts:0,tS:0,tD:0};
  bucket.dur+=dur; bucket.counts+=cnt; bucket.devEnd=end;
+ if(typeof tc==="number"&&isFinite(tc)){bucket.tS+=tc*dur;bucket.tD+=dur;}   // #MX-12: средняя T1 за ведро (взвешенно по времени)
  if(bucket.dur>=intervalSec())closeBucket();
 }
 function closeBucket(){
@@ -380,7 +383,7 @@ function closeBucket(){
  var sig=Math.sqrt(Math.max(b.counts,0))/b.dur;
  var rel=(b.counts>0)?(100/Math.sqrt(b.counts)):NaN;
  var ts=new Date(anchorWall>0?(anchorWall-(anchorEnd-b.devEnd)*1000):Date.now());
- var smp={ts:ts,devStart:b.devStart,devEnd:b.devEnd,dur:b.dur,counts:b.counts,cps:cps,sig:sig,rel:rel};
+ var smp={ts:ts,devStart:b.devStart,devEnd:b.devEnd,dur:b.dur,counts:b.counts,cps:cps,sig:sig,rel:rel,temp:(b.tD>0?b.tS/b.tD:NaN)};
  samples.push(smp);
  sessCounts+=b.counts; sessDur+=b.dur;
  noteCleared=false;
@@ -429,7 +432,7 @@ async function syncSeries(){
    // сессии якорь сохранён на Стопе (aw/ae в localStorage) — не трогаем.
    anchorEnd=pend[pend.length-1][0]; anchorWall=Date.now();
   }
-  for(var k=0;k<pend.length;k++)pushBase(pend[k][0],pend[k][1],pend[k][2]);
+  for(var k=0;k<pend.length;k++)pushBase(pend[k][0],pend[k][1],pend[k][2],pend[k][3]);
   if(frozen)bucket=null;   // как Стоп: недобранное ведро отбрасываем
   renderAggregates(); drawChart(); renderStatus(); saveState();
  }
@@ -439,7 +442,7 @@ async function syncSeries(){
 function appendRow(s){
  var tb=document.getElementById("tbody");
  var tr=document.createElement("tr");
- tr.innerHTML="<td>"+hms(s.ts)+"</td><td>"+s.dur+"</td><td>"+s.counts.toLocaleString("ru-RU")+"</td><td>"+fmtCps(s.cps)+"</td><td>"+(isFinite(s.rel)?s.rel.toFixed(2):"—")+"</td>";
+ tr.innerHTML="<td>"+hms(s.ts)+"</td><td>"+s.dur+"</td><td>"+s.counts.toLocaleString("ru-RU")+"</td><td>"+fmtCps(s.cps)+"</td><td>"+(isFinite(s.rel)?s.rel.toFixed(2):"—")+"</td><td>"+(isFinite(s.temp)?s.temp.toFixed(1):"—")+"</td>";
  tb.insertBefore(tr,tb.firstChild); // новые сверху
  while(tb.children.length>500) tb.removeChild(tb.lastChild);
 }
@@ -612,12 +615,13 @@ function exportCsv(){
  var lines=[];
  lines.push("# AtomSpectra Gateway — CPS monitoring");
  lines.push("# exported "+isoLocal(new Date())+"  tz "+tzLabel()+"  host "+location.hostname);
- lines.push(["timestamp","dev_time_start_s","dev_time_end_s","duration_s","counts","mean_cps","sigma_cps","rel_err_pct"].join(sep));
+ lines.push(["timestamp","dev_time_start_s","dev_time_end_s","duration_s","counts","mean_cps","sigma_cps","rel_err_pct","temp_c"].join(sep));
  for(var i=0;i<samples.length;i++){ var s=samples[i];
   lines.push([isoLocal(s.ts),s.devStart,s.devEnd,s.dur,s.counts,
    (isFinite(s.cps)?s.cps.toFixed(6):""),
    (isFinite(s.sig)?s.sig.toFixed(6):""),
-   (isFinite(s.rel)?s.rel.toFixed(4):"")].join(sep)); }
+   (isFinite(s.rel)?s.rel.toFixed(4):""),
+   (isFinite(s.temp)?s.temp.toFixed(1):"")].join(sep)); }
  // сводка сессии
  if(sessDur>0){ var g=sessCounts/sessDur, gs=Math.sqrt(Math.max(sessCounts,0))/sessDur, gr=sessCounts>0?100/Math.sqrt(sessCounts):NaN;
   lines.push("# session_mean_cps"+sep+g.toFixed(6)+sep+"sigma"+sep+gs.toFixed(6)+sep+"rel_pct"+sep+(isFinite(gr)?gr.toFixed(4):"")); }

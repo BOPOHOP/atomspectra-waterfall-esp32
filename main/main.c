@@ -1,6 +1,7 @@
 ﻿#include "atomspectra.h"
 #include "spectrogram.h"
 #include "boot_config.h"
+#include "session_plan.h"   // 1.2.31: новая сессия платы после Сброса спектра
 #include "wf_offload.h"   // #REC-11-A2: автономная выгрузка сегментов водопада
 #include "monitor.h"      // #MON-1: серия CPS-мониторинга на плате
 #include "ota_github_client.h"   // AWF-5
@@ -98,14 +99,14 @@ void app_main(void)
     // смешиваются со снятыми до него. Инкремент отложен до spectrum_init()
     // (нужен смонтированный LittleFS, чтобы узнать максимум по уже лежащим
     // снимкам) — см. ниже, после spectrum_init().
-    uint32_t boot_session = 0;
+    sess_sched_t ss = {0};   // 1.2.31: номер сессии и планировщик снимков (session_plan.h)
 
     flash_quiet_init();
     spectrum_init();
     // issue #52: теперь LittleFS смонтирован — можно взять максимум по снимкам и
     // не дать счётчику сессий откатиться назад после стирания NVS.
-    boot_session = boot_config_bump_session(spectrum_backup_max_session());
-    if (boot_session == 0)
+    ss.sess = boot_config_bump_session(spectrum_backup_max_session());
+    if (ss.sess == 0)
         ESP_LOGE(TAG, "backups disabled this boot: no usable session number");
     spectrum_restore_autosave();
     spectrum_restore_base();   // AWF-3: база — после D, до clr_spec (тот сам чистит обе)
@@ -123,6 +124,7 @@ void app_main(void)
         ESP_LOGW(TAG, "%s: accumulated spectrum cleared on boot",
                  bc.clear_spectrum ? "FW-3" : "reset.mark");
     }
+    ss.seen_req = spectrum_session_req();   // очистка при загрузке уже покрыта бампом загрузки
     // #FW-50: PSRAM log ring — after spectrum_init, before spectrogram (reserve before WF).
     debug_log_ring_boot();
     spectrogram_init();
@@ -188,10 +190,8 @@ void app_main(void)
     // блокирующее, длительность итерации плавает). Счётчик снимков живёт в RAM:
     // после перезагрузки нумерация начинается заново, но имя файла несёт ещё и
     // номер сессии — коллизии нет.
-    uint32_t backup_seq = 0;
+    // seq, fail_streak и due_us (0 = срок ещё не назначен) живут в ss (session_plan.h).
     int      backup_cfg_tick = 6;        // 6 = перечитать настройки на первом же тике
-    int      backup_fail_streak = 0;
-    int64_t  backup_due_us = 0;          // 0 = срок ещё не назначен
     boot_config_t backup_cfg = bc;       // стартуем от прочитанного на boot
     // AWF-2a (#2): проверка возврата из fallback Field AP — раз в 15 тиков
     // (10с*15=150с, ~2.5 мин); функция сама no-op вне Field AP/при клиентах.
@@ -355,6 +355,15 @@ void app_main(void)
         // SPEC_LOCK только на снапшот; flash-запись — вне лока и вне CDC/httpd.
         spectrum_save_calibration();
 
+        // 1.2.31: Сброс спектра -> новая сессия; NVS пишет только эта задача, <=1 записи за тик.
+        uint32_t req_now = spectrum_session_req();
+        if (session_need_bump(&ss, req_now)) {
+            uint32_t prev = ss.sess;
+            session_apply_bump(&ss, req_now, boot_config_bump_session(ss.sess));
+            if (ss.sess != prev) ESP_LOGW(TAG, "spectrum reset: board session #%" PRIu32, ss.sess);
+            else ESP_LOGE(TAG, "spectrum reset: session bump failed, staying #%" PRIu32, ss.sess);
+        }
+
         // issue #52: резервный снимок раз в bk_h часов.
         //
         // Период отсчитывается по ЧАСАМ (esp_timer_get_time), а не по числу
@@ -366,54 +375,56 @@ void app_main(void)
         // обращений к NVS (открытие раздела флеша + мьютекс, общий с Wi-Fi), а
         // менять их могут только через Web UI. Раз в минуту достаточно, чтобы
         // правка в UI применялась без перезагрузки.
-        if (boot_session != 0 && ++backup_cfg_tick >= 6) {
+        if (ss.sess != 0 && ++backup_cfg_tick >= 6) {
             backup_cfg_tick = 0;
             boot_config_load(&backup_cfg);
         }
-        if (boot_session != 0 && backup_cfg.backup_keep > 0) {
+        if (ss.sess != 0 && backup_cfg.backup_keep > 0) {
             const int64_t now_us = esp_timer_get_time();
             const int64_t period_us = backup_cfg.backup_test_minutes
                     ? (int64_t)backup_cfg.backup_hours * 60 * 1000000LL      // минуты (стенд)
                     : (int64_t)backup_cfg.backup_hours * 3600 * 1000000LL;   // часы
-            if (backup_due_us == 0)
-                backup_due_us = now_us + period_us;   // первый снимок — через период
-            if (now_us >= backup_due_us) {
+            if (ss.due_us == 0)
+                ss.due_us = now_us + period_us;   // первый снимок — через период
+            if (now_us >= ss.due_us) {
                 const spectrum_data_t *bsp = spectrum_get_current();
                 if (!usb_host_cdc_is_connected()) {
                     // Прибор отключён: спектр восстановлен из current.bin и БОЛЬШЕ НЕ
                     // МЕНЯЕТСЯ. Снимки были бы побайтовыми копиями и вытеснили бы
                     // ротацией те, ради которых фича и делается. Ждём следующий период.
-                    backup_due_us = now_us + period_us;
+                    ss.due_us = now_us + period_us;
                     ESP_LOGI(TAG, "backup: skipped, analyzer not connected");
                 } else if (!bsp->valid || bsp->total_time_sec == 0) {
-                    backup_due_us = now_us + period_us;
+                    ss.due_us = now_us + period_us;
                     ESP_LOGI(TAG, "backup: skipped, no valid spectrum yet");
                 } else if (http_io_gate_try_enter()) {
-                    int rc = spectrum_backup_save(boot_session, backup_seq + 1,
-                                                  backup_cfg.backup_keep);
+                    int rc = spectrum_backup_save(ss.sess, ss.seq + 1,
+                                                  backup_cfg.backup_keep, ss.seen_req);
                     http_io_gate_leave();
                     if (rc == 0) {
-                        backup_seq++;
-                        backup_fail_streak = 0;
-                        backup_due_us = now_us + period_us;
-                    } else if (++backup_fail_streak >= 5) {
+                        ss.seq++;
+                        ss.fail_streak = 0;
+                        ss.due_us = now_us + period_us;
+                    } else if (rc == -5) {
+                        ;   // Сброс между решением и снимком: следующий тик откроет сессию, срок не трогаем
+                    } else if (++ss.fail_streak >= 5) {
                         // Пять отказов подряд — причина устойчивая (раздел полон,
                         // сломана ФС). Ждём целый период вместо попытки раз в 10 с:
                         // каждая стоит обхода каталога и строки в журнале.
-                        backup_fail_streak = 0;
-                        backup_due_us = now_us + period_us;
+                        ss.fail_streak = 0;
+                        ss.due_us = now_us + period_us;
                         ESP_LOGE(TAG, "backup: save failed rc=%d 5x in a row — waiting full period",
                                  rc);
                     } else {
                         ESP_LOGW(TAG, "backup: save failed rc=%d (%d in a row), retry next tick",
-                                 rc, backup_fail_streak);
+                                 rc, ss.fail_streak);
                     }
                 }
                 // Гейт занят — ничего не меняем: срок остаётся просроченным,
                 // на следующем тике попробуем снова.
             }
         } else if (backup_cfg.backup_keep == 0) {
-            backup_due_us = 0;      // выключено — период начнём заново при включении
+            ss.due_us = 0;      // выключено — период начнём заново при включении
         }
     }
 }

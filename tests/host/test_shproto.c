@@ -45,6 +45,7 @@ void test_http_activity_quiet_model(void);
 // AWF-2a финал: семантика missing-key boot-флага (main/boot_flag_plan.h).
 void test_boot_flag_plan(void);
 void test_wf_ref_plan(void);   // #AUD-DUP1
+void test_session_plan(void);  // 1.2.31
 void test_wf_rst_keep(void);   // #AUD-RST
 void test_wf_tail_plan(void);  // #RST-TAIL
 void test_ota_gh_check_state(void);  // LK-07
@@ -60,6 +61,7 @@ void ota_busy_suite(void);
 void ota_gh_decision_suite(void);
 void ota_gh_redirect_suite(void);
 void ota_timeout_budget_suite(void);
+void spectrum_import_plan_suite(void);
 void ota_gh_dl_retry_suite(void);
 // #AWF-12: предикаты авто-считывания калибровки (main/calib_autoread.h).
 void calib_autoread_suite(void);
@@ -271,6 +273,7 @@ int main(void)
     test_http_activity_quiet_model();
     test_boot_flag_plan();
     test_wf_ref_plan();
+    test_session_plan();
     test_wf_rst_keep();
     test_wf_tail_plan();
     test_ota_gh_check_state();
@@ -285,6 +288,7 @@ int main(void)
     ota_gh_decision_suite();
     ota_gh_redirect_suite();
     ota_timeout_budget_suite();
+    spectrum_import_plan_suite();
     ota_gh_dl_retry_suite();
     calib_autoread_suite();
     text_accum_predicates_suite();

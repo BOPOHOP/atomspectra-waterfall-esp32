@@ -7,6 +7,7 @@
 #include "spectrum_hist_stage.h"
 #include "http_io_gate.h"
 #include "backup_plan.h"   // issue #52: разбор имени снимка и план ротации
+#include "session_plan.h"   // 1.2.31: Сброс → запрос новой сессии
 #include "spectrum_restore_plan.h"  // AWF-1: выбор источника восстановления
 #include "spectrum_base_plan.h"     // AWF-3: сброс прибора и слияние база+прибор
 #include "ota_busy.h"   // sweep-B задача 2: не стартовать периодический автосейв во время OTA
@@ -131,6 +132,7 @@ static uint32_t  s_base_total_counts;
 static uint32_t  s_dev_resets;                    // #7: счётчик сворачиваний с боота шлюза
 static spectrum_hist_stage_t s_hist_stage;        // непрерывность свипа (idle = UINT32_MAX)
 static uint32_t  s_reset_gen;                     // AUD-ASW126 #1/#12: httpd Reset
+static uint32_t  s_sess_req;   // 1.2.31: запросы новой сессии (Сброс непустого спектра), под SPEC_LOCK
 static uint32_t  s_stage_reset_gen;               // снимок gen на offset==0 (CDC)
 // AWF-4: момент spectrum_reset() (esp_timer, мкс) — гейт правдоподобности STAT
 // на первом коммите после Reset (spectrum_reset_stat_is_plausible).
@@ -802,6 +804,7 @@ static bool reset_mark_create(char state)
 static void reset_state_zero(void)
 {
     SPEC_LOCK();
+    if (session_reset_opens(s_spectrum.valid, s_spectrum.total_time_sec)) s_sess_req++;
     s_reset_gen++;
     s_reset_at_us = esp_timer_get_time();   // AWF-4: t0 для гейта правдоподобности STAT
     s_reset_gate.armed = true;              // issue #58
@@ -915,6 +918,12 @@ uint32_t spectrum_reset_gen(void)
     return g;
 }
 
+uint32_t spectrum_session_req(void)
+{
+    SPEC_LOCK(); uint32_t r = s_sess_req; SPEC_UNLOCK();
+    return r;
+}
+
 bool spectrum_reset_still_undelivered(uint32_t pending_gen)
 {
     SPEC_LOCK();
@@ -943,10 +952,32 @@ void spectrum_get_totals(uint32_t *counts, uint32_t *time_sec, uint32_t *resync_
     SPEC_UNLOCK();
 }
 
+// #MX-12 (1.2.31): температура T1 прибора для кольца мониторинга (NaN — нет данных)
+float spectrum_get_t1(void)
+{
+    SPEC_LOCK();
+    float t = s_spectrum.temperature[0];
+    SPEC_UNLOCK();
+    return t;
+}
+
 bool spectrum_reset_mark_undelivered(void)
 {
     MARK_LOCK(); bool p = s_mark_present && s_mark_state == MARK_PENDING; MARK_UNLOCK();
     return p;
+}
+
+// 1.2.31: первая свободная «дырка» 0..9998 → индекс, в path — её имя; -4 = все 9999 слотов заняты (path при этом не
+// годится для записи: держит имя последнего проверенного файла, #FW-59). Общий поиск для «Сохранить» и импорта фона.
+static int spec_find_free_slot(char *path, size_t cap)
+{
+    for (int idx = 0; idx < 9999; idx++) {
+        snprintf(path, cap, "%s/spec_%04d.bin", SPEC_DIR, idx);
+        FILE *f = fopen(path, "r");
+        if (!f) return idx;
+        fclose(f);
+    }
+    return -4;
 }
 
 int spectrum_save_to_flash(void)
@@ -967,22 +998,15 @@ int spectrum_save_to_flash(void)
         return -2;
     }
     char path[64];
-    int idx = 0;
+    int idx = spec_find_free_slot(path, sizeof(path));   // 1.2.31: общий поиск слота с импортом (было: цикл здесь же)
     FILE *f;
-    while (idx < 9999) {
-        snprintf(path, sizeof(path), "%s/spec_%04d.bin", SPEC_DIR, idx);
-        f = fopen(path, "r");
-        if (!f) break;
-        fclose(f);
-        idx++;
-    }
     // #FW-59 (задача #3/Codeaudit P1): idx==9999 значит слоты 0..9998 заняты —
     // цикл выше НЕ выполнил тело для idx=9999 (условие while сработало раньше),
     // поэтому `path` всё ещё держит имя ПОСЛЕДНЕГО проверенного файла (spec_9998.bin).
     // Без этой проверки следующий fopen(path,"wb") молча перезаписал бы
     // spec_9998.bin, а вызывающему вернулся бы idx=9999 — имя файла и
     // сообщённый индекс разошлись бы, спектр по факту потерян.
-    if (idx >= 9999) {
+    if (idx < 0) {      // spec_find_free_slot: -4 = слоты исчерпаны (тот же результат, что давал idx >= 9999)
         ESP_LOGE(TAG, "Save rejected: spec_XXXX.bin slots exhausted (0..9998 all taken)");
         free(snap);
         return -4;
@@ -1091,7 +1115,27 @@ static bool atomic_write_snapshot(const char *tmp_path, const char *final_path,
     return true;
 }
 
-int spectrum_backup_save(uint32_t sess, uint32_t seq, int keep)
+// 1.2.31 импорт фона: sp уже проверен spectrum_import_decode(); вызывать под http_io_gate (как «Сохранить»).
+// Запись атомарная (tmp+rename) под flash_quiet_writer_lock, как у снимков; имя tmp не начинается с spec_ — листинг его не видит.
+// >=0 индекс; -2 мало места; -3 ошибка ФС; -4 слоты исчерпаны; -5 писатель flash занят.
+int spectrum_import_to_flash(const spectrum_data_t *sp)
+{
+    size_t total = 0, used = 0;
+    esp_littlefs_info("storage", &total, &used);
+    if (total - used < AUTOSAVE_RESERVE + sizeof(spectrum_data_t)) {
+        ESP_LOGW(TAG, "Import rejected: free=%zu < reserve=%d", total - used, AUTOSAVE_RESERVE);
+        return -2;
+    }
+    if (!flash_quiet_writer_lock(flash_quiet_writer_lock_ticks())) return -5;
+    char path[64];
+    int idx = spec_find_free_slot(path, sizeof(path));
+    if (idx >= 0 && !atomic_write_snapshot(SPEC_DIR "/import.tmp", path, sp)) idx = -3;
+    flash_quiet_writer_unlock();
+    if (idx >= 0) ESP_LOGI(TAG, "Imported spectrum to %s (%" PRIu32 " counts)", path, sp->total_counts);
+    return idx;
+}
+
+int spectrum_backup_save(uint32_t sess, uint32_t seq, int keep, uint32_t expect_req)
 {
     if (keep <= 0) return -1;
 
@@ -1110,6 +1154,7 @@ int spectrum_backup_save(uint32_t sess, uint32_t seq, int keep)
     if (!snap) return -3;
     SPEC_LOCK();
     if (!s_spectrum.valid) { SPEC_UNLOCK(); free(snap); return -1; }
+    if (!session_snap_current(s_sess_req, expect_req)) { SPEC_UNLOCK(); free(snap); return -5; }  // Сброс после решения: снимок нового объекта не под старым номером
     s_spectrum.saved_at = time(NULL);
     memcpy(snap, &s_spectrum, sizeof(*snap));
     SPEC_UNLOCK();
