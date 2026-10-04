@@ -25,5 +25,9 @@ received/
 scripts/dist/
 *.spec
 
+# local firmware builds and release asset folders
+build-*/
+dist-*/
+
 # but keep the bundled sample for the offline viewer
 !scripts/example-waterfall.n42
