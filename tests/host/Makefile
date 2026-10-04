@@ -55,9 +55,24 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_debug_log_chunk.c \
        test_spectrum_import_plan.c
 
-test: $(SRCS) test_util.h
+test: $(SRCS) test_util.h test_import_body_plan test_import_tmp_plan test_n42_time_plan
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm
 	./test_runner
+	./test_import_body_plan
+	./test_import_tmp_plan
+	./test_n42_time_plan
+
+# #AWF-F4: автономный тест со своим main() (import_tmp_plan.h) — какой файл SPEC_DIR чистить на старте.
+test_import_tmp_plan: test_import_tmp_plan.c ../../main/import_tmp_plan.h
+	$(CC) $(CFLAGS) -o test_import_tmp_plan test_import_tmp_plan.c
+
+# AWF-F2: standalone test (n42_time_plan.h) - N42 StartDateTime in UTC with Z.
+test_n42_time_plan: test_n42_time_plan.c ../../main/n42_time_plan.h
+	$(CC) $(CFLAGS) -o test_n42_time_plan test_n42_time_plan.c
+
+# Автономный тест со своим main() (import_body_plan.h) — в общий test_runner не линкуется.
+test_import_body_plan: test_import_body_plan.c ../../main/import_body_plan.h
+	$(CC) $(CFLAGS) -o test_import_body_plan test_import_body_plan.c
 
 # Дополнительный прогон под санитайзерами: даже если canary-проверка пропустит
 # регрессию с записью за границу буфера, ASan поймает её жёстко.
@@ -66,7 +81,7 @@ asan: $(SRCS) test_util.h
 	./test_runner_asan
 
 clean:
-	rm -f test_runner test_runner_asan bench_json_fmt
+	rm -f test_runner test_runner_asan bench_json_fmt test_import_body_plan test_import_tmp_plan test_n42_time_plan
 
 # UI-P1: замер до/после старого(vsnprintf-loop)/нового(json_append_uint32_csv)
 # форматтера бинов — числа для отчёта, не гейт ALL PASSED.

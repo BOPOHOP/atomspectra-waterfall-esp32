@@ -7,6 +7,7 @@
 #include "spectrum_hist_stage.h"
 #include "http_io_gate.h"
 #include "backup_plan.h"   // issue #52: разбор имени снимка и план ротации
+#include "import_tmp_plan.h"  // #AWF-F4: какой файл SPEC_DIR - осиротевший tmp импорта
 #include "session_plan.h"   // 1.2.31: Сброс → запрос новой сессии
 #include "spectrum_restore_plan.h"  // AWF-1: выбор источника восстановления
 #include "spectrum_base_plan.h"     // AWF-3: сброс прибора и слияние база+прибор
@@ -55,6 +56,7 @@ static device_info_t   s_device_info;
 static bool s_fs_formatted;
 // P2: определение — у backup_scan() ниже (тот же раздел, тот же DIR/readdir).
 static void cleanup_orphan_backup_tmp(void);
+static void cleanup_orphan_import_tmp(void);  // #AWF-F4: определение — сразу после cleanup_orphan_backup_tmp()
 // AWF-3: определение — у spectrum_restore_autosave() ниже (тот же раздел,
 // нужен atomic_write_snapshot).
 static void spectrum_base_save(void);
@@ -233,6 +235,7 @@ void spectrum_init(void)
         mkdir(SPEC_DIR, 0777);   // #FW-24: подкаталог сохранённых спектров (отделение от calib/current/wf_state в корне)
         mkdir(BACKUP_DIR, 0777); // issue #52: автоснимки — отдельно от ручных, чтобы ротация их не касалась
         cleanup_orphan_backup_tmp();  // P2: осиротевшие bk_*.bin.tmp после обрыва питания
+        cleanup_orphan_import_tmp();  // #AWF-F4: осиротевший spec/import.tmp (обрыв питания при импорте)
     }
 }
 
@@ -1077,6 +1080,22 @@ static void cleanup_orphan_backup_tmp(void)
     if (n > 0) ESP_LOGW(TAG, "backup: removed %d orphaned tmp file(s) at boot", n);
 }
 
+// #AWF-F4: spec/import.tmp (spectrum_import_to_flash -> atomic_write_snapshot) остаётся при обрыве
+// питания между fopen(tmp) и rename; листинг его не видит (имя не spec_*). Решение — import_tmp_is_orphan();
+// путь строим из константы, не из d_name.
+static void cleanup_orphan_import_tmp(void)
+{
+    DIR *dir = opendir(SPEC_DIR);
+    if (!dir) return;
+    bool found = false;
+    struct dirent *de;
+    while ((de = readdir(dir)) != NULL)
+        if (import_tmp_is_orphan(de->d_name)) found = true;
+    closedir(dir);
+    if (found && remove(SPEC_DIR "/" IMPORT_TMP_NAME) == 0)
+        ESP_LOGW(TAG, "import: removed orphaned import.tmp at boot");
+}
+
 // Собирает идентификаторы снимков каталога. Возвращает число найденных, либо -1
 // при ошибке открытия каталога. Файлы, не подходящие под шаблон (в т.ч. чужие
 // .bak), пропускаются и в ротацию не попадают.
@@ -1127,7 +1146,7 @@ int spectrum_import_to_flash(const spectrum_data_t *sp)
     if (!flash_quiet_writer_lock(flash_quiet_writer_lock_ticks())) return -5;
     char path[64];
     int idx = spec_find_free_slot(path, sizeof(path));
-    if (idx >= 0 && !atomic_write_snapshot(SPEC_DIR "/import.tmp", path, sp)) idx = -3;
+    if (idx >= 0 && !atomic_write_snapshot(SPEC_DIR "/" IMPORT_TMP_NAME, path, sp)) idx = -3;
     flash_quiet_writer_unlock();
     if (idx >= 0) ESP_LOGI(TAG, "Imported spectrum to %s (%" PRIu32 " counts)", path, sp->total_counts);
     return idx;

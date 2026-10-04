@@ -62,6 +62,16 @@ table.saved tr.on td{ background:rgba(110,168,255,.07); }
 .empty{ color:#5b655a; font-style:italic; font-size:12.5px; }
 #overlay-label{ color:#f0c45a; font-size:12px; }
 @media (max-width:520px){ .big{ font-size:24px } }
+@media (max-width:480px){  /* #UI-MOB: 375px, header/rows/nav not wider than screen */
+header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
+.brand{ min-width:0; flex-wrap:wrap; gap:10px; }
+.chips{ min-width:0; justify-content:flex-start; }
+nav{ padding:0 6px; }
+nav a,nav span{ padding:12px 10px; }
+.wrap{ padding:14px 12px 0; }
+.row{ gap:10px; padding:10px 12px; }
+.grp{ flex-wrap:wrap; min-width:0; }
+}
 </style>
 </head>
 <body>
@@ -382,9 +392,9 @@ function smaCps(t,n){if(typeof t!=="number"||typeof n!=="number")return null;if(
 function fmtNum(n){return Math.round(n).toLocaleString(lcl())}
 /* #MX-10 (1.2.31): степенная шкала Y — y^(1/e): поджимает пики мягче логарифма, по аналогии с BecqMoni */
 function viewSave(){try{localStorage.setItem("aswf-view",JSON.stringify({log:isLog,pow:isPow,cps:isCps,kev:isKev}))}catch(e){}}
-function setPow(){isPow=true;isLog=false;viewSave();setSeg(["btn-lin","btn-log","btn-pow"],2);if(lastD)draw(lastD);else clearCanvas()}
-function setLog(v){isLog=v;isPow=false;viewSave();setSeg(["btn-lin","btn-log","btn-pow"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
-function setCps(v){isCps=v;viewSave();setSeg(["btn-cnt","btn-cps"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
+function setPow(ns){isPow=true;isLog=false;if(!ns)viewSave();setSeg(["btn-lin","btn-log","btn-pow"],2);if(lastD)draw(lastD);else clearCanvas()}
+function setLog(v,ns){isLog=v;isPow=false;if(!ns)viewSave();setSeg(["btn-lin","btn-log","btn-pow"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
+function setCps(v,ns){isCps=v;if(!ns)viewSave();setSeg(["btn-cnt","btn-cps"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
 /* #MX-9 (1.2.31): предел оси X — 1000 / 2000 кэВ или весь спектр (0); только в режиме keV с калибровкой */
 var xRange=0;try{xRange=parseInt(localStorage.getItem("aswf-xrange"),10)||0}catch(e){}
 setSeg(["btn-x1k","btn-x2k","btn-xall"],xRange===1000?0:xRange===2000?1:2);
@@ -521,7 +531,7 @@ function draw(d){
   for(var i=0;i<ob.length;i++)yO[i]=(isCps&&ot>0)?ob[i]/ot:ob[i]}
  var mx=0;
  /* #MX-11 (1.2.31): последний канал — переполнение (всё выше шкалы); в фоне он на порядки выше спектра и
-    сплющивал масштаб Y. В максимум не входит, линия в нём упирается в верх графика. */
+    сплющивал масштаб Y. Не входит ни в максимум (#MX-11), ни в отрисовку (#F6): последний канал не рисуется (данные не меняются). */
  var NM=(NV>=N)?N-1:NV;
  for(var i=0;i<NM;i++)if(yV[i]>mx)mx=yV[i];
  if(yO)for(var i=0;i<Math.min(yO.length-1,NM);i++)if(yO[i]>mx)mx=yO[i];
@@ -554,15 +564,15 @@ function draw(d){
  X.save();X.beginPath();X.rect(PL,PT,PW,PH);X.clip();
  var bw=PW/NV;
  var accent=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#34d3c0';
- if(yO){X.fillStyle="rgba(110,168,255,0.28)";for(var i=0;i<Math.min(yO.length,NV);i++){var y=yMap(yO[i]);if(PB-y>0.3)X.fillRect(PL+i*bw,y,Math.max(bw-.3,.3),PB-y)}}
+ if(yO){X.fillStyle="rgba(110,168,255,0.28)";for(var i=0;i<Math.min(yO.length,NM);i++){var y=yMap(yO[i]);if(PB-y>0.3)X.fillRect(PL+i*bw,y,Math.max(bw-.3,.3),PB-y)}}
  /* #UI-36: лёгкая заливка (alpha 0x1e ≈ 0.12) + чёткая линия сверху — как в AtomSpectra-референсе.
     Раньше accent+"44" (~0.27) сплошными столбцами = тяжёлая «плита», топила форму спектра. */
  X.fillStyle=accent+"1e";
- for(var i=0;i<NV;i++){var y=yMap(yV[i]);if(PB-y>0.3)X.fillRect(PL+i*bw,y,Math.max(bw-.3,.3),PB-y)}
+ for(var i=0;i<NM;i++){var y=yMap(yV[i]);if(PB-y>0.3)X.fillRect(PL+i*bw,y,Math.max(bw-.3,.3),PB-y)}
  X.strokeStyle=accent;X.lineWidth=1;X.beginPath();
- for(var i=0;i<NV;i++){var px=PL+i*bw+bw/2,py=yMap(yV[i]);i===0?X.moveTo(px,py):X.lineTo(px,py)}
+ for(var i=0;i<NM;i++){var px=PL+i*bw+bw/2,py=yMap(yV[i]);i===0?X.moveTo(px,py):X.lineTo(px,py)}
  X.stroke();
- if(yO){X.strokeStyle="#6ea8ff";X.lineWidth=1.1;X.beginPath();for(var i=0;i<Math.min(yO.length,NV);i++){var x0=PL+i*bw,py=yMap(yO[i]);i===0?X.moveTo(x0,py):X.lineTo(x0,py);X.lineTo(x0+bw,py)}X.stroke()}
+ if(yO){X.strokeStyle="#6ea8ff";X.lineWidth=1.1;X.beginPath();for(var i=0;i<Math.min(yO.length,NM);i++){var x0=PL+i*bw,py=yMap(yO[i]);i===0?X.moveTo(x0,py):X.lineTo(x0,py);X.lineTo(x0+bw,py)}X.stroke()}
  X.restore();
  drawNuclides(NV);
  X.strokeStyle="#283024";X.lineWidth=1;X.strokeRect(PL+.5,PT+.5,PW,PH);
@@ -902,14 +912,14 @@ function drawNuclides(N){
  X.restore();
 }
 
-function viewRestore(){try{var o=JSON.parse(localStorage.getItem("aswf-view")||"null");if(!o)return;if(o.pow)setPow();else setLog(!!o.log);setCps(!!o.cps);setKev(!!o.kev,1)}catch(e){}}
+function viewRestore(){try{var o=JSON.parse(localStorage.getItem("aswf-view")||"null");if(!o)return;var d=function(x,dv){return typeof x==="boolean"?x:dv};if(o.pow)setPow(1);else setLog(d(o.log,isLog),1);setCps(d(o.cps,isCps),1);setKev(d(o.kev,isKev),1)}catch(e){}}
 (async function(){
  viewRestore();
  document.getElementById("ip-chip").textContent=location.hostname;
  await loadCsrf();
  await loadDoseK();
  loadPrefix();
- try{var oi=parseInt(localStorage.getItem("aswf-ovl"),10);if(oi>=0)loadOverlay(oi)}catch(e){}
+ try{var oi=parseInt(localStorage.getItem("aswf-ovl"),10);var qo=/[?&]overlay=(\d+)/.exec(location.search);if(qo)oi=parseInt(qo[1],10);if(oi>=0)loadOverlay(oi)}catch(e){}   /* ?overlay=N из saved.html */
  populateNucPanel();
  setInterval(update,2000);   /* #UI-15: 1000→2000ms — chunked /api/spectrum.json ел сокеты при F5; макс. uri_handlers=11 */
  setInterval(loadFlashInfo,10000);

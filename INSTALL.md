@@ -92,7 +92,13 @@ docker run --rm -v "${PWD}:/project" -w /project espressif/idf:v5.4 `
 
 Результат сборки: `build/atomspectra.bin` (+ bootloader + partition table).
 
+`sdkconfig.defaults` применяется только при создании `sdkconfig`: если `sdkconfig` уже есть (он в `.gitignore`), изменённые значения в defaults молча игнорируются. После правки defaults удалите `sdkconfig` (или проверьте: `sh scripts/check_sdkconfig_defaults.sh`, ожидается `mismatches`-строк нет, код 0).
+
 ## 4. Прошивка
+
+### Рекомендуемый способ: флешер (обновление и первая прошивка)
+
+Предпочтительный способ — [esp32-flasher](https://github.com/VibeEngineering-LLC/atomspectra-waterfall-esp32-flasher): выберите проект «AtomSpectra Водопад» и версию, флешер сам скачает релиз с GitHub, проверит SHA-256 и прошьёт плату. Сборка не нужна. Обновление «Установить с GitHub» в веб-интерфейсе платы в версиях 1.2.30 и 1.2.31 может не сработать (`sums_download_failed`, не хватает внутренней памяти для TLS) — используйте флешер или загрузите `atomspectra_gw.bin` вручную на странице «Система».
 
 ### Через ESP-IDF (если установлен)
 
@@ -269,4 +275,4 @@ strings nvs.bin        # среди строк будут SSID и пароль
 
 - ESP-IDF **v5.1 или выше** (USB Host доступен с 5.0, LittleFS с 5.1)
 - Цель **esp32s3** (не esp32, не esp32c3): `idf.py set-target esp32s3`
-- При ошибках зависимостей: удалите `build/` и `managed_components/`, пересоберите
+- При ошибках зависимостей: удалите `build/` и `managed_components/`, пересоберите

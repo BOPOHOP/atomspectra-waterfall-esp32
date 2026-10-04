@@ -40,6 +40,8 @@ for (const f of ["json", "xml", "n42", "csv"]) {
 ok("lost: json/xml/n42 = 5, csv = 0", P.json.lost === LOST && P.xml.lost === LOST && P.n42.lost === LOST && P.csv.lost === 0);
 ok("калибровка: json/xml/n42 5 коэфф., csv нет (+предупреждение)", [P.json, P.xml, P.n42].every((p) => p.calib && p.calib.length === 5 && Math.abs(p.calib[1] - cal[1]) < 1e-12) && P.csv.calib === null && P.csv.warn.includes("imp.warnNoCal"));
 ok("дата конца набора: json/n42 = saved_at (xml - отдельно, по признаку источника), csv = lastModified", P.json.savedAt === SA && P.n42.savedAt === SA && P.csv.savedAt === MT / 1000);
+const n42Z = n42Txt.replace(/<StartDateTime>[^<]*/, "<StartDateTime>" + new Date((SA - T) * 1000).toISOString().replace(/\.\d+Z$/, "Z"));
+ok("n42: StartDateTime ISO с Z (прошивка 1.2.32) = UTC, дата конца = saved_at", L.impParse(n42Z, "a.n42", MT).savedAt === SA);
 ok("серийник: json/xml = SN-123", P.json.serial === "SN-123" && P.xml.serial === "SN-123");
 ok("серийник IMP: не наращивается при повторном импорте", L.impParse(jsonTxt.replace('"SN-123"', '"IMP:SN-123"'), "a.json", MT).serial === "SN-123");
 // Кодирование ASI1: длина, заголовок, CRC (независимо — node:zlib.crc32), общий вектор с C-реализацией (tests/host).

@@ -31,4 +31,5 @@ mut U3_xml_always_utc  saved.html import_parse_test.mjs 's/impBoardXml(txt)):0;/
 mut U4_guid_not_zero   saved.html import_parse_test.mjs 's/0{8}-0{4}-0{4}/1{8}-0{4}-0{4}/'    1
 mut baseline_undef   index.html undef_calls_test.mjs   -                                                      0
 mut U1_calibsame     index.html undef_calls_test.mjs   's/!calSame(overlayCal,calib)/!calibSame(overlayCal,calib)/' 1
+mut W10_n42_z_flag   saved.html import_parse_test.mjs 's/m\[7\]==="Z"/m[7]==="z"/'  1
 exit $RC

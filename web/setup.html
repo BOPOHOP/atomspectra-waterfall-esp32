@@ -50,6 +50,9 @@ var DICT={
   "ph.pass":"Пароль",
   "secured":"защищена",
   "err.ssid":"Введите SSID",
+  "err.ssidlen":"SSID не длиннее 32 байт",
+  "err.pass":"Пароль WiFi: 8-63 символа ASCII или 64 hex-символа (или пусто для открытой сети)",
+  "err.save":"Ошибка сохранения",
   "saving":"Сохранение...",
   "saved":"Сохранено! Перезагрузка в режим STA...",
   "rebooting":"Устройство перезагружается, подключитесь к своей WiFi-сети",
@@ -69,6 +72,9 @@ var DICT={
   "ph.pass":"Password",
   "secured":"secured",
   "err.ssid":"Enter SSID",
+  "err.ssidlen":"SSID must be at most 32 bytes",
+  "err.pass":"WiFi password: 8-63 ASCII chars or 64 hex chars (or empty for an open network)",
+  "err.save":"Save failed",
   "saving":"Saving...",
   "saved":"Saved! Rebooting in STA mode...",
   "rebooting":"Device rebooting, connect to your WiFi network",
@@ -125,13 +131,17 @@ function doConnect(){
     var p=document.getElementById('pass').value;
     var st=document.getElementById('st');
     if(!s){st.className='err';st.textContent=t("err.ssid");return;}
+    var bl=function(x){return new TextEncoder().encode(x).length;};   // F4: длины в байтах, как на плате
+    if(bl(s)>32){st.className='err';st.textContent=t("err.ssidlen");return;}
+    if(p.length&&!(/^[\x20-\x7e]{8,63}$/.test(p)||/^[0-9a-fA-F]{64}$/.test(p))){st.className='err';st.textContent=t("err.pass");return;}
     document.getElementById('btn').disabled=true;
     st.className='ok';st.textContent=t("saving");
     fetch('/api/connect',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({ssid:s,pass:p})})
-    .then(function(r){return r.json()}).then(function(){
+    .then(function(r){if(!r.ok){throw new Error('bad');}return r.json()}).then(function(){
         st.textContent=t("saved");
-    }).catch(function(){
+    }).catch(function(e){
+        if(e&&e.message==='bad'){document.getElementById('btn').disabled=false;st.className='err';st.textContent=t("err.save");return;}
         st.className='ok';st.textContent=t("rebooting");
     });
 }

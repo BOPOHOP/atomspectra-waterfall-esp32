@@ -46,6 +46,9 @@
 #include "ota_busy.h"              // AWF-5 P1-фикс: общий замок с GitHub-install
 #include "ota_timeout_budget.h"    // D4 (sweep-B задача 1): host-тест границы
 #include "spectrum_import_plan.h"  // 1.2.31: импорт фона (разбор тела ASI1) + путь удаления записи (host-тест)
+#include "n42_time_plan.h"           // #AWF-F2: StartDateTime N42 в UTC с Z (host-тест)
+#include "import_body_plan.h"      // 1.2.32: D-1131-1/#AWF-F3 — план приёма тела /api/import (host-тест)
+_Static_assert(IMPORT_BODY_SIZE == SPEC_IMPORT_SIZE, "import_body_plan.h: IMPORT_BODY_SIZE != SPEC_IMPORT_SIZE");
 #include "snapshot_file.h"         // У4 (раунд 3): слепок DSP — tmp + rename (host-тест)
 #include <dirent.h>
 
@@ -54,7 +57,9 @@ static const char *TAG = "web";
 // #FIELD-9 (A11): часы платы «синхронизированы», если время не near-epoch (< 2023-11).
 // В полевом AP до прихода браузерного времени часы = 1970; экспорт помечает это и НЕ
 // падает (localtime_r сам не падает). Пометка добавляется ТОЛЬКО при рассинхроне →
-// нормальные записи байт-точны к эталонным форматам (#EXP-1 N42/#CSV-1). Проверка — T14.
+// нормальные записи не получают лишних строк относительно эталонных форматов (#EXP-1 N42/#CSV-1);
+// исключение — StartDateTime N42: ISO UTC с Z (#AWF-F2), эталон BecqMoni писал dd.mm.yyyy местного времени.
+// Теста «T14» в репозитории нет; дату N42 проверяет tests/host/test_n42_time_plan.c.
 #define WF_TIME_SYNCED_EPOCH 1700000000L   // 2023-11-14 UTC
 static inline bool time_is_synced(time_t t) { return t >= WF_TIME_SYNCED_EPOCH; }
 
@@ -94,13 +99,17 @@ static bool csrf_ct_eq(const char *a, const char *b, size_t n)
     return d == 0;
 }
 
+// Проверяет X-CSRF-Token, ответа не шлёт (импорт сначала сливает тело, потом отвечает 403).
+static bool csrf_ok(httpd_req_t *req)
+{
+    char hdr[40] = {0};
+    return httpd_req_get_hdr_value_str(req, "X-CSRF-Token", hdr, sizeof(hdr)) == ESP_OK
+        && s_csrf[0] && strlen(hdr) == 32 && csrf_ct_eq(hdr, s_csrf, 32);
+}
 // Проверяет X-CSRF-Token. При несовпадении сам шлёт 403 и возвращает false.
 static bool csrf_check(httpd_req_t *req)
 {
-    char hdr[40] = {0};
-    if (httpd_req_get_hdr_value_str(req, "X-CSRF-Token", hdr, sizeof(hdr)) == ESP_OK
-        && s_csrf[0] && strlen(hdr) == 32 && csrf_ct_eq(hdr, s_csrf, 32))
-        return true;
+    if (csrf_ok(req)) return true;
     httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Bad or missing CSRF token");
     return false;
 }
@@ -495,11 +504,11 @@ static esp_err_t handle_debug_log_config_set(httpd_req_t *req)
 // #MON-1: серия CPS-мониторинга с платы. GET /api/monitor/series?since=<seq>
 // Read-only (CSRF не нужен, как /api/devlog). Ответ:
 //   {"epoch":E,"next_seq":N,"first_seq":F,"interval_base":1,
-//    "samples":[[end_sec,dur,counts],...]}
+//    "samples":[[end_sec,dur,counts,t_c|null],...]}
 // samples — от max(since+1, старейший в кольце), чанк <= 2000 шт; клиент
 // дотягивает циклом, пока не догонит next_seq. Стрим httpd_resp_send_chunk
 // (паттерн h_export_aswf) — без гигантского JSON-дерева в куче.
-#define MON_SERIES_CHUNK 2000   // 2000 × 10 Б = ~20 КБ PSRAM на время запроса
+#define MON_SERIES_CHUNK 2000   // 2000 × 12 Б = ~24 КБ PSRAM на время запроса
 
 static esp_err_t handle_monitor_series(httpd_req_t *req)
 {
@@ -963,7 +972,9 @@ static esp_err_t import_reply_idx(httpd_req_t *req, int idx)
 static bool import_recv_body(httpd_req_t *req, uint8_t *b)
 {
     size_t got = 0; uint32_t streak = 0;
+    int64_t t0 = esp_timer_get_time();   // #AWF-F3: общий срок приёма — побайтовый клиент не держит слот s_dl_active
     while (got < SPEC_IMPORT_SIZE) {
+        if (import_recv_deadline_passed(t0, esp_timer_get_time())) return false;
         size_t want = SPEC_IMPORT_SIZE - got; if (want > 4096) want = 4096;
         int r = httpd_req_recv(req, (char *)b + got, want);
         if (r == HTTPD_SOCK_ERR_TIMEOUT && !ota_timeout_budget_exceeded(++streak, OTA_MAX_CONSECUTIVE_TIMEOUTS)) continue;
@@ -989,11 +1000,65 @@ static esp_err_t handle_import_job(httpd_req_t *req)
     free(sp);
     return import_reply_idx(req, idx);
 }
+// Срок дочитывания чужого тела (идёт в потоке httpd, до web_async_run), мкс. Отдельная константа, не в import_body_plan.h.
+// 2 с (было 5). Срок проверяется МЕЖДУ recv, один recv ждёт до recv_wait_timeout 3 с: молчащий клиент держит поток
+// до 2+3 = 5 с (слив) и, если после слива тело дочитано не полностью, обработчик возвращает ESP_FAIL (сокет закрывается
+// без purge в httpd_req_delete, IDF httpd_sess.c/httpd_uri.c); при ESP_OK purge дочитывал бы остаток БЕЗ срока (F1 прохода 3A).
+// 64 КиБ линга по LAN/Wi-Fi уходят за доли секунды. Дошло ли 400/403 при 2 с — на плате НЕ проверено.
+#define IMPORT_DRAIN_RECV_DEADLINE_US 2000000LL
+// Потолок lingering-дочитывания при CLOSE_400 (тело > IMPORT_DRAIN_MAX), байт.
+#define IMPORT_LINGER_MAX_BYTES 65536u
+// Читает и отбрасывает до min(content_len, max_bytes) байт входа буфером 512 Б на стеке;
+// стоп: лимит, срок IMPORT_DRAIN_RECV_DEADLINE_US, ошибка/0, бюджет таймаутов.
+// Возвращает true, только если ВСЁ тело (content_len) прочитано; иначе вызывающий обязан закрыть сокет (ESP_FAIL).
+static bool import_drain_input(httpd_req_t *req, size_t max_bytes)
+{
+    char sink[512];
+    bool whole = (req->content_len <= max_bytes);
+    size_t remaining = whole ? req->content_len : max_bytes;
+    int64_t t0 = esp_timer_get_time();
+    uint32_t streak = 0;
+    while (remaining > 0) {
+        if (esp_timer_get_time() - t0 >= IMPORT_DRAIN_RECV_DEADLINE_US) break;
+        size_t want = import_drain_chunk(remaining, sizeof(sink));
+        int r = httpd_req_recv(req, sink, want);
+        if (r == HTTPD_SOCK_ERR_TIMEOUT && !ota_timeout_budget_exceeded(++streak, OTA_MAX_CONSECUTIVE_TIMEOUTS)) continue;
+        if (r <= 0) break;
+        streak = 0;
+        remaining -= (size_t)r;
+    }
+    return whole && remaining == 0;
+}
+// D-1131-1: DRAIN_400 дочитывает тело малым буфером (иначе RST, клиент теряет 400); CLOSE_400 — ESP_FAIL.
+// Правило ответа без полного слива: Connection: close + ESP_FAIL (ESP_OK заставил бы httpd дочитывать остаток без срока).
 static esp_err_t handle_import(httpd_req_t *req)
 {
-    if (!csrf_check(req)) return ESP_FAIL;
-    if (req->content_len != SPEC_IMPORT_SIZE) { import_reply(req, "400 Bad Request", "bad_size"); return ESP_FAIL; }
-    return web_async_run(req, handle_import_job);
+    if (!csrf_ok(req)) {   // F2: сначала ограниченный слив, чтобы RST не съел 403 (saved.html повторит запрос по 403)
+        bool whole = import_drain_input(req, IMPORT_LINGER_MAX_BYTES);
+        if (!whole) httpd_resp_set_hdr(req, "Connection", "close");
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Bad or missing CSRF token");
+        return whole ? ESP_OK : ESP_FAIL;
+    }
+
+    switch (import_len_action(req->content_len)) {
+        case IMP_LEN_OK: {
+            return web_async_run(req, handle_import_job);
+        }
+        case IMP_LEN_DRAIN_400: {
+            bool whole = import_drain_input(req, req->content_len);
+            if (!whole) httpd_resp_set_hdr(req, "Connection", "close");
+            import_reply(req, "400 Bad Request", "bad_size");
+            return whole ? ESP_OK : ESP_FAIL;
+        }
+        case IMP_LEN_CLOSE_400:
+        default: {
+            // Lingering close: полный 400 + Connection: close, затем ограниченное дочитывание входа (иначе RST рвёт ответ).
+            httpd_resp_set_hdr(req, "Connection", "close");
+            import_reply(req, "400 Bad Request", "bad_size");
+            import_drain_input(req, IMPORT_LINGER_MAX_BYTES);
+            return ESP_FAIL;
+        }
+    }
 }
 
 // #3/Codeaudit P1: буфер листинга — см. комментарий у handle_list.
@@ -1329,7 +1394,8 @@ static esp_err_t render_spectrum_csv(httpd_req_t *req, const spectrum_data_t *sp
 }
 
 // #EXP-1 (2026-06-28): нативный N42-2011 экспорт. Эталон оператора — "spectrum (10).N42"
-// (родная выгрузка Atom Spectra через BecqMoni). Байт-точно: UTF-8 BOM, CRLF, БЕЗ финального
+// (родная выгрузка Atom Spectra через BecqMoni). Структура по эталону, КРОМЕ StartDateTime (ISO UTC с Z, #AWF-F2,
+// а не dd.mm.yyyy местного, как у эталона и прошивок <=1.2.31): UTF-8 BOM, CRLF, БЕЗ финального
 // перевода строки, отступы 2 пробела, блок RadInstrumentInformation дословно, CoefficientValues
 // и ChannelData с замыкающим пробелом. Значения — живые из снимка спектра.
 static esp_err_t render_spectrum_n42(httpd_req_t *req, const spectrum_data_t *sp, const char *filename)
@@ -1398,16 +1464,15 @@ static esp_err_t render_spectrum_n42(httpd_req_t *req, const spectrum_data_t *sp
             "  </EnergyCalibration>\r\n");
     }
     time_t end_time = (sp->saved_at > 0) ? sp->saved_at : time(NULL);
-    struct tm ts;
     time_t t_start = end_time - sp->total_time_sec;
-    localtime_r(&t_start, &ts);
+    char start_iso[24];   // #AWF-F2: UTC с Z; импорт платы читает StartDateTime как UTC
+    if (!n42_start_iso_utc((int64_t)t_start, start_iso, sizeof(start_iso))) strcpy(start_iso, "1970-01-01T00:00:00Z");
     n = snprintf(buf, 4096,
         "  <RadMeasurement id=\"SpectrumMeasurement-0\">\r\n"
         "    <MeasurementClassCode>Foreground</MeasurementClassCode>\r\n"
-        "    <StartDateTime>%02d.%02d.%04d %02d:%02d:%02d</StartDateTime>\r\n"
+        "    <StartDateTime>%s</StartDateTime>\r\n"
         "    <RealTimeDuration>PT%" PRIu32 "S</RealTimeDuration>\r\n",
-        ts.tm_mday, ts.tm_mon + 1, ts.tm_year + 1900, ts.tm_hour, ts.tm_min, ts.tm_sec,
-        sp->total_time_sec);
+        start_iso, sp->total_time_sec);
     httpd_resp_send_chunk(req, buf, n);
     if (have_cal) {
         httpd_resp_sendstr_chunk(req,

@@ -129,7 +129,7 @@ if [ -f ../web/index.html ]; then
     # S-01 (1.2.30): страницы шлют CSRF-токен на тяжёлых GET
     need ../web/service.html   2 'await gget("/api/settings/backup");'
     need ../web/system.html    1 'await gget("/api/ota/github/check")'
-    need ../web/waterfall.html 1 'hf.call(window,"/api/waterfall/window?rows=64",{headers:{"X-CSRF-Token":csrfToken}})'
+    need ../web/waterfall.html 1 'hf.call(window,"/api/waterfall/window?rows=256",{headers:{"X-CSRF-Token":csrfToken}})'
 fi
 # S-01 (1.2.30): тяжёлые GET требуют CSRF-токен на стороне платы (отступ: закомментированная строка не считается)
 need web_server.c    2 '    if (!csrf_check(req)) return ESP_FAIL;   // S-01 (1.2.30)'
@@ -241,21 +241,31 @@ need web_server.c 1 '#include "spectrum_import_plan.h"'
 line web_server.c 1 'int idx = saved_delete_index(req->uri);'                       # удаление — только /api/saved/<i>/delete, иначе 404
 need web_server.c 1 'HTTP_POST, handle_import,'                                    # маршрут импорта НЕ под /api/saved/* (там POST = удаление)
 need web_server.c 1 '"/api/import"'
-need web_server.c 1 'if (req->content_len != SPEC_IMPORT_SIZE) { import_reply(req, "400 Bad Request", "bad_size"); return ESP_FAIL; }'
+# 3A: старая проверка content_len != SPEC_IMPORT_SIZE заменена выбором import_len_action (OK / DRAIN_400 / CLOSE_400)
+need web_server.c 1 'switch (import_len_action(req->content_len)) {'
+need web_server.c 1 'if (import_recv_deadline_passed(t0, esp_timer_get_time())) return false;'      # срок приёма
+need web_server.c 1 'bool whole = import_drain_input(req, req->content_len);'                      # F1: DRAIN_400 знает, дочитано ли
+need web_server.c 1 'bool whole = import_drain_input(req, IMPORT_LINGER_MAX_BYTES);'               # F2: слив перед 403 по CSRF
+need web_server.c 2 'return whole ? ESP_OK : ESP_FAIL;'                                            # 403 и DRAIN_400: недочитано -> закрыть сокет
+need web_server.c 2 'if (!whole) httpd_resp_set_hdr(req, "Connection", "close");'
+need web_server.c 1 'return whole && remaining == 0;'                                              # признак полноты слива
+need web_waterfall.c 1 'return unread ? ESP_FAIL : ESP_OK;'                                       # busy-503 с непрочитанным телом
+need spectrum.c   1 'cleanup_orphan_import_tmp();  // #AWF-F4: осиротевший spec/import.tmp (обрыв питания при импорте)'
+need web_server.c 1 'n42_start_iso_utc('
 need web_server.c 1 'return web_async_run(req, handle_import_job);'                # асинхронная задача, общий счётчик s_dl_active
 need web_server.c 1 'uint8_t *b = heap_caps_malloc(SPEC_IMPORT_SIZE, MALLOC_CAP_SPIRAM);'      # буферы — в PSRAM, не во внутренней RAM
 need web_server.c 1 'spectrum_data_t *sp = heap_caps_malloc(sizeof(*sp), MALLOC_CAP_SPIRAM);'
-need web_server.c 1 'if (r == HTTPD_SOCK_ERR_TIMEOUT && !ota_timeout_budget_exceeded(++streak, OTA_MAX_CONSECUTIVE_TIMEOUTS)) continue;'
+need web_server.c 2 'if (r == HTTPD_SOCK_ERR_TIMEOUT && !ota_timeout_budget_exceeded(++streak, OTA_MAX_CONSECUTIVE_TIMEOUTS)) continue;'   # приём + слив (дубль 3A)
 need web_server.c 1 'imp_err_t e = rx ? spectrum_import_decode(b, SPEC_IMPORT_SIZE, sp) : IMP_BAD_SIZE;'
 need web_server.c 1 'if (!http_io_gate_enter_wait_or_503(req, SAVED_FLASH_GATE_WAIT_MS)) { free(sp); return ESP_OK; }'   # запись под воротами flash
 need web_server.c 1 'int idx = spectrum_import_to_flash(sp);'
-imp=$(awk '{c=$0; sub(/\r$/,"",c)} c ~ /^static esp_err_t handle_import\(httpd_req_t \*req\)/{f=1} f && c ~ /csrf_check\(req\)/{ok=1} f && c == "}"{f=0} END{print ok ? "ok" : "bad"}' web_server.c)
-[ "$imp" = ok ] || { echo "WIRING FAIL web_server.c: handle_import without csrf_check ($imp)"; RC=1; }
+imp=$(awk '{c=$0; sub(/\r$/,"",c)} c ~ /^static esp_err_t handle_import\(httpd_req_t \*req\)/{f=1} f && c ~ /csrf_ok\(req\)/{ok=1} f && c == "}"{f=0} END{print ok ? "ok" : "bad"}' web_server.c)
+[ "$imp" = ok ] || { echo "WIRING FAIL web_server.c: handle_import without csrf_ok ($imp)"; RC=1; }
 need web_server.c 1 '",\"calib_set\":%s,\"saved_at\":%ld",'                          # дата набора в JSON записи (экспорт → импорт на другой плате)
 need web_server.c 1 'memcmp(tag, "IMP:", 4) ? "" : ",\"imp\":true"'                # метка импорта в /api/list
 need spectrum.c   2 'int idx = spec_find_free_slot(path, sizeof(path));'            # «Сохранить» и импорт — один поиск слота
 need spectrum.c   1 'if (!flash_quiet_writer_lock(flash_quiet_writer_lock_ticks())) return -5;'
-need spectrum.c   1 'if (idx >= 0 && !atomic_write_snapshot(SPEC_DIR "/import.tmp", path, sp)) idx = -3;'   # tmp+rename, имя не spec_*
+need spectrum.c   1 'if (idx >= 0 && !atomic_write_snapshot(SPEC_DIR "/" IMPORT_TMP_NAME, path, sp)) idx = -3;'   # tmp+rename, имя не spec_*
 need web_waterfall.c 1 'return wf_dl_async(req, h, &s_dl_active, WF_DL_MAX);'      # web_async_run: тот же счётчик, максимум одна задача 6144 Б
 need ../web/saved.html 1 'r=await post("/api/import",{headers:{"Content-Type":"application/octet-stream"},body:body});'
 need ../web/saved.html 1 'document.getElementById("btn-imp").onclick=function(){document.getElementById("imp-file").click();};'
@@ -270,13 +280,15 @@ need ../web/index.html 1 "(s.imp?' <span"
 need ../web/index.html 1 'var ch=Math.floor((cx-PL)/PW*visN(N)); if(ch<0||ch>=N)return null;'
 need ../web/saved.html 1 '.replace(/[^\x20-\x7E]|["\\]/g,"?").substring(0,43);}'
 need spectrum_import_plan.h 1 "b[72 + n] == '\"'"
-need ../web/index.html 1 'function setCps(v){isCps=v;viewSave();'
+need ../web/index.html 1 'function setCps(v,ns){isCps=v;if(!ns)viewSave();'
+need ../web/index.html 1 'setLog(d(o.log,isLog),1);setCps(d(o.cps,isCps),1);setKev(d(o.kev,isKev),1)'
 need ../web/index.html 1 'function setKev(v,ns){isKev=v;if(!ns)viewSave();'
 need ../web/index.html 1 'function viewRestore(){'
 need ../web/index.html 1 'onclick="toggleOverlay('
 need ../web/index.html 1 'localStorage.getItem("aswf-ovl")'
 need ../web/index.html 0 'X.setLineDash([5,4]);X.beginPath();for(var i=0;i<Math.min(yO.length'
-need wifi_manager.c 1 'wifi_setup_should_return(s_unverified, s_got_ip_this_boot, s_retry_count + 1, elapsed_s)'
+need wifi_manager.c 1 'wifi_setup_should_return(s_unverified, s_got_ip_this_boot, s_setup_auth_fails, elapsed_s)'
+need wifi_manager.c 1 'wifi_setup_fail_bump(s_setup_auth_fails, reason)'
 need wifi_manager.c 1 'nvs_set_u8(nvs, "unver", 1);'
 need wifi_manager.c 1 'nvs_erase_key(uv, "unver");'
 need wifi_manager.c 1 'if (s_unverified) return_to_setup_and_reboot();'

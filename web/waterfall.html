@@ -78,6 +78,16 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 .palmod .swatch{ width:160px; height:14px; border-radius:4px; flex-shrink:0; }
 .palmod .nm{ font-size:13px; color:#cfd6cd; }
 .palmod .desc{ font-size:11px; color:#6b756a; margin-top:2px; }
+@media (max-width:480px){  /* #UI-MOB: 375px, header/rows/nav not wider than screen */
+header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
+.brand{ min-width:0; flex-wrap:wrap; gap:10px; }
+.chips{ min-width:0; justify-content:flex-start; }
+nav{ padding:0 6px; }
+nav a,nav span{ padding:12px 10px; }
+.wrap{ padding:14px 12px 0; }
+.row{ gap:10px; padding:10px 12px; }
+.grp{ flex-wrap:wrap; min-width:0; }
+}
 </style>
 </head>
 <body>
@@ -505,6 +515,8 @@ var SLW=900, SLH=180;
 // а «чёрное поле сверху при движении слайдера» решается clamp-ом прокрутки (ниже,
 // syncScroll/слайдер/alt+wheel: bottom никогда не уходит выше lastIdx).
 var WFHd=WFH;
+/* #F5: число видимых строк = min(WFH,строк буфера); при малом буфере строки растягиваются на всю высоту (нет пустого места) */
+function visRows(){var n=rows.length;return n<1?WFHd:Math.min(WFHd,n);}
 function fitWFHeight(){ /* no-op: bitmap фиксирован 900×520, см. комментарий выше (#UI-4) */ }
 var slcMode="log", slcHoverLi=-1, slcCursorCh=-1, cursorY=-1;
 // #UI-16: true ⇔ курсор ВНУТРИ canvas, но строка под ним вне rows[] (чёрная зона
@@ -561,16 +573,18 @@ function draw(){
  var lastIdx=baseIndex+rows.length-1;
  var bottom=(viewBottom<0)?lastIdx:viewBottom;
  var seenMax=1;
+ var vis=visRows();
  for(var y=0;y<WFHd;y++){
-  var gIdx=bottom-y;
+  var gIdx=bottom-Math.floor(y*vis/WFHd);
   var li=gIdx-baseIndex;
   if(li<0||li>=rows.length)continue;
   var rm=rowMax(rows[li]); if(rm>seenMax)seenMax=rm;
  }
  normMax=normMax*0.7+seenMax*0.3; if(normMax<1)normMax=1;
  var gfac=gain/40.0;
+ var vis=visRows();
  for(var y=0;y<WFHd;y++){
-  var gIdx=bottom-y;
+  var gIdx=bottom-Math.floor(y*vis/WFHd);
   var li=gIdx-baseIndex;
   var off=y*WFW*4;
   if(li<0||li>=rows.length){
@@ -654,7 +668,7 @@ function drawCursor(){
  curx.stroke();
  var lastIdx=baseIndex+rows.length-1;
  var bottom=(viewBottom<0)?lastIdx:viewBottom;
- var li=(bottom-y)-baseIndex;
+ var li=Math.floor(bottom-Math.floor(y*visRows()/WFHd))-baseIndex;   // как mousemove/draw (растяжение visRows)
  var inRow=(li>=0&&li<rows.length);
  var v=(inRow&&slcCursorCh<rows[li].length)?rows[li][slcCursorCh]:0;
  var ke=calib?(" / "+ch2kev(slcCursorCh).toFixed(1)+" "+t("opt.kev")):"";
@@ -842,7 +856,7 @@ wf.parentNode.addEventListener("mousemove",function(e){
  var bottom=(viewBottom<0)?lastIdx:viewBottom;
  // #UI-16: Math.floor чтобы li был целым (без него slcHoverLi=3.355934... →
  // rows[3.355]=undefined → drawSlice уходил в fallback и показывал live).
- var li=Math.floor(bottom-Math.floor(y))-baseIndex;
+ var li=Math.floor(bottom-Math.floor(y*visRows()/WFHd))-baseIndex;
  var inWf=(li>=0&&li<rows.length);
  slcHoverLi=inWf?li:-1;
  slcCursorInDark=!inWf;   // курсор внутри canvas, но строки под ним нет
@@ -874,7 +888,7 @@ function scheduleDraw(){
 async function backfill(){
  try{
   var hf=window.heavyFetch||fetch;
-  if(!csrfToken)await loadCsrf();var ab=await(await hf.call(window,"/api/waterfall/window?rows=64",{headers:{"X-CSRF-Token":csrfToken}})).arrayBuffer();
+  if(!csrfToken)await loadCsrf();var ab=await(await hf.call(window,"/api/waterfall/window?rows=256",{headers:{"X-CSRF-Token":csrfToken}})).arrayBuffer();
   if(ab.byteLength<20)return;
   var dv=new DataView(ab);
   var mg=String.fromCharCode(dv.getUint8(0),dv.getUint8(1),dv.getUint8(2),dv.getUint8(3));
@@ -1685,7 +1699,7 @@ window.openZoomOverlay=function(sourcesFn,opts){
    onCursor:function(fx,fy){
     var lastIdx=baseIndex+rows.length-1;
     var bottom=(viewBottom<0)?lastIdx:viewBottom;
-    var li=(bottom-Math.floor(fy*WFHd))-baseIndex;
+    var li=(bottom-Math.floor(fy*visRows()))-baseIndex;
     var span=chHi-chLo; if(span<1)span=1;
     slcCursorCh=chLo+Math.floor(fx*span);
     if(li>=0&&li<rows.length){slcHoverLi=li;slcCursorInDark=false;}
@@ -1697,7 +1711,7 @@ window.openZoomOverlay=function(sourcesFn,opts){
     if(fx<0||fx>1||fy<0||fy>1||!rows.length)return null;
     var lastIdx=baseIndex+rows.length-1;
     var bottom=(viewBottom<0)?lastIdx:viewBottom;
-    var gIdx=bottom-Math.floor(fy*WFHd);
+    var gIdx=bottom-Math.floor(fy*visRows());
     var li=gIdx-baseIndex;
     if(li<0||li>=rows.length)return null;
     var span=chHi-chLo; if(span<1)span=1;
