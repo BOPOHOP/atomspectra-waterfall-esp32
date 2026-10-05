@@ -4,18 +4,21 @@ import { readFileSync } from "node:fs";
 const page = readFileSync(process.argv[2] || "web/waterfall.html", "utf8");
 let failed = 0;
 function ok(name, c) { console.log((c ? "OK   " : "FAIL ") + name); if (!c) failed++; }
-const vr = page.match(/function visRows\(\)\{[^\n]*\}/);
+// 1.2.33 (#AWF-UI-1): формула вынесена в wfhRowAt (блок WFH-MATH), visRows() = wfhVisRows(rows.length,WFHd); mousemove и drawCursor вызывают её одинаково
+const vr = page.match(/\/\*WFH-MATH-BEGIN[\s\S]*?WFH-MATH-END\*\//);
 const dc = page.match(/function drawCursor\(\)\{[\s\S]*?\n\}/);
-const mm = page.match(/var li=Math\.floor\(bottom-Math\.floor\(y\*visRows\(\)\/WFHd\)\)-baseIndex;/);
-ok("visRows, drawCursor и формула mousemove найдены", !!(vr && dc && mm));
+const mm = page.match(/var li=wfhRowAt\(y,bottom,baseIndex\);\n var inWf/);
+ok("блок WFH-MATH, drawCursor и вызов wfhRowAt в mousemove найдены", !!(vr && dc && mm));
 const m = dc && dc[0].match(/var li=([^;]+);/);
-ok("drawCursor: li считается через visRows()", !!(m && /visRows\(\)/.test(m[1])));
+ok("drawCursor: li считается через wfhRowAt (та же формула, что mousemove)", !!(m && m[1] === "wfhRowAt(y,bottom,baseIndex)"));
+const dr = page.match(/function draw\(\)\{[\s\S]*?\n\}/), ph = page.match(/function paintHeat\([^)]*\)\{[\s\S]*?\n\}/);
+ok("draw (нормировка) и paintHeat (заливка): gIdx=bottom-y (1 строка = 1 px, как 1.2.31)", !!dr && !!ph && /var gIdx=bottom-y;/.test(dr[0]) && /var gIdx=bottom-y;/.test(ph[0]));
+ok("оверлей: строка = 1 px, fy*ovH (не WFHd, не растяжение)", (page.match(/Math\.floor\(fy\*ovH\)/g) || []).length === 2 && /scrollAcc\+=frac\*ovH;/.test(page));
 if (vr && m) {
-  const f = new Function("rows", "WFHd", "bottom", "baseIndex", "y", vr[0] + "; return " + m[1] + ";");
-  const WFHd = 520, rows256 = new Array(256), rows600 = new Array(600);
-  ok("256 строк, y=200 -> строка 98 (растяжение 256/520)", f(rows256, WFHd, 255, 0, 200) === 255 - Math.floor(200 * 256 / 520));
-  ok("256 строк, y=519 (низ) -> строка 0 (не вне диапазона)", f(rows256, WFHd, 255, 0, 519) === 255 - Math.floor(519 * 256 / 520) && f(rows256, WFHd, 255, 0, 519) >= 0);
-  ok("600 строк (visRows==WFHd): прежнее (bottom-y)-baseIndex", f(rows600, WFHd, 599, 40, 100) === 599 - 100 - 40);
+  const f = new Function("bottom", "baseIndex", "y", vr[0] + "; return " + m[1] + ";");
+  ok("256 строк, y=200 -> строка 55 (1:1, без растяжения)", f(255, 0, 200) === 55);
+  ok("256 строк, y=256 -> -1 (ниже буфера тёмное)", f(255, 0, 256) === -1);
+  ok("600 строк: (bottom-y)-baseIndex", f(599, 40, 100) === 599 - 100 - 40);
 }
 if (failed) { console.log("FAILED: " + failed); process.exit(1); }
 console.log("ALL OK");

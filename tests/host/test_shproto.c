@@ -34,6 +34,7 @@ void cmd_is_device_reset_suite(void);
 // AWF-1/2a: восстановление спектра и реконнект/возврат Field AP.
 void test_restore_plan(void);
 void test_wifi_reconnect_plan(void);
+void test_wifi_fallback_timeout(void);
 void test_wifi_return_plan(void);
 void test_wifi_return_backoff(void);
 // AWF-3: сброс прибора и слияние база+прибор (main/spectrum_base_plan.h).
@@ -265,6 +266,7 @@ int main(void)
     cmd_is_device_reset_suite();
     test_restore_plan();
     test_wifi_reconnect_plan();
+    test_wifi_fallback_timeout();
     test_wifi_return_plan();
     test_wifi_return_backoff();
     spectrum_base_plan_suite();
