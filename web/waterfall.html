@@ -52,9 +52,11 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 #wf{ display:block; background:#000; cursor:crosshair; width:100%; height:auto; max-width:100%; image-rendering:pixelated; image-rendering:crisp-edges; }
 #cur{ position:absolute; left:0; top:0; pointer-events:none; width:100%; height:100%; }
 #hud{ position:absolute; right:8px; top:8px; background:rgba(8,10,8,.7); padding:6px 10px; font-size:11px; color:#aeb6a8; white-space:pre; border:1px solid #283024; border-radius:6px; line-height:1.5; }
-#wf-row{ display:flex; gap:8px; align-items:stretch; }
+/* #AWF-UI-4: справа от спектрограммы слайдер (ширина + зазор); срез получает такой же правый отступ → края областей данных совпадают */
+#wf-row{ --wf-slider:16px; --wf-gap:8px; display:flex; gap:var(--wf-gap); align-items:stretch; }
+#slc-box{ --wf-slider:16px; --wf-gap:8px; padding:0 calc(16px + var(--wf-slider) + var(--wf-gap)) 14px 16px; }
 #wf-row #wrap-wf{ flex:1 1 auto; min-width:0; }
-#wf-scroll{ writing-mode:vertical-lr; -webkit-appearance:slider-vertical; width:16px; flex:0 0 16px; height:auto; margin:0; cursor:pointer; accent-color:var(--accent); background:#10140f; border:1px solid var(--bd); border-radius:8px; }
+#wf-scroll{ writing-mode:vertical-lr; -webkit-appearance:slider-vertical; width:var(--wf-slider); flex:0 0 var(--wf-slider); height:auto; margin:0; cursor:pointer; accent-color:var(--accent); background:#10140f; border:1px solid var(--bd); border-radius:8px; }
 #wf-scroll:disabled{ opacity:.35; cursor:default; }
 #log{ box-sizing:border-box; width:100%; height:120px; overflow:auto; background:#0b0e0a; border:1px solid #1b211a; border-radius:8px; padding:10px 12px; font-size:11px; white-space:pre-wrap; color:#7c887c; line-height:1.5; }
 .seg{ display:flex; border:1px solid #2a322a; border-radius:7px; overflow:hidden; }
@@ -78,6 +80,9 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 .palmod .swatch{ width:160px; height:14px; border-radius:4px; flex-shrink:0; }
 .palmod .nm{ font-size:13px; color:#cfd6cd; }
 .palmod .desc{ font-size:11px; color:#6b756a; margin-top:2px; }
+#wf-grip{ position:relative; height:16px; margin-top:6px; border:1px solid var(--bd); border-radius:8px; background:#10140f; cursor:ns-resize; touch-action:none; user-select:none; -webkit-user-select:none; }
+#wf-grip::after{ content:""; position:absolute; left:50%; top:50%; width:48px; height:4px; margin:-2px 0 0 -24px; border-radius:2px; background:#3a4438; }
+#wf-grip:hover::after,#wf-grip:focus-visible::after,#wf-grip.drag::after{ background:var(--accent); }
 @media (max-width:480px){  /* #UI-MOB: 375px, header/rows/nav not wider than screen */
 header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
 .brand{ min-width:0; flex-wrap:wrap; gap:10px; }
@@ -151,7 +156,7 @@ nav a,nav span{ padding:12px 10px; }
 <label class="lbl"><span data-i18n="lbl.brightness">Яркость</span> <select class="sel" id="scale"><option value="log" data-i18n="opt.log">лог</option><option value="lin" data-i18n="opt.lin">лин</option></select></label>
 <label class="lbl"><span data-i18n="lbl.contrast">Контраст</span> <input type="range" id="gain" min="1" max="100" value="40" style="vertical-align:middle"></label>
 <label class="lbl"><span data-i18n="lbl.palette">Палитра</span> <span class="sw" id="palSw" data-i18n-title="lbl.palette_title" title="Сменить цветовую палитру" onclick="openPalette()"></span> <span id="palName" style="color:var(--accent);font-size:11.5px">Inferno</span></label>
-<label class="lbl"><span data-i18n="lbl.channels">Каналы</span> <input class="inp" type="number" id="chLo" min="0" max="8191" value="0"> – <input class="inp" type="number" id="chHi" min="1" max="8192" value="8192"></label>
+<label class="lbl"><span data-i18n="lbl.channels">Каналы</span> <input class="inp" type="number" id="chLo" min="0" max="8191" value="0"> – <input class="inp" type="number" id="chHi" min="1" max="8191" value="8191"></label>
 <button class="btn sm" id="bFit" data-i18n="btn.fit_reset">сброс зума</button>
 <button class="btn sm" id="bNuc" data-i18n-title="btn.lines_title" title="Показать/скрыть выбранные линии нуклидов — сам выбор не меняется"></button>
 </div>
@@ -166,6 +171,7 @@ nav a,nav span{ padding:12px 10px; }
 </div>
 <input id="wf-scroll" type="range" min="0" max="0" value="0" step="1" title="прокрутка истории спектрограммы / spectrogram history scroll" aria-label="spectrogram scroll">
 </div>
+<div id="wf-grip" role="separator" aria-orientation="horizontal" tabindex="0" aria-valuemin="160" aria-valuemax="900" aria-valuenow="520"></div>
 </section>
 
 <section class="panel">
@@ -177,7 +183,7 @@ nav a,nav span{ padding:12px 10px; }
 <button data-v="log" class="on" data-i18n="opt.log">лог</button><button data-v="lin" data-i18n="opt.lin">лин</button>
 </div>
 </div>
-<div style="padding:0 16px 14px">
+<div id="slc-box">
 <canvas id="slc" width="900" height="180" style="display:block;width:100%;height:auto;border:1px solid var(--bd);border-radius:6px;background:#000"></canvas>
 </div>
 </section>
@@ -256,7 +262,7 @@ var DICT={
   "help.body":"<p><b>Автономная запись.</b> Нажмите «Старт» — плата сама пишет водопад сегментами (<code>.aswf</code>) во Flash. Браузер нужен только чтобы нажать Старт/Стоп; после старта страницу можно закрыть — запись продолжится на плате.</p><p><b>Хранилище — кольцо keep-last.</b> Сегменты копятся во Flash; когда место кончается, затирается старейший незабранный сегмент (индикатор «−N (кольцо)» — это безопасно, данные уже забраны или устарели). На Flash всегда остаётся последний отрезок. Отдельный индикатор «⚠ потеряно N» — редкое и серьёзное событие: сегмент не пережил потерю питания/аварийный ребут, это реальная потеря данных.</p><p><b>Забор данных.</b> Готовые сегменты берёт внешний вьювер по сети (список — <code>/api/waterfall/segments</code>, файл — <code>/api/waterfall/segment?name=</code>) и при необходимости сшивает несколько <code>.aswf</code> в один. Live-картинка на этой странице идёт по WebSocket из кольца ОЗУ и Flash не требует. Полное «Кольцо ОЗУ» — штатное окно последних строк, не очередь незабранных файлов (очередь — «Сегменты»).</p><p><b>Экспорт .n42</b> — снимок текущего кольца ОЗУ (последние ~256 строк), работает всегда.</p>",
   "lbl.axis_x":"Ось X","opt.channels":"каналы","opt.kev":"кэВ","lbl.brightness":"Яркость",
   "opt.log":"лог","opt.lin":"лин","lbl.contrast":"Контраст","lbl.palette":"Палитра",
-  "lbl.palette_title":"Сменить цветовую палитру","lbl.channels":"Каналы","btn.fit_reset":"сброс зума",
+  "lbl.palette_title":"Сменить цветовую палитру","lbl.channels":"Каналы","btn.fit_reset":"сброс зума","wf.grip":"Высота окна водопада: тяните границу (стрелки ↑↓, Home/End — с клавиатуры)","ax.kev":"кэВ",
   "btn.lines":"Линии","st.on":"вкл","st.off":"выкл","btn.lines_title":"Показать/скрыть выбранные линии нуклидов — сам выбор не меняется",
   "lbl.slice":"Срез спектра","slc.live":"live · последняя строка",
   "slc.no_data":"нет данных","slc.wait":"ожидание данных…",
@@ -318,7 +324,7 @@ var DICT={
   "help.body":"<p><b>Autonomous recording.</b> Press «Start» — the board records the waterfall to Flash as segments (<code>.aswf</code>) on its own. The browser is only needed to press Start/Stop; after starting you may close the page — recording continues on the board.</p><p><b>Storage — keep-last ring.</b> Segments accumulate on Flash; when space runs out, the oldest not-yet-offloaded segment is dropped (the «−N (ring)» indicator — safe, that data was already offloaded or is stale). The latest stretch is always kept on Flash. A separate «⚠ lost N» indicator is rare and serious: a segment did not survive a power loss / crash reboot — real data loss, unlike the ring.</p><p><b>Data offload.</b> An external viewer pulls finished segments over the network (list — <code>/api/waterfall/segments</code>, file — <code>/api/waterfall/segment?name=</code>) and stitches several <code>.aswf</code> into one if needed. The live image on this page comes over WebSocket from the RAM ring and needs no Flash. A full «RAM ring» is the live window of last rows, not a backlog of unfetched files (that queue is «Segments»).</p><p><b>.n42 export</b> — a snapshot of the current RAM ring (last ~256 rows), always available.</p>",
   "lbl.axis_x":"Axis X","opt.channels":"channels","opt.kev":"keV","lbl.brightness":"Brightness",
   "opt.log":"log","opt.lin":"lin","lbl.contrast":"Contrast","lbl.palette":"Palette",
-  "lbl.palette_title":"Change colour palette","lbl.channels":"Channels","btn.fit_reset":"reset zoom",
+  "lbl.palette_title":"Change colour palette","lbl.channels":"Channels","btn.fit_reset":"reset zoom","wf.grip":"Waterfall height: drag the edge (arrow keys, Home/End from keyboard)","ax.kev":"keV",
   "btn.lines":"Lines","st.on":"on","st.off":"off","btn.lines_title":"Show/hide selected nuclide lines — selection itself unchanged",
   "lbl.slice":"Spectrum slice","slc.live":"live · last row",
   "slc.no_data":"no data","slc.wait":"waiting for data…",
@@ -453,7 +459,27 @@ document.getElementById("palMod").addEventListener("click",function(e){if(e.targ
 
 // ============== JS-плумбинг — БЕЗ ИЗМЕНЕНИЙ ==============
 var CH=8192;
-var WFW=900, WFH=520;
+var WFW=900;
+/*WFH-MATH-BEGIN #AWF-UI-1: чистая математика высоты окна водопада (тесты: test/web/wf_height_test.mjs). Высота bitmap = высота на экране при ширине 900. */
+var WFH_MIN=160, WFH_MAX=900, WFH_DEF=520;
+function wfhClamp(v){v=Math.round(Number(v));if(!isFinite(v))return WFH_DEF;return v<WFH_MIN?WFH_MIN:(v>WFH_MAX?WFH_MAX:v);}
+/* значение из localStorage (строка): только целое из 1–4 цифр, иначе умолчание; вне границ — в границы */
+function wfhParse(s){if(typeof s!=="string"||!/^[0-9]{1,4}$/.test(s))return WFH_DEF;return wfhClamp(parseInt(s,10));}
+/* y (пиксели bitmap, 0 = верх) -> индекс строки в rows[]: 1 строка буфера = 1 пиксель (как 1.2.31), без растяжения; общая формула draw/mousemove/drawCursor */
+function wfhRowAt(y,bottom,baseIndex){return Math.floor(bottom-Math.floor(y))-baseIndex;}
+/* окно прокрутки в строках (глубже bottom не уходит): min(h, n) */
+function wfhWin(n,h){return Math.min(h,n);}
+/* #AWF-UI-3: последний канал (N-1, счётчик переполнения) не выводится и не входит в нормировку: верхняя граница показа chHi <= wfChMax(N) = N-1 (данные и экспорт не трогаются) */
+function wfChMax(n){return n>1?n-1:n;}
+/* #AWF-UI-5: число строк данных в окне (y от 0 вниз): ниже — тёмное поле; маркеры/подписи нуклидов рисуются только внутри */
+function wfDataH(bottom,baseIndex,h){var n=bottom-baseIndex+1;return n<0?0:Math.min(h,n);}
+/* #AWF-UI-5: размер области данных оверлея в CSS px: ширина 98% экрана, высота = остаток под срезом; строка буфера = 1 CSS px по высоте (число строк = h); sw>0 — есть срез sw×sh */
+function wfOverlaySize(W,H,sw,sh){var gap=sw>0?10:0,w=Math.floor(0.98*W),slcH=sw>0?Math.min(0.24*H,w*sh/sw):0,regionH=H-slcH-gap;return{w:w,h:Math.max(1,Math.floor(0.98*regionH)),slcH:slcH,gap:gap,regionH:regionH};}
+/* раскладка: bitmap iw×ih (device px) без масштаба относительно экрана: Wd=iw/k, totH=ih/k (k = device px на CSS px), по центру области; свободное место тёмное */
+function wfZoomLayout(W,H,iw,ih,sw,sh,k){var gap=sw>0?10:0,Wd=iw/k,totH=ih/k,slcH=sw>0?Math.min(0.24*H,Wd*sh/sw):0,regionH=H-slcH-gap;return{Wd:Wd,totH:totH,ox:(W-Wd)/2,oy0:(regionH-totH)/2,regionH:regionH,gap:gap,slcH:slcH};}
+/* #AWF-UI-2: подпись тика оси энергий— целое число кэВ без суффикса; тысячи через пробел (единицу рисует drawAxis один раз) */
+function wfAxisNum(v){var r=Math.round(v),a=Math.abs(r).toString().replace(/(\d)(?=(\d{3})+$)/g,"$1 ");return r<0?"−"+a:a;}
+/*WFH-MATH-END*/
 var MAXROWS=2048;
 var rows=[];
 var baseIndex=0;
@@ -464,7 +490,7 @@ var calib=null, serial="", intervalSec=5, startedAt=0;
 function calibArraySet(c){return !!(c&&c.length&&c.some(function(v){return v!==0}))}
 function calibIsSet(dev){if(!dev)return false;if(typeof dev.calib_set==="boolean")return dev.calib_set;return calibArraySet(dev.calibration||dev.calib)}
 var viewBottom=-1;
-var chLo=0, chHi=CH;
+var chLo=0, chHi=wfChMax(CH);
 var gain=40, scaleMode="log", axisMode="ch";
 var ws=null, wsTimer=null, recording=false;
 var wfStat=null;
@@ -507,17 +533,22 @@ var wf=document.getElementById("wf"), wfx=wf.getContext("2d");
 var cur=document.getElementById("cur"), curx=cur.getContext("2d");
 var slc=document.getElementById("slc"), slcx=slc.getContext("2d");
 var SLW=900, SLH=180;
-(function(){var dpr=Math.max(2,window.devicePixelRatio||1);/* #UI-18: supersample ≥2× → срез/курсор в zoom-оверлее чёткие */function hidpi(c,ctx,w,h){c.width=Math.round(w*dpr);c.height=Math.round(h*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);}hidpi(cur,curx,WFW,WFH);hidpi(slc,slcx,SLW,SLH);})();
-// #UI-4: битмап канваса ВСЕГДА 520 строк (WFHd≡WFH). Попытка ужимать битмап под
+var WFHd=(function(){try{return wfhParse(localStorage.getItem("aswf-wfh"));}catch(e){return WFH_DEF;}})();   // #AWF-UI-1: текущая высота окна (единственный источник; хранилище недоступно → умолчание)
+var DPRs=Math.max(2,window.devicePixelRatio||1);/* #UI-18: supersample ≥2× → срез/курсор в zoom-оверлее чёткие */
+function hidpi(c,ctx,w,h){c.width=Math.round(w*DPRs);c.height=Math.round(h*DPRs);ctx.setTransform(DPRs,0,0,DPRs,0,0);}
+function curResize(){hidpi(cur,curx,WFW,WFHd);}
+if(wf.height!==WFHd)wf.height=WFHd;
+curResize();hidpi(slc,slcx,SLW,SLH);
+// #UI-4 (до #AWF-UI-1: битмап ВСЕГДА 520; теперь высота WFHd задаётся ручкой #wf-grip, от числа строк не зависит). Попытка ужимать битмап под
 // число строк (fitWFHeight) ломала layout: #wf height:auto схлопывался в полоску,
 // а #cur height:100% прибит к высоте ряда (её держит вертикальный скроллбар) →
 // оверлей с осями растягивался ×10 = гигантский текст. Поэтому bitmap фиксирован,
 // а «чёрное поле сверху при движении слайдера» решается clamp-ом прокрутки (ниже,
 // syncScroll/слайдер/alt+wheel: bottom никогда не уходит выше lastIdx).
-var WFHd=WFH;
-/* #F5: число видимых строк = min(WFH,строк буфера); при малом буфере строки растягиваются на всю высоту (нет пустого места) */
-function visRows(){var n=rows.length;return n<1?WFHd:Math.min(WFHd,n);}
-function fitWFHeight(){ /* no-op: bitmap фиксирован 900×520, см. комментарий выше (#UI-4) */ }
+function fitWFHeight(){ /* no-op: высоту bitmap меняет только setWFH (ручка), см. комментарий выше (#UI-4) */ }
+/* #AWF-UI-1: смена высоты окна; save=true → localStorage aswf-wfh (в try/catch) */
+function updGrip(){var g=document.getElementById("wf-grip");if(!g)return;g.setAttribute("aria-valuenow",String(WFHd));g.setAttribute("aria-valuetext",WFHd+" px");g.title=t("wf.grip");g.setAttribute("aria-label",t("wf.grip"));}
+function setWFH(h,save){h=wfhClamp(h);if(h===WFHd)return;WFHd=h;wf.height=h;curResize();updGrip();if(save){try{localStorage.setItem("aswf-wfh",String(h));}catch(e){}}draw();}
 var slcMode="log", slcHoverLi=-1, slcCursorCh=-1, cursorY=-1;
 // #UI-16: true ⇔ курсор ВНУТРИ canvas, но строка под ним вне rows[] (чёрная зона
 // выше первой/ниже последней строки). Тогда срез ДОЛЖЕН показать «нет данных»,
@@ -565,35 +596,23 @@ function syncNucBtn(){var b=document.getElementById("bNuc");if(!b)return;b.textC
 var normMax=64;
 function rowMax(r){var m=0;for(var i=chLo;i<chHi&&i<r.length;i++){if(r[i]>m)m=r[i];}return m;}
 
-function draw(){
- fitWFHeight();   // #UI-4: подогнать высоту канваса под число строк
- var img=wfx.createImageData(WFW,WFHd);
+/* #AWF-UI-5: заливка спектрограммы в контекст w×h: строка буфера = 1 пиксель по высоте (y -> bottom-y), ниже буфера тёмное; нормировка — текущая normMax */
+function paintHeat(ctx,w,h,bottom){
+ var img=ctx.createImageData(w,h);
  var data=img.data;
  var span=chHi-chLo; if(span<1)span=1;
- var lastIdx=baseIndex+rows.length-1;
- var bottom=(viewBottom<0)?lastIdx:viewBottom;
- var seenMax=1;
- var vis=visRows();
- for(var y=0;y<WFHd;y++){
-  var gIdx=bottom-Math.floor(y*vis/WFHd);
-  var li=gIdx-baseIndex;
-  if(li<0||li>=rows.length)continue;
-  var rm=rowMax(rows[li]); if(rm>seenMax)seenMax=rm;
- }
- normMax=normMax*0.7+seenMax*0.3; if(normMax<1)normMax=1;
  var gfac=gain/40.0;
- var vis=visRows();
- for(var y=0;y<WFHd;y++){
-  var gIdx=bottom-Math.floor(y*vis/WFHd);
+ for(var y=0;y<h;y++){
+  var gIdx=bottom-y;
   var li=gIdx-baseIndex;
-  var off=y*WFW*4;
+  var off=y*w*4;
   if(li<0||li>=rows.length){
-   for(var x=0;x<WFW;x++){var o=off+x*4;data[o]=8;data[o+1]=10;data[o+2]=8;data[o+3]=255;}
+   for(var x=0;x<w;x++){var o=off+x*4;data[o]=8;data[o+1]=10;data[o+2]=8;data[o+3]=255;}
    continue;
   }
   var row=rows[li];
-  for(var x=0;x<WFW;x++){
-   var c=chLo+Math.floor(x/WFW*span);
+  for(var x=0;x<w;x++){
+   var c=chLo+Math.floor(x/w*span);
    var v=(c>=0&&c<row.length)?row[c]:0;
    var t;
    if(scaleMode==="log"){t=Math.log1p(v*gfac)/Math.log1p(normMax);}
@@ -603,7 +622,21 @@ function draw(){
    data[o]=col[0]|0;data[o+1]=col[1]|0;data[o+2]=col[2]|0;data[o+3]=255;
   }
  }
- wfx.putImageData(img,0,0);
+ ctx.putImageData(img,0,0);
+}
+function draw(){
+ fitWFHeight();   // #UI-4: подогнать высоту канваса под число строк
+ var lastIdx=baseIndex+rows.length-1;
+ var bottom=(viewBottom<0)?lastIdx:viewBottom;
+ var seenMax=1;
+ for(var y=0;y<WFHd;y++){
+  var gIdx=bottom-y;
+  var li=gIdx-baseIndex;
+  if(li<0||li>=rows.length)continue;
+  var rm=rowMax(rows[li]); if(rm>seenMax)seenMax=rm;
+ }
+ normMax=normMax*0.7+seenMax*0.3; if(normMax<1)normMax=1;
+ paintHeat(wfx,WFW,WFHd,bottom);
  drawAxis();
  drawNuclidesWF();
  drawCursor();
@@ -612,33 +645,37 @@ function draw(){
  syncScroll();
 }
 /* #DEMO-12: вертикальные маркеры выбранных нуклидов на спектрограмме.
-   Рисуем в canvas cur (тот же, что оси/курсор) — оверлей берёт его через
-   compose(wfEl,curEl), поэтому линии видны и в обычном виде, и в zoom-оверлее.
+   Рисуем в canvas cur (оси/курсор); оверлей вызывает её сам на своём слое (ovBitmap) в разрешении экрана.
    Координата X канала c: (c-chLo)/span*WFW (та же, что у баров среза). */
-function drawNuclidesWF(){
+function drawNuclidesWF(g,w,h){   /* #AWF-UI-5: цель/размер параметризованы */
+ g=g||curx; w=w||WFW; h=h||WFHd;
  if(!calib||!nucAny()||!nucVis)return;   // #UI-40: nucVis — быстрый on/off, выбор не меняется
  var span=chHi-chLo; if(span<1)span=1;
- curx.save();
- curx.textAlign="left"; curx.textBaseline="top"; curx.font="9px ui-monospace,monospace";
+ var lastIdx0=baseIndex+rows.length-1, bottom0=(viewBottom<0)?lastIdx0:viewBottom;
+ var dH=Math.min(h-16,wfDataH(bottom0,baseIndex,h));   // #AWF-UI-5: маркеры и подписи — только в области данных
+ if(dH<=0)return;
+ g.save();
+ g.textAlign="left"; g.textBaseline="top"; g.font="9px ui-monospace,monospace";
  for(var i=0;i<NUCLIDES.length;i++){
   var n=NUCLIDES[i]; if(!nucShow[n.id])continue;
   for(var j=0;j<n.lines.length;j++){
    var c=kev2ch(n.lines[j]);
    if(c<chLo||c>=chHi)continue;
-   var x=Math.round((c-chLo)/span*WFW)+0.5;
-   curx.strokeStyle=n.color; curx.lineWidth=1; curx.globalAlpha=0.8; curx.setLineDash([4,3]);
-   curx.beginPath(); curx.moveTo(x,0); curx.lineTo(x,WFHd-16); curx.stroke();
-   curx.setLineDash([]); curx.globalAlpha=0.95;
+   var x=Math.round((c-chLo)/span*w)+0.5;
+   g.strokeStyle=n.color; g.lineWidth=1; g.globalAlpha=0.8; g.setLineDash([4,3]);
+   g.beginPath(); g.moveTo(x,0); g.lineTo(x,dH); g.stroke();
+   g.setLineDash([]); g.globalAlpha=0.95;
    var ly=2+((i%3)*10);
-   curx.fillStyle="rgba(0,0,0,.55)";
-   var lw=curx.measureText(n.name).width+4;
-   var lx=x+2; if(lx+lw>WFW)lx=x-lw-2;
-   curx.fillRect(lx,ly,lw,10);
-   curx.fillStyle=n.color; curx.fillText(n.name,lx+2,ly+1);
-   curx.globalAlpha=1;
+   if(ly+10>dH){g.globalAlpha=1;continue;}   // подпись не помещается в область данных — не рисуем
+   g.fillStyle="rgba(0,0,0,.55)";
+   var lw=g.measureText(n.name).width+4;
+   var lx=x+2; if(lx+lw>w)lx=x-lw-2;
+   g.fillRect(lx,ly,lw,10);
+   g.fillStyle=n.color; g.fillText(n.name,lx+2,ly+1);
+   g.globalAlpha=1;
   }
  }
- curx.restore();
+ g.restore();
 }
 /* #DEMO-3/#DEMO-5: видимая полоса прокрутки истории спектрограммы.
    value=0 → live (новейшая строка), value=max → самая старая строка. */
@@ -646,7 +683,7 @@ function syncScroll(){
  var sb=document.getElementById("wf-scroll");
  if(!sb)return;
  var lastIdx=baseIndex+rows.length-1;
- var mx=Math.max(0,rows.length-Math.min(WFH,rows.length));   // #UI-4: окно прокрутки = WFHd (min(WFH,строк)), не WFH → при <520 строк mx=0, слайдер выключен
+ var mx=Math.max(0,rows.length-wfhWin(rows.length,WFHd));   // #UI-4: окно прокрутки = min(WFHd,строк) → при строках <=WFHd mx=0, слайдер выключен
  if(parseInt(sb.max)!==mx)sb.max=mx;
  sb.disabled=(mx<=0);
  if(document.activeElement===sb)return;
@@ -668,7 +705,7 @@ function drawCursor(){
  curx.stroke();
  var lastIdx=baseIndex+rows.length-1;
  var bottom=(viewBottom<0)?lastIdx:viewBottom;
- var li=Math.floor(bottom-Math.floor(y*visRows()/WFHd))-baseIndex;   // как mousemove/draw (растяжение visRows)
+ var li=wfhRowAt(y,bottom,baseIndex);   // как mousemove/draw (одна формула wfhRowAt)
  var inRow=(li>=0&&li<rows.length);
  var v=(inRow&&slcCursorCh<rows[li].length)?rows[li][slcCursorCh]:0;
  var ke=calib?(" / "+ch2kev(slcCursorCh).toFixed(1)+" "+t("opt.kev")):"";
@@ -760,6 +797,7 @@ function drawSlice(){
   var cLo=Math.floor(chLo+k*step);
   var cHi=Math.ceil(chLo+(k+1)*step);
   if(cHi<=cLo)cHi=cLo+1;
+  if(cHi>chHi)cHi=chHi;   // #AWF-UI-3: округление ceil не должно захватить канал chHi (последний)
   var v=0;
   for(var c=cLo;c<cHi&&c<row.length;c++){ if(c<0)continue; if(row[c]>v)v=row[c]; }
   var ti=(slcMode==="log")?(Math.log1p(v)/denom):(v/denom);
@@ -818,19 +856,22 @@ function drawSlice(){
  slcx.textAlign="right"; slcx.fillText(slcMode==="log"?"log Y":"lin Y",SLW-6,12);
 }
 
-function drawAxis(){
- curx.clearRect(0,0,WFW,WFHd);
- curx.fillStyle="rgba(0,0,0,.55)";curx.fillRect(0,WFHd-16,WFW,16);
- curx.strokeStyle="#283024";curx.fillStyle="#aeb6a8";curx.font="10px ui-monospace,monospace";curx.textAlign="center";
+function drawAxis(g,w,h){   /* #AWF-UI-5: цель/размер параметризованы (оверлей рисует в разрешении экрана) */
+ g=g||curx; w=w||WFW; h=h||WFHd;
+ g.clearRect(0,0,w,h);
+ g.fillStyle="rgba(0,0,0,.55)";g.fillRect(0,h-16,w,16);
+ g.strokeStyle="#283024";g.fillStyle="#aeb6a8";g.font="10px ui-monospace,monospace";g.textAlign="center";
  var span=chHi-chLo;
  var N=8;
  for(var i=0;i<=N;i++){
-  var x=i/N*WFW;
+  var x=i/N*w;
   var ch=chLo+span*i/N;
-  var lbl=axisMode==="kev"&&calib?ch2kev(ch).toFixed(0)+"k":Math.round(ch);
-  curx.beginPath();curx.moveTo(x,WFHd-16);curx.lineTo(x,WFHd-12);curx.stroke();
+  var kevAx=(axisMode==="kev"&&calib);   // #AWF-UI-2: тики — целые кэВ без «k», единица один раз на конце оси
+  var lbl=kevAx?wfAxisNum(ch2kev(ch)):Math.round(ch);
+  g.beginPath();g.moveTo(x,h-16);g.lineTo(x,h-12);g.stroke();
   var tx=x; if(i===0)tx+=12; if(i===N)tx-=12;
-  curx.fillText(lbl,tx,WFHd-4);
+  if(i===N&&kevAx){g.textAlign="right";g.fillText(lbl+" "+t("ax.kev"),w-3,h-4);g.textAlign="center";}
+  else g.fillText(lbl,tx,h-4);
  }
 }
 
@@ -856,7 +897,7 @@ wf.parentNode.addEventListener("mousemove",function(e){
  var bottom=(viewBottom<0)?lastIdx:viewBottom;
  // #UI-16: Math.floor чтобы li был целым (без него slcHoverLi=3.355934... →
  // rows[3.355]=undefined → drawSlice уходил в fallback и показывал live).
- var li=Math.floor(bottom-Math.floor(y*visRows()/WFHd))-baseIndex;
+ var li=wfhRowAt(y,bottom,baseIndex);
  var inWf=(li>=0&&li<rows.length);
  slcHoverLi=inWf?li:-1;
  slcCursorInDark=!inWf;   // курсор внутри canvas, но строки под ним нет
@@ -938,8 +979,10 @@ function connectWS(){
 }
 
 function chHiClamp(){
- if(chHi>CH)chHi=CH; if(chLo<0)chLo=0; if(chLo>=chHi)chLo=Math.max(0,chHi-1);
- document.getElementById("chHi").max=CH;document.getElementById("chLo").max=CH-1;
+ var cm=wfChMax(CH);   // #AWF-UI-3: показ без последнего канала
+ if(chHi>cm)chHi=cm; if(chLo<0)chLo=0; if(chLo>=chHi)chLo=Math.max(0,chHi-1);
+ document.getElementById("chHi").max=cm;document.getElementById("chLo").max=cm-1;
+ document.getElementById("chLo").value=chLo;document.getElementById("chHi").value=chHi;
 }
 
 // #REC-7: #state — ТОЛЬКО индикатор записи. Строка #indic висит всегда; «● ЗАПИСЬ»
@@ -1375,11 +1418,11 @@ document.getElementById("axis").onchange=function(){axisMode=this.value;draw();}
 document.getElementById("scale").onchange=function(){scaleMode=this.value;draw();};
 document.getElementById("gain").oninput=function(){gain=parseInt(this.value);draw();};
 function applyZoom(){chLo=parseInt(document.getElementById("chLo").value)||0;
- chHi=parseInt(document.getElementById("chHi").value)||CH;chHiClamp();draw();}
+ chHi=parseInt(document.getElementById("chHi").value)||wfChMax(CH);chHiClamp();draw();}
 document.getElementById("chLo").onchange=applyZoom;
 document.getElementById("chHi").onchange=applyZoom;
-document.getElementById("bFit").onclick=function(){chLo=0;chHi=CH;
- document.getElementById("chLo").value=0;document.getElementById("chHi").value=CH;draw();};
+document.getElementById("bFit").onclick=function(){chLo=0;chHi=wfChMax(CH);
+ document.getElementById("chLo").value=0;document.getElementById("chHi").value=chHi;draw();};
 Array.prototype.forEach.call(document.querySelectorAll("#slcSeg button"),function(b){
  b.onclick=function(){
   Array.prototype.forEach.call(document.querySelectorAll("#slcSeg button"),function(x){x.classList.remove("on");});
@@ -1396,7 +1439,7 @@ wf.addEventListener("wheel",function(e){
   e.preventDefault();
   var rc=wf.getBoundingClientRect();var x=(e.clientX-rc.left)*(WFW/rc.width);
   var span=chHi-chLo;var cc=chLo+x/WFW*span;
-  var f=e.deltaY<0?0.8:1.25;var ns=Math.max(16,Math.min(CH,span*f));
+  var f=e.deltaY<0?0.8:1.25;var ns=Math.max(16,Math.min(wfChMax(CH),span*f));
   chLo=Math.round(cc-(x/WFW)*ns);chHi=Math.round(chLo+ns);chHiClamp();
   document.getElementById("chLo").value=chLo;document.getElementById("chHi").value=chHi;
   draw();
@@ -1406,7 +1449,7 @@ wf.addEventListener("wheel",function(e){
   var bottom=(viewBottom<0)?lastIdx:viewBottom;
   var step=e.deltaY<0?-3:3;
   bottom+=step;
-  var lo=baseIndex+Math.min(WFH,rows.length)-1;if(bottom<lo)bottom=lo;viewBottom=(bottom>=lastIdx)?-1:bottom;   // #UI-4: пол окна = WFHd → нет пустых строк сверху
+  var lo=baseIndex+wfhWin(rows.length,WFHd)-1;if(bottom<lo)bottom=lo;viewBottom=(bottom>=lastIdx)?-1:bottom;   // #UI-4: пол окна = WFHd → нет пустых строк сверху
   draw();
  }
 },{passive:false});
@@ -1418,12 +1461,24 @@ wf.addEventListener("wheel",function(e){
  syncNucBtn();
  var bn=document.getElementById("bNuc"); if(bn)bn.onclick=function(){nucVis=!nucVis;try{localStorage.setItem("aswf-nuc-vis",nucVis?"1":"0");}catch(e){}syncNucBtn();draw();};
  document.getElementById("ip-chip").textContent=location.hostname;
+ /* #AWF-UI-1: ручка высоты окна (Pointer Events: мышь+касание); dy экрана → пиксели bitmap через WFW/ширина канваса */
+ var grip=document.getElementById("wf-grip");
+ if(grip){
+  updGrip();
+  var gy0=0,gh0=0,gid=-1;
+  grip.addEventListener("pointerdown",function(e){if(e.pointerType==="mouse"&&e.button!==0)return;gid=e.pointerId;gy0=e.clientY;gh0=WFHd;grip.classList.add("drag");try{grip.setPointerCapture(gid);}catch(x){}e.preventDefault();});
+  grip.addEventListener("pointermove",function(e){if(e.pointerId!==gid)return;var rc=wf.getBoundingClientRect();setWFH(gh0+(e.clientY-gy0)*(rc.width>0?WFW/rc.width:1),false);});
+  var gend=function(e){if(e.pointerId!==gid)return;gid=-1;grip.classList.remove("drag");try{localStorage.setItem("aswf-wfh",String(WFHd));}catch(x){}};
+  grip.addEventListener("pointerup",gend);grip.addEventListener("pointercancel",gend);
+  grip.addEventListener("keydown",function(e){var h=({ArrowDown:WFHd+20,ArrowUp:WFHd-20,Home:WFH_MIN,End:WFH_MAX})[e.key];if(h===undefined)return;e.preventDefault();setWFH(h,true);});
+  grip.addEventListener("dblclick",function(){setWFH(WFH_DEF,true);});
+ }
  var sb=document.getElementById("wf-scroll");
  if(sb)sb.addEventListener("input",function(){
   var lastIdx=baseIndex+rows.length-1;
   var v=parseInt(sb.value)||0;
   if(v<=0){viewBottom=-1;}
-  else{var win=Math.min(WFH,rows.length);var lo=baseIndex+win-1;var bottom=lastIdx-v;if(bottom<lo)bottom=lo;viewBottom=(bottom>=lastIdx)?-1:bottom;}   // #UI-4: пол окна = WFHd → нет пустых строк сверху
+  else{var win=wfhWin(rows.length,WFHd);var lo=baseIndex+win-1;var bottom=lastIdx-v;if(bottom<lo)bottom=lo;viewBottom=(bottom>=lastIdx)?-1:bottom;}   // #UI-4: пол окна = WFHd → нет пустых строк сверху
   draw();
  });
  var savedPal="Inferno";
@@ -1482,7 +1537,7 @@ window.openZoomOverlay=function(sourcesFn,opts){
  resize();window.addEventListener("resize",resize);
  function render(){
   if(closed)return;
-  var srcs=sourcesFn();
+  var srcs=sourcesFn(W,H);
   var ctx=cv.getContext("2d");
   var dpr=window.devicePixelRatio||1;
   ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle="#000";ctx.fillRect(0,0,cv.width,cv.height);
@@ -1494,13 +1549,13 @@ window.openZoomOverlay=function(sourcesFn,opts){
       колесо увеличивает спектрограмму, перетаскивание (ЛКМ/ПКМ) навигирует по ней. */
    var spg=srcs[0].canvas;
    var slc=srcs[1]?srcs[1].canvas:null;
-   var Wd=0.98*W, ox=(W-Wd)/2;
-   var slcH=slc?Math.min(0.24*H, Wd*(slc.height/slc.width)):0;
-   var gap=slc?10:0;
-   var regionH=H-slcH-gap;          /* область спектрограммы: y∈[0..regionH] */
+   /* #AWF-UI-5: без масштаба по высоте: 1 строка буфера = 1 CSS px (bitmap строится в разрешении экрана, см. ovBitmap/wfZoomLayout) */
+   var LY=wfZoomLayout(W,H,spg.width,spg.height,slc?slc.width:0,slc?slc.height:0,dpr);
+   var Wd=LY.Wd, ox=LY.ox, slcH=LY.slcH, gap=LY.gap;
+   var regionH=LY.regionH;          /* область спектрограммы: y∈[0..regionH] */
    vcy=regionH/2;                   /* центр зума/пана — центр области спектрограммы */
-   var totH=0.98*regionH;           /* fill области по высоте (как и было — без сохранения аспекта) */
-   var oy0=(regionH-totH)/2;
+   var totH=LY.totH;
+   var oy0=LY.oy0;
    /* #UI-24/#DEMO-5/#DEMO-8: pan не выпускает спектрограмму за края её области.
       Единый clamp по доступному зазору при ЛЮБОМ зуме (включая fit): применённый
       «ладонью» сдвиг сохраняется в границах рамки, а НЕ затирается принудительным
@@ -1651,29 +1706,22 @@ window.openZoomOverlay=function(sourcesFn,opts){
  var wrap=document.getElementById("wrap-wf");
  var wfEl=document.getElementById("wf");
  var slcEl=document.getElementById("slc");
- /* #DEMO-10: композит строим в МАКСИМАЛЬНОМ разрешении из a/b. Слой cur (оси/курсор/
-    линии нуклидов/подписи) — супердискретизирован (1800×1040 через hidpi), wf-heatmap —
-    900×520. Раньше композит брал размер a (=wf, 900) и ужимал cur до 900 → текст осей
-    запекался в 900px и в оверлее растягивался ~2× → мыло. Теперь холст = размер большего
-    слоя, heatmap апскейлим пиксельно (он и так дискретный), а текст cur ложится на родном
-    разрешении → в оверлее рисуется почти 1:1, чётко. */
- function compose(a,b){
-  var W=b?Math.max(a.width,b.width):a.width;
-  var H=b?Math.max(a.height,b.height):a.height;
-  var c=document.createElement("canvas");
-  c.width=W; c.height=H;
-  var cx=c.getContext("2d");
-  cx.imageSmoothingEnabled=false;
-  cx.drawImage(a,0,0,W,H);
-  if(b)cx.drawImage(b,0,0,W,H);
+ var ovH=WFHd;   /* #AWF-UI-5: строк в оверлее = высота области данных (CSS px) */
+ /* #AWF-UI-5: bitmap оверлея в разрешении экрана: heat w×h CSS px (строка = 1 px), оси и подписи нуклидов — слоем в device px, без растяжения */
+ function ovBitmap(W,H){
+  var sz=wfOverlaySize(W,H,slcEl?slcEl.width:0,slcEl?slcEl.height:0),k=window.devicePixelRatio||1;ovH=sz.h;
+  var lastIdx=baseIndex+rows.length-1,bottom=(viewBottom<0)?lastIdx:viewBottom;
+  var hc=document.createElement("canvas");hc.width=sz.w;hc.height=sz.h;paintHeat(hc.getContext("2d"),sz.w,sz.h,bottom);
+  var lc=document.createElement("canvas");lc.width=Math.round(sz.w*k);lc.height=Math.round(sz.h*k);var lx=lc.getContext("2d");lx.setTransform(k,0,0,k,0,0);
+  drawAxis(lx,sz.w,sz.h);drawNuclidesWF(lx,sz.w,sz.h);
+  var c=document.createElement("canvas");c.width=lc.width;c.height=lc.height;var cx=c.getContext("2d");cx.imageSmoothingEnabled=false;cx.drawImage(hc,0,0,c.width,c.height);cx.drawImage(lc,0,0);
   return c;
  }
  function open(){
   var scrollAcc=0; /* #DEMO-11: накопитель дробных строк при drag→scroll */
-  window.openZoomOverlay(function(){
+  window.openZoomOverlay(function(W,H){
    var arr=[];
-   var curEl=document.getElementById("cur");
-   if(wfEl)arr.push({canvas:curEl?compose(wfEl,curEl):wfEl});
+   if(wfEl)arr.push({canvas:ovBitmap(W,H)});
    if(slcEl)arr.push({canvas:slcEl});
    return arr;
   },{
@@ -1683,9 +1731,9 @@ window.openZoomOverlay=function(sourcesFn,opts){
    onScrollRows:function(frac){
     if(!rows.length)return;
     var lastIdx=baseIndex+rows.length-1;
-    var oldest=baseIndex+(WFH-1); if(oldest>lastIdx)oldest=lastIdx;
+    var oldest=baseIndex+(Math.max(ovH,WFHd)-1); if(oldest>lastIdx)oldest=lastIdx;
     var bottom=(viewBottom<0)?lastIdx:viewBottom;
-    scrollAcc+=frac*WFH;
+    scrollAcc+=frac*ovH;
     var step=scrollAcc|0; if(step===0)return;
     scrollAcc-=step;
     bottom+=step;
@@ -1699,7 +1747,7 @@ window.openZoomOverlay=function(sourcesFn,opts){
    onCursor:function(fx,fy){
     var lastIdx=baseIndex+rows.length-1;
     var bottom=(viewBottom<0)?lastIdx:viewBottom;
-    var li=(bottom-Math.floor(fy*visRows()))-baseIndex;
+    var li=(bottom-Math.floor(fy*ovH))-baseIndex;
     var span=chHi-chLo; if(span<1)span=1;
     slcCursorCh=chLo+Math.floor(fx*span);
     if(li>=0&&li<rows.length){slcHoverLi=li;slcCursorInDark=false;}
@@ -1711,7 +1759,7 @@ window.openZoomOverlay=function(sourcesFn,opts){
     if(fx<0||fx>1||fy<0||fy>1||!rows.length)return null;
     var lastIdx=baseIndex+rows.length-1;
     var bottom=(viewBottom<0)?lastIdx:viewBottom;
-    var gIdx=bottom-Math.floor(fy*visRows());
+    var gIdx=bottom-Math.floor(fy*ovH);
     var li=gIdx-baseIndex;
     if(li<0||li>=rows.length)return null;
     var span=chHi-chLo; if(span<1)span=1;
