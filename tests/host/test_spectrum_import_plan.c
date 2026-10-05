@@ -129,7 +129,7 @@ static void test_imp_30days(void)
     CHECK(dec(SPEC_IMPORT_SIZE) == IMP_OK && g_sp.total_time_sec == 2592000 && g_sp.cps == 0);
     flat(0xFFFFFFFFu, 0, 0); put32(g_body, 12, 2592000); put_crc(g_body);
     CHECK(dec(SPEC_IMPORT_SIZE) == IMP_OK && g_sp.cps == 1657);   // 4294967295 / 2592000 = 1657,0...
-    mk_body(g_body); put32(g_body, 64, 0xFFFFFFFFu); put32(g_body, 68, 0xFFFFFFFFu); put_crc(g_body);   // saved_at = -1
+    mk_body(g_body); put32(g_body, 64, 0xFFFFFFFFu); put32(g_body, 68, 0xFFFFFFFFu); put_crc(g_body);   // saved_at = -1 (i64): старшее слово != 0 -> вне u32
     CHECK(dec(SPEC_IMPORT_SIZE) == IMP_OK && g_sp.saved_at >= 1700000000);                        // подставлено время платы
 }
 // Удаление записи: только POST /api/saved/<i>/delete. Раньше любой POST /api/saved/* (в т.ч. .../import, .../abc) удалял spec_0000.

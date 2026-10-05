@@ -92,7 +92,13 @@ docker run --rm -v "${PWD}:/project" -w /project espressif/idf:v5.4 `
 
 Build output: `build/atomspectra.bin` (+ bootloader + partition table).
 
+`sdkconfig.defaults` is applied only when `sdkconfig` is created: an existing `sdkconfig` (git-ignored) silently overrides changed defaults. After editing the defaults, delete `sdkconfig` (or check with `sh scripts/check_sdkconfig_defaults.sh`; expect exit code 0 and no MISMATCH lines).
+
 ## 4. Flashing
+
+### Recommended way: the flasher (updates and first flash)
+
+The preferred way is [esp32-flasher](https://github.com/VibeEngineering-LLC/atomspectra-waterfall-esp32-flasher): pick the "AtomSpectra Waterfall" project and a version; the flasher downloads the release from GitHub, verifies SHA-256 and flashes the board. No build needed. The on-board "Install from GitHub" button in firmware 1.2.30 and 1.2.31 may fail (`sums_download_failed`, not enough internal RAM for TLS) — use the flasher, or upload `atomspectra_gw.bin` manually on the System page.
 
 ### Via ESP-IDF (if installed)
 
@@ -270,4 +276,4 @@ you precisely because it is irreversible.
 
 - ESP-IDF **v5.1 or higher** (USB Host is available from 5.0, LittleFS from 5.1)
 - Target **esp32s3** (not esp32, not esp32c3): `idf.py set-target esp32s3`
-- On dependency errors: delete `build/` and `managed_components/`, then rebuild
+- On dependency errors: delete `build/` and `managed_components/`, then rebuild

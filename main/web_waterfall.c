@@ -1304,9 +1304,12 @@ static void wf_dl_task(void *arg)
 static esp_err_t wf_dl_busy(httpd_req_t *req)
 {
     httpd_resp_set_hdr(req, "Retry-After", "2");
+    // Непрочитанное тело (POST импорта, 32896 Б): ESP_OK заставил бы httpd_req_delete дочитывать его без срока (F1 прохода 3A).
+    bool unread = req->content_len > 0;
+    if (unread) httpd_resp_set_hdr(req, "Connection", "close");
     httpd_resp_set_status(req, "503 Service Unavailable");
     httpd_resp_sendstr(req, "busy");
-    return ESP_OK;
+    return unread ? ESP_FAIL : ESP_OK;
 }
 
 static esp_err_t wf_dl_async(httpd_req_t *req, esp_err_t (*h)(httpd_req_t *), volatile int *cnt, int cmax)

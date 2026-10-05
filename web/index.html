@@ -62,6 +62,16 @@ table.saved tr.on td{ background:rgba(110,168,255,.07); }
 .empty{ color:#5b655a; font-style:italic; font-size:12.5px; }
 #overlay-label{ color:#f0c45a; font-size:12px; }
 @media (max-width:520px){ .big{ font-size:24px } }
+@media (max-width:480px){  /* #UI-MOB: 375px, header/rows/nav not wider than screen */
+header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
+.brand{ min-width:0; flex-wrap:wrap; gap:10px; }
+.chips{ min-width:0; justify-content:flex-start; }
+nav{ padding:0 6px; }
+nav a,nav span{ padding:12px 10px; }
+.wrap{ padding:14px 12px 0; }
+.row{ gap:10px; padding:10px 12px; }
+.grp{ flex-wrap:wrap; min-width:0; }
+}
 </style>
 </head>
 <body>
@@ -105,7 +115,7 @@ table.saved tr.on td{ background:rgba(110,168,255,.07); }
 <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;justify-content:flex-end">
 <span class="big" id="big-time">00:00:00</span><span class="mut">|</span>
 <span class="big ac"><span id="big-cps">0</span><span class="mut" id="big-sma" style="font-size:15px" title="SMA"></span><span class="mut" style="font-size:12px"> CPS</span></span><span class="mut">|</span>
-<span class="big w"><span id="big-total">0</span><span class="mut" style="font-size:12px"> counts</span></span>
+<span class="big w"><span id="big-total">0</span><span class="mut" style="font-size:12px" data-i18n="st.counts"> counts</span></span>
 <span class="mut" id="big-dose-sep" style="display:none">|</span>
 <span class="big ac" id="big-dose-wrap" style="display:none"><span id="big-dose">0.000</span><span class="mut" style="font-size:12px"> µSv/h</span></span>
 </div>
@@ -147,8 +157,8 @@ table.saved tr.on td{ background:rgba(110,168,255,.07); }
 
 <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:2px;font-size:12px;color:#8a9686">
  <span>Префикс файлов:</span>
- <input type="text" id="fx-prefix" maxlength="23" spellcheck="false" autocomplete="off" placeholder="MY1" title="Добавляется в начало имени всех выгрузок этой платы. Латиница, цифры, _ и -." style="width:110px;background:#11150f;color:#cfd6cd;border:1px solid #444;padding:4px 7px;border-radius:4px;font-family:inherit;font-size:12px">
- <button type="button" onclick="savePrefix()" style="cursor:pointer;background:rgba(52,211,192,.12);border:1px solid rgba(52,211,192,.4);color:#34d3c0;border-radius:6px;padding:5px 12px;font-family:inherit;font-size:12px;font-weight:600">Сохранить</button>
+ <input type="text" id="fx-prefix" maxlength="23" spellcheck="false" autocomplete="off" placeholder="MY1" title="Добавляется в начало имени всех выгрузок этой платы. Латиница, цифры, _ и -." style="width:200px;background:#11150f;color:#cfd6cd;border:1px solid #444;padding:4px 7px;border-radius:4px;font-family:inherit;font-size:12px">
+ <button type="button" onclick="savePrefix()" style="cursor:pointer;background:rgba(52,211,192,.12);border:1px solid rgba(52,211,192,.4);color:#34d3c0;border-radius:6px;padding:5px 12px;font-family:inherit;font-size:12px;font-weight:600">Задать</button>
  <span id="fx-prefix-st" style="min-width:16px;font-size:14px"></span>
 </div>
 
@@ -217,7 +227,7 @@ var DICT={
   "btn.start":"&#9654; Старт","btn.stop":"&#9632; Стоп","btn.reset":"&#8634; Сброс",
   "acq.run":"● НАБОР","acq.stop":"○ стоп",
   "btn.save":"&#128190; Сохранить",
-  "btn.expXml":"Export XML","btn.expCsv":"Export CSV","btn.expN42":"Export N42","btn.expSpe":"Export SPE",
+  "btn.expXml":"Экспорт XML","btn.expCsv":"Экспорт CSV","btn.expN42":"Экспорт N42","btn.expSpe":"Экспорт SPE",
   "btn.clearOvl":"Снять overlay",
   "btn.rebootDev":"Reboot прибора","btn.rebootEsp":"Reboot ESP","btn.wifiReset":"WiFi Reset",
   "ctl.scale":"Шкала Y","ctl.value":"Величина","ctl.x":"Ось X","ctl.xr":"Диапазон X, кэВ","ctl.xall":"весь",
@@ -234,8 +244,8 @@ var DICT={
   "saved.loading":"Загрузка...","saved.empty":"Нет сохранённых",
   "ax.ch":"Channel","ax.kev":"keV","ax.cnt":"Counts","ax.cps":"CPS",
   "cur.kev":"кэВ","cur.cnt":"counts",
-  "th.idx":"#","th.saved":"Сохранено","th.counts":"Counts","th.time":"Время","th.export":"Export",
-  "btn.overlay":"Overlay","btn.del":"Удал.",
+  "th.idx":"#","th.saved":"Сохранено","th.counts":"Counts","th.time":"Время","th.export":"Экспорт",
+  "btn.overlay":"Overlay","btn.overlayOff":"Снять","btn.del":"Удал.",
   "confirm.del":"Удалить спектр #%1?",
   "confirm.rebootDev":"Перезагрузить спектрометр?",
   "confirm.rebootEsp":"Перезагрузить ESP32?",
@@ -250,7 +260,7 @@ var DICT={
   "log.del":"Удалено: #%1","log.rebootDev":"Команда перезагрузки прибора отправлена",
   "log.exportOk":"Выгружено: %1","log.exportErr":"Экспорт не удался: %1",
   "log.cal":"Калибровка: [%1]","log.calErr":"Ошибка калибровки: %1","log.calClear":"Калибровка очищена",
-  "t.d":"д","st.real":"Реал.","st.live":"Живое","st.dead":"Мёртв.","st.dose":"МД",
+  "t.d":"д","st.lost":"Потеряно","st.counts":" Импульсов","st.real":"Реал.","st.live":"Живое","st.dead":"Мёртв.","st.dose":"МД",
   "err.prefix":"Ошибка: %1"
  },
  en:{
@@ -286,7 +296,7 @@ var DICT={
   "ax.ch":"Channel","ax.kev":"keV","ax.cnt":"Counts","ax.cps":"CPS",
   "cur.kev":"keV","cur.cnt":"counts",
   "th.idx":"#","th.saved":"Saved","th.counts":"Counts","th.time":"Time","th.export":"Export",
-  "btn.overlay":"Overlay","btn.del":"Del",
+  "btn.overlay":"Overlay","btn.overlayOff":"Remove","btn.del":"Del",
   "confirm.del":"Delete spectrum #%1?",
   "confirm.rebootDev":"Reboot spectrometer?",
   "confirm.rebootEsp":"Reboot ESP32?",
@@ -301,7 +311,7 @@ var DICT={
   "log.del":"Deleted #%1","log.rebootDev":"Reboot device sent",
   "log.exportOk":"Exported: %1","log.exportErr":"Export failed: %1",
   "log.cal":"Calibration: [%1]","log.calErr":"Calibration error: %1","log.calClear":"Calibration cleared",
-  "t.d":"d","st.real":"Real","st.live":"Live","st.dead":"Dead","st.dose":"DR",
+  "t.d":"d","st.lost":"Lost","st.counts":" counts","st.real":"Real","st.live":"Live","st.dead":"Dead","st.dose":"DR",
   "err.prefix":"Error: %1"
  }
 };
@@ -381,15 +391,16 @@ function smaWinSec(){var w=10,iv=10;try{var v=parseInt(localStorage.getItem("asw
 function smaCps(t,n){if(typeof t!=="number"||typeof n!=="number")return null;if(smaHist.length&&t<smaHist[smaHist.length-1].t)smaHist=[];if(!smaHist.length||t>smaHist[smaHist.length-1].t)smaHist.push({t:t,n:n});var W=smaWinSec();while(smaHist.length>2&&smaHist[1].t<=t-W)smaHist.shift();if(smaHist.length>600)smaHist.shift();var a=smaHist[0];return(t>a.t)?(n-a.n)/(t-a.t):null}
 function fmtNum(n){return Math.round(n).toLocaleString(lcl())}
 /* #MX-10 (1.2.31): степенная шкала Y — y^(1/e): поджимает пики мягче логарифма, по аналогии с BecqMoni */
-function setPow(){isPow=true;isLog=false;setSeg(["btn-lin","btn-log","btn-pow"],2);if(lastD)draw(lastD);else clearCanvas()}
-function setLog(v){isLog=v;isPow=false;setSeg(["btn-lin","btn-log","btn-pow"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
-function setCps(v){isCps=v;setSeg(["btn-cnt","btn-cps"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
+function viewSave(){try{localStorage.setItem("aswf-view",JSON.stringify({log:isLog,pow:isPow,cps:isCps,kev:isKev}))}catch(e){}}
+function setPow(ns){isPow=true;isLog=false;if(!ns)viewSave();setSeg(["btn-lin","btn-log","btn-pow"],2);if(lastD)draw(lastD);else clearCanvas()}
+function setLog(v,ns){isLog=v;isPow=false;if(!ns)viewSave();setSeg(["btn-lin","btn-log","btn-pow"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
+function setCps(v,ns){isCps=v;if(!ns)viewSave();setSeg(["btn-cnt","btn-cps"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
 /* #MX-9 (1.2.31): предел оси X — 1000 / 2000 кэВ или весь спектр (0); только в режиме keV с калибровкой */
 var xRange=0;try{xRange=parseInt(localStorage.getItem("aswf-xrange"),10)||0}catch(e){}
 setSeg(["btn-x1k","btn-x2k","btn-xall"],xRange===1000?0:xRange===2000?1:2);
 function visN(N){if(!xRange||!isKev||!calib)return N;var c=Math.ceil(kev2ch(xRange))+1;return Math.max(16,Math.min(N,c))}
 function setXRange(v){xRange=v;try{localStorage.setItem("aswf-xrange",String(v))}catch(e){}setSeg(["btn-x1k","btn-x2k","btn-xall"],v===1000?0:v===2000?1:2);if(lastD)draw(lastD);drawCursor()}
-function setKev(v){isKev=v;setSeg(["btn-ch","btn-kev"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
+function setKev(v,ns){isKev=v;if(!ns)viewSave();setSeg(["btn-ch","btn-kev"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
 function setSeg(ids,onIdx){ids.forEach(function(id,i){var el=document.getElementById(id);if(!el)return;if(i===onIdx)el.classList.add("on");else el.classList.remove("on")})}
 function ch2kev(ch){if(!calib)return ch;var e=0;for(var i=0;i<calib.length;i++)e+=calib[i]*Math.pow(ch,i);return e}
 function kev2ch(kev){var lo=0,hi=8192;for(var i=0;i<30;i++){var m=(lo+hi)/2;if(ch2kev(m)<kev)lo=m;else hi=m}return(lo+hi)/2}
@@ -492,8 +503,8 @@ async function update(){
   /* #MX-5/#MX-6 (1.2.31): CPS, счёт, МД и реальное время — только крупными цифрами выше; здесь — остальное */
   stEl.innerHTML='<span><span class="mut">'+tr("st.live")+'</span> '+fmtTime(lv)+'</span><span class="sep">|</span>'+
    '<span><span class="mut">'+tr("st.dead")+'</span> '+dpct.toFixed(2)+'%</span><span class="sep">|</span>'+
-   '<span>Lost <span>'+d.lost+'</span></span><span class="sep">|</span>'+
-   '<span>T '+tStr+' &deg;C</span>';
+   '<span>'+tr("st.lost")+' <span>'+d.lost+'</span></span><span class="sep">|</span>'+
+   '<span>t '+tStr+' &deg;C</span>';
   document.getElementById("big-time").textContent=fmtHMS(d.time);
   document.getElementById("big-cps").textContent=d.cps;
   var sma=smaCps(d.time,d.total);document.getElementById("big-sma").textContent=(sma===null)?"":" / "+sma.toFixed(2);
@@ -520,7 +531,7 @@ function draw(d){
   for(var i=0;i<ob.length;i++)yO[i]=(isCps&&ot>0)?ob[i]/ot:ob[i]}
  var mx=0;
  /* #MX-11 (1.2.31): последний канал — переполнение (всё выше шкалы); в фоне он на порядки выше спектра и
-    сплющивал масштаб Y. В максимум не входит, линия в нём упирается в верх графика. */
+    сплющивал масштаб Y. Не входит ни в максимум (#MX-11), ни в отрисовку (#F6): последний канал не рисуется (данные не меняются). */
  var NM=(NV>=N)?N-1:NV;
  for(var i=0;i<NM;i++)if(yV[i]>mx)mx=yV[i];
  if(yO)for(var i=0;i<Math.min(yO.length-1,NM);i++)if(yO[i]>mx)mx=yO[i];
@@ -553,15 +564,15 @@ function draw(d){
  X.save();X.beginPath();X.rect(PL,PT,PW,PH);X.clip();
  var bw=PW/NV;
  var accent=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#34d3c0';
- if(yO){X.fillStyle="rgba(110,168,255,0.28)";for(var i=0;i<Math.min(yO.length,NV);i++){var y=yMap(yO[i]);if(PB-y>0.3)X.fillRect(PL+i*bw,y,Math.max(bw-.3,.3),PB-y)}}
+ if(yO){X.fillStyle="rgba(110,168,255,0.28)";for(var i=0;i<Math.min(yO.length,NM);i++){var y=yMap(yO[i]);if(PB-y>0.3)X.fillRect(PL+i*bw,y,Math.max(bw-.3,.3),PB-y)}}
  /* #UI-36: лёгкая заливка (alpha 0x1e ≈ 0.12) + чёткая линия сверху — как в AtomSpectra-референсе.
     Раньше accent+"44" (~0.27) сплошными столбцами = тяжёлая «плита», топила форму спектра. */
  X.fillStyle=accent+"1e";
- for(var i=0;i<NV;i++){var y=yMap(yV[i]);if(PB-y>0.3)X.fillRect(PL+i*bw,y,Math.max(bw-.3,.3),PB-y)}
+ for(var i=0;i<NM;i++){var y=yMap(yV[i]);if(PB-y>0.3)X.fillRect(PL+i*bw,y,Math.max(bw-.3,.3),PB-y)}
  X.strokeStyle=accent;X.lineWidth=1;X.beginPath();
- for(var i=0;i<NV;i++){var px=PL+i*bw+bw/2,py=yMap(yV[i]);i===0?X.moveTo(px,py):X.lineTo(px,py)}
+ for(var i=0;i<NM;i++){var px=PL+i*bw+bw/2,py=yMap(yV[i]);i===0?X.moveTo(px,py):X.lineTo(px,py)}
  X.stroke();
- if(yO){X.strokeStyle="#6ea8ff";X.lineWidth=1.1;X.setLineDash([5,4]);X.beginPath();for(var i=0;i<Math.min(yO.length,NV);i++){var px=PL+i*bw+bw/2,py=yMap(yO[i]);i===0?X.moveTo(px,py):X.lineTo(px,py)}X.stroke();X.setLineDash([])}
+ if(yO){X.strokeStyle="#6ea8ff";X.lineWidth=1.1;X.beginPath();for(var i=0;i<Math.min(yO.length,NM);i++){var x0=PL+i*bw,py=yMap(yO[i]);i===0?X.moveTo(x0,py):X.lineTo(x0,py);X.lineTo(x0+bw,py)}X.stroke()}
  X.restore();
  drawNuclides(NV);
  X.strokeStyle="#283024";X.lineWidth=1;X.strokeRect(PL+.5,PT+.5,PW,PH);
@@ -639,7 +650,7 @@ function clearCalib(){
  ["cal-a","cal-b","cal-c","cal-d","cal-e"].forEach(function(id){document.getElementById(id).value=""});
  refreshCalibStatus();
  nucBtnEnable(false);
- if(isKev)setKev(false);else if(lastD)draw(lastD);
+ if(isKev)setKev(false,1);else if(lastD)draw(lastD);
  lg(tr("log.calClear"));
 }
 async function loadFlashInfo(){
@@ -670,12 +681,12 @@ async function toggleMode(){
  try{await post("/api/net-mode",{headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:toOutdoor?"outdoor":"indoor"})});}catch(e){}
 }
 async function loadOverlay(idx){
- try{var r=await(await fetch("/api/saved/"+idx+"/spectrum.json")).json();overlayBins=r.bins;overlayIdx=idx;
+ try{var r=await(await fetch("/api/saved/"+idx+"/spectrum.json")).json();overlayBins=r.bins;overlayIdx=idx;try{localStorage.setItem("aswf-ovl",String(idx))}catch(e){};
  overlayCal=(r.calib_set!==false&&calibArraySet(r.calib))?r.calib:null;ovlCache=null;ovlKey="";   /* 1.2.31: калибровка записи — для переноса по энергии */
  overlayTime=(typeof r.time==="number"&&r.time>0)?r.time:0;   /* #WF-CPS-1 */
  ovlView();updateOvlLabel();
  document.getElementById("btn-clear-ovl").style.display="";
- lg(tfmt("log.ovlOk",idx));if(lastD)draw(lastD);loadSaved();}catch(e){lg(tfmt("log.ovlErr",e))}
+ lg(tfmt("log.ovlOk",idx));if(lastD)draw(lastD);loadSaved();}catch(e){lg(tfmt("log.ovlErr",e));try{localStorage.removeItem("aswf-ovl")}catch(_){}}
 }
 /* 1.2.31: оверлей, приведённый к калибровке живого спектра; пересчёт — только при смене калибровки (ключ), не на каждый кадр. */
 function ovlView(){
@@ -691,7 +702,8 @@ function updateOvlLabel(){
  var el=document.getElementById("overlay-label");if(!el||overlayIdx<0)return;
  el.textContent="Overlay: #"+overlayIdx+(overlayRebinned?tr("ovl.rebinned"):"")+((!overlayCal&&calib)?tr("ovl.byChannel"):"")+(overlayTime>0?"":tr("ovl.noTime"));
 }
-function clearOverlay(){overlayBins=null;overlayCal=null;ovlCache=null;overlayRebinned=false;overlayIdx=-1;overlayTime=0;document.getElementById("overlay-label").textContent="";document.getElementById("btn-clear-ovl").style.display="none";lg(tr("log.ovlClear"));if(lastD)draw(lastD);loadSaved();}
+function toggleOverlay(i){if(overlayIdx===i)clearOverlay();else loadOverlay(i)}
+function clearOverlay(){try{localStorage.removeItem("aswf-ovl")}catch(e){}overlayBins=null;overlayCal=null;ovlCache=null;overlayRebinned=false;overlayIdx=-1;overlayTime=0;document.getElementById("overlay-label").textContent="";document.getElementById("btn-clear-ovl").style.display="none";lg(tr("log.ovlClear"));if(lastD)draw(lastD);loadSaved();}
 async function loadSaved(retry){
  var el=document.getElementById("saved");
  try{
@@ -706,7 +718,7 @@ async function loadSaved(retry){
    var onCls=s.index===overlayIdx?' class="on"':'';
    html+='<tr'+onCls+'><td>'+s.index+(s.imp?' <span style="color:#f0c45a;font-size:10.5px">'+tr("saved.impTag")+'</span>':'')+'</td><td>'+dt+'</td><td>'+s.counts.toLocaleString(lcl())+'</td><td>'+fmtTime(s.time)+'</td>'+
     '<td><a href="/api/saved/'+s.index+'/export.xml" style="color:var(--accent)">XML</a> &middot; <a href="/api/saved/'+s.index+'/export.csv" style="color:var(--accent)">CSV</a></td>'+
-    '<td><button class="btn sm" onclick="loadOverlay('+s.index+')">'+tr("btn.overlay")+'</button> <button class="btn sm red" onclick="delSaved('+s.index+')">'+tr("btn.del")+'</button></td></tr>';
+    '<td><button class="btn sm" onclick="toggleOverlay('+s.index+')">'+(s.index===overlayIdx?tr("btn.overlayOff"):tr("btn.overlay"))+'</button> <button class="btn sm red" onclick="delSaved('+s.index+')">'+tr("btn.del")+'</button></td></tr>';
   }
   el.innerHTML=html+'</table>';
  }catch(e){
@@ -900,11 +912,14 @@ function drawNuclides(N){
  X.restore();
 }
 
+function viewRestore(){try{var o=JSON.parse(localStorage.getItem("aswf-view")||"null");if(!o)return;var d=function(x,dv){return typeof x==="boolean"?x:dv};if(o.pow)setPow(1);else setLog(d(o.log,isLog),1);setCps(d(o.cps,isCps),1);setKev(d(o.kev,isKev),1)}catch(e){}}
 (async function(){
+ viewRestore();
  document.getElementById("ip-chip").textContent=location.hostname;
  await loadCsrf();
  await loadDoseK();
  loadPrefix();
+ try{var oi=parseInt(localStorage.getItem("aswf-ovl"),10);var qo=/[?&]overlay=(\d+)/.exec(location.search);if(qo)oi=parseInt(qo[1],10);if(oi>=0)loadOverlay(oi)}catch(e){}   /* ?overlay=N из saved.html */
  populateNucPanel();
  setInterval(update,2000);   /* #UI-15: 1000→2000ms — chunked /api/spectrum.json ел сокеты при F5; макс. uri_handlers=11 */
  setInterval(loadFlashInfo,10000);

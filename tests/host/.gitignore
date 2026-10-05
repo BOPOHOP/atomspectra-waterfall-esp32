@@ -1,2 +1,5 @@
 test_runner
 test_runner_asan
+test_import_body_plan
+test_import_tmp_plan
+test_n42_time_plan
