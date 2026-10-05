@@ -1481,7 +1481,7 @@ wf.addEventListener("wheel",function(e){
  if(grip){
   updGrip();
   var gy0=0,gh0=0,gid=-1;
-  grip.addEventListener("pointerdown",function(e){if(e.pointerType==="mouse"&&e.button!==0)return;gid=e.pointerId;gy0=e.clientY;gh0=WFHd;grip.classList.add("drag");try{grip.setPointerCapture(gid);}catch(x){}e.preventDefault();});
+  grip.addEventListener("pointerdown",function(e){if(e.pointerType==="mouse"&&e.button!==0)return;gid=e.pointerId;gy0=e.clientY;gh0=WFHd;gPend=WFHd;grip.classList.add("drag");try{grip.setPointerCapture(gid);}catch(x){}e.preventDefault();});
   var gPend=WFHd, gFlush=wfCoalesce(requestAnimationFrame.bind(window),function(){setWFH(gPend,false);});   // №5: один пересчёт на кадр
   grip.addEventListener("pointermove",function(e){if(e.pointerId!==gid)return;var rc=wf.getBoundingClientRect();gPend=gh0+(e.clientY-gy0)*(rc.width>0?WFW/rc.width:1);gFlush();});
   var gend=function(e){if(e.pointerId!==gid)return;gid=-1;setWFH(gPend,false);grip.classList.remove("drag");try{localStorage.setItem("aswf-wfh",String(WFHd));}catch(x){}};

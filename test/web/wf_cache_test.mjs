@@ -16,5 +16,6 @@ ok("№5: 100 событий до кадра -> 1 запланированный
 q.shift()(); f(); f();
 ok("№5: после кадра 1 вызов; следующая пачка снова 1 кадр", calls === 1 && q.length === 1);
 ok("№5: pointermove копит gPend и зовёт gFlush (не setWFH), pointerup дорисовывает setWFH(gPend)", /gPend=gh0\+[^;]*;gFlush\(\);/.test(page) && !/pointermove[^\n]*setWFH\(/.test(page) && /var gend=function\(e\)\{[^}]*setWFH\(gPend,false\)/.test(page));
+ok("проход C: pointerdown сбрасывает gPend=WFHd (тап без движения не откатывает высоту)", /gh0=WFHd;gPend=WFHd;grip\.classList\.add\("drag"\)/.test(page));
 if (failed) { console.log("FAILED: " + failed); process.exit(1); }
 console.log("ALL OK");
