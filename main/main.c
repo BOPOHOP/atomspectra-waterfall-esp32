@@ -94,7 +94,7 @@ void app_main(void)
     boot_config_load(&bc);
     ESP_LOGI(TAG, "boot-config: as_spec=%d as_wf=%d clr_spec=%d clr_wf=%d",
              bc.autostart_spectrum, bc.autostart_waterfall, bc.clear_spectrum, bc.clear_waterfall);
-    // issue #52: номер сессии платы — ровно один инкремент за загрузку. Снимки
+    // issue #52: номер сессии платы — один инкремент за загрузку (плюс по одному на каждый Сброс спектра, 1.2.31, см. session_plan.h). Снимки
     // этой сессии получат новое имя, поэтому после пропадания питания они не
     // смешиваются со снятыми до него. Инкремент отложен до spectrum_init()
     // (нужен смонтированный LittleFS, чтобы узнать максимум по уже лежащим

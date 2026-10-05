@@ -71,7 +71,7 @@ mut M50_tail_nowake     spectrogram.c    '/^    xSemaphoreGive(s_commit_sig);   
 # S-01 (1.2.30): CSRF на тяжёлых GET — плата (3 обработчика) и страницы (токен в заголовке)
 mut M51_s01_check_del   web_server.c     '0,/    if (!csrf_check(req)) return ESP_FAIL;   \/\/ S-01 (1.2.30)/{/    if (!csrf_check(req)) return ESP_FAIL;   \/\/ S-01 (1.2.30)/d}' '// S-01 (1.2.30)'
 mut M52_s01_window_del  web_waterfall.c  '/    if (!web_csrf_check(req)) return ESP_FAIL;   \/\/ S-01 (1.2.30)/d' 'web_csrf_check(req)) return ESP_FAIL;   // S-01'
-mut M53_s01_ui_nohdr    ../web/waterfall.html 's/hf.call(window,"\/api\/waterfall\/window?rows=64",{headers:{"X-CSRF-Token":csrfToken}})/hf.call(window,"\/api\/waterfall\/window?rows=64")/' '/api/waterfall/window'
+mut M53_s01_ui_nohdr    ../web/waterfall.html 's/hf.call(window,"\/api\/waterfall\/window?rows=256",{headers:{"X-CSRF-Token":csrfToken}})/hf.call(window,"\/api\/waterfall\/window?rows=256")/' '/api/waterfall/window'
 mut M54_s01_ui_plain    ../web/system.html    's/await gget("\/api\/ota\/github\/check")/await fetch("\/api\/ota\/github\/check")/' 'gget("/api/ota/github/check")'
 # LK-07 (1.2.30): проверка GitHub в фоне — обработчик зовёт async (не sync), задача стартует, состояние переходит в DONE
 mut M55_lk07_sync       web_server.c          's/    ota_gh_check_async(resp, sizeof(resp));/    ota_gh_check(resp, sizeof(resp));/' 'ota_gh_check_async(resp, sizeof(resp));'
@@ -183,4 +183,11 @@ mut MI26_idx_tag       ../web/index.html    's/(s.imp?/(s.imx?/' "(s.imp?' <span
 # разбор 1.2.31
 mut M115_serial_page     ../web/saved.html     's/|\["[^]]*\]\/g,"?")\.substring/\/g,"?").substring/' '["\\]/g,"?")'
 mut M114_zoom_visn      ../web/index.html     's/PW\*visN(N)); if(ch<0||ch>=N)return null;/PW*N); if(ch<0||ch>=N)return null;/' 'PW*visN(N)); if(ch<0||ch>=N)return null;'
+mut MU1_view_cps  ../web/index.html 's/function setCps(v,ns){isCps=v;if(!ns)viewSave();/function setCps(v,ns){isCps=v;/' 'function setCps(v,ns){isCps=v;if(!ns)viewSave();'
+mut MU2_ovl_toggle ../web/index.html 's/onclick="toggleOverlay(/onclick="loadOverlay(/' 'onclick="toggleOverlay('
+mut MU3_ovl_restore ../web/index.html 's/localStorage.getItem("aswf-ovl")/localStorage.getItem("aswf-ovx")/' 'localStorage.getItem("aswf-ovl")'
+mut MU4_f1_check  wifi_manager.c 's/wifi_setup_should_return(s_unverified, s_got_ip_this_boot, s_setup_auth_fails, elapsed_s)/(0)/' 'wifi_setup_should_return(s_unverified, s_got_ip_this_boot, s_setup_auth_fails, elapsed_s)'
+mut MU5_f1_flag   wifi_manager.c 's/nvs_set_u8(nvs, "unver", 1);/nvs_set_u8(nvs, "unvx", 1);/' 'nvs_set_u8(nvs, "unver", 1);'
+mut MU6_f1_clear  wifi_manager.c 's/nvs_erase_key(uv, "unver");/nvs_erase_key(uv, "unvx");/' 'nvs_erase_key(uv, "unver");'
+mut MU7_f1_timer  wifi_manager.c 's/if (s_unverified) return_to_setup_and_reboot();/if (0) return_to_setup_and_reboot();/' 'if (s_unverified) return_to_setup_and_reboot();'
 exit $RC

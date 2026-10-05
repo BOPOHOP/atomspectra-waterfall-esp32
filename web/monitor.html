@@ -83,8 +83,8 @@ canvas{ width:100%; height:auto; display:block; }
 </div>
 <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:#8a9686">
  <span>Префикс файлов:</span>
- <input type="text" id="fx-prefix" maxlength="23" spellcheck="false" autocomplete="off" placeholder="MY1" title="Добавляется в начало имени всех выгрузок этой платы. Латиница, цифры, _ и -." style="width:110px;background:#11150f;color:#cfd6cd;border:1px solid #444;padding:4px 7px;border-radius:4px;font-family:inherit;font-size:12px">
- <button type="button" onclick="savePrefix()" style="cursor:pointer;background:rgba(52,211,192,.12);border:1px solid rgba(52,211,192,.4);color:#34d3c0;border-radius:6px;padding:5px 12px;font-family:inherit;font-size:12px;font-weight:600">Сохранить</button>
+ <input type="text" id="fx-prefix" maxlength="23" spellcheck="false" autocomplete="off" placeholder="MY1" title="Добавляется в начало имени всех выгрузок этой платы. Латиница, цифры, _ и -." style="width:200px;background:#11150f;color:#cfd6cd;border:1px solid #444;padding:4px 7px;border-radius:4px;font-family:inherit;font-size:12px">
+ <button type="button" onclick="savePrefix()" style="cursor:pointer;background:rgba(52,211,192,.12);border:1px solid rgba(52,211,192,.4);color:#34d3c0;border-radius:6px;padding:5px 12px;font-family:inherit;font-size:12px;font-weight:600">Задать</button>
  <span id="fx-prefix-st" style="min-width:16px;font-size:14px"></span>
 </div>
 </section>
@@ -140,7 +140,7 @@ canvas{ width:100%; height:auto; display:block; }
 <th data-i18n="tbl.counts">Импульсы</th>
 <th data-i18n="tbl.cps">CPS</th>
 <th data-i18n="tbl.rel">δ, %</th>
-<th>T, &deg;C</th>
+<th>t, &deg;C</th>
 </tr></thead>
 <tbody id="tbody"></tbody>
 </table>

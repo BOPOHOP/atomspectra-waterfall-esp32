@@ -36,6 +36,18 @@ def post(url: str, headers: dict, timeout: float = 6.0):
         return None      # плата уходит в ребут, ответ может не долететь
 
 
+def verdict(boots: int, sess_before: int, sess_after: int) -> str:
+    """Чистая функция сравнения (без платы): "reset" | "ok" | "mismatch".
+
+    Счётчик сессий, упавший ниже стартового значения, — это Сброс (reset /
+    factory reset обнуляет его намеренно), а не расхождение: сравнивать
+    рост с числом загрузок тогда бессмысленно.
+    """
+    if sess_after < sess_before:
+        return "reset"
+    return "ok" if boots == sess_after - sess_before else "mismatch"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("ip")
@@ -70,15 +82,29 @@ def main() -> int:
                   flush=True)
         up_prev = up
 
-    sess_after = get_json(f"{base}/api/boot-config")["session"]
+    sess_after = None
+    for _ in range(12):   # окно могло кончиться в момент загрузки платы — повторить запрос
+        try:
+            sess_after = get_json(f"{base}/api/boot-config")["session"]
+            break
+        except (urllib.error.URLError, TimeoutError, OSError):
+            time.sleep(a.every)
+    if sess_after is None:
+        print("итог: плата не ответила на финальный запрос session")
+        return 2
     grew = sess_after - sess_before
     print("\n=== ИТОГ ===")
     print(f"загрузок замечено (падений uptime): {boots}")
     print(f"счётчик сессий вырос на:            {grew} ({sess_before} -> {sess_after})")
-    if boots == grew:
+    v = verdict(boots, sess_before, sess_after)
+    if v == "reset":
+        print(f"СБРОС ЗАФИКСИРОВАН: счётчик упал {sess_before} -> {sess_after} "
+              "(намеренное обнуление), сравнение с числом загрузок не применимо")
+    elif v == "ok":
         print("СХОДИТСЯ: счётчик считает загрузки верно")
     else:
         print("НЕ СХОДИТСЯ: счётчик и число загрузок расходятся")
+        return 1   # pass3B #12: расхождение видно CI/скриптам по коду возврата
     return 0
 
 

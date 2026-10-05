@@ -36,6 +36,7 @@ static bool s_got_ip_this_boot = false;
 static const char *s_return_block_reason = "none";
 
 static int s_retry_count = 0;
+static int s_setup_auth_fails = 0;   // #AWF-F1: отказы «неверный пароль» (wifi_setup_fail_bump)
 static int64_t s_disconnect_started_us = 0;   // 0 = сейчас не в серии реконнектов
 static esp_timer_handle_t s_reconnect_timer = NULL;
 
@@ -51,8 +52,9 @@ static net_run_mode_t s_mode = NET_MODE_STA;
 // #FIELD-1/#SEC-2: параметры полевого AP (дефолты — из ТЗ разд. 9).
 #define AP_SSID_DEFAULT "AtomSpectra-Outdoor"
 #define AP_PASS_DEFAULT "atomspectra"
-static char s_ap_ssid[WIFI_SSID_MAX] = AP_SSID_DEFAULT;
-static char s_ap_pass[WIFI_PASS_MAX] = AP_PASS_DEFAULT;
+// +1: nvs_get_str требует место под завершающий NUL (SSID 32 Б / пароль 64 символа).
+static char s_ap_ssid[WIFI_SSID_MAX + 1] = AP_SSID_DEFAULT;
+static char s_ap_pass[WIFI_PASS_MAX + 1] = AP_PASS_DEFAULT;
 static bool s_ap_pass_default = true;   // #SEC-2: пароль AP не менялся
 static bool s_ap_forced = false;        // #FIELD-6: field_ap липкий (ap_mode=1) vs fallback
 
@@ -180,9 +182,14 @@ static esp_err_t handle_setup_connect(httpd_req_t *req)
     const char *pass = cJSON_GetStringValue(
         cJSON_GetObjectItem(root, "pass"));
 
-    if (!ssid || strlen(ssid) == 0) {
+    if (!ssid || !wifi_ssid_len_ok(strlen(ssid))) {
         cJSON_Delete(root);
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No SSID");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No SSID / SSID too long (1-32)");
+        return ESP_FAIL;
+    }
+    if (pass && !wifi_pass_ok(pass)) {   // F4: 1-7 символов IDF отвергает; 64 — только hex
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Password: empty, 8-63 ASCII chars or 64 hex");
         return ESP_FAIL;
     }
 
@@ -200,6 +207,7 @@ static esp_err_t handle_setup_connect(httpd_req_t *req)
         // поэтому по умолчанию выкл — это gate оператора, здесь не трогаем.
         // Подробности и последствия — INSTALL.md, раздел "9. Безопасность".
         nvs_set_str(nvs, "pass", pass ? pass : "");
+        nvs_set_u8(nvs, "unver", 1);   // #AWF-F1: сеть не проверена до первой выданной IP
         nvs_commit(nvs);
         nvs_close(nvs);
         ESP_LOGI(TAG, "WiFi config saved: SSID=%s", ssid);
@@ -353,6 +361,23 @@ static void start_field_ap(void)
 /* ---- STA fallback → полевой AP (FIELD-2a, способ A4: ребут+одноразовый флаг) ---- */
 
 static bool s_fb_rebooting;
+static void fb_reboot_now(void);
+static bool s_unverified;   // #AWF-F1: сеть из портала ещё не проверена (NVS wifi/unver)
+
+// #AWF-F1: сеть из портала не подключилась — стереть её и открыть портал заново.
+static void return_to_setup_and_reboot(void)
+{
+    nvs_handle_t nvs;
+    if (nvs_open("wifi", NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_erase_key(nvs, "ssid");
+        nvs_erase_key(nvs, "pass");
+        nvs_erase_key(nvs, "unver");
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    ESP_LOGW(TAG, "AWF-F1: new network did not connect -> setup portal");
+    fb_reboot_now();
+}
 
 static void fb_reboot_task(void *arg)
 {
@@ -363,6 +388,7 @@ static void fb_reboot_task(void *arg)
 
 static void set_fb_flag_and_reboot(void)
 {
+    if (s_fb_rebooting) return;   // F5: ребут уже идёт (return_to_setup стёр сеть) — ap_fb_once не писать
     nvs_handle_t nvs;
     if (nvs_open("wifi", NVS_READWRITE, &nvs) == ESP_OK) {
         nvs_set_u8(nvs, "ap_fb_once", 1);
@@ -370,7 +396,11 @@ static void set_fb_flag_and_reboot(void)
         nvs_close(nvs);
     }
     ESP_LOGW(TAG, "FIELD-2a: STA no IP -> reboot into field AP");
+    fb_reboot_now();
+}
 
+static void fb_reboot_now(void)
+{
     if (s_fb_rebooting) return;
     s_fb_rebooting = true;
     /* #RB-STK-1: вызывают esp_timer (стек 3584) и sys_evt (4096) — подготовка с LittleFS и записью опоры идёт в своей задаче */
@@ -384,8 +414,10 @@ static void set_fb_flag_and_reboot(void)
 static void fallback_timer_cb(void *arg)
 {
     (void)arg;
-    if (!wifi_is_connected())
-        set_fb_flag_and_reboot();
+    if (!wifi_is_connected()) {
+        if (s_unverified) return_to_setup_and_reboot();   // #AWF-F1
+        else set_fb_flag_and_reboot();
+    }
 }
 
 // AWF-2a финал (решение оператора 25.09): настройка «Переходить в Field AP при
@@ -415,11 +447,19 @@ static void note_return_block(const char *reason)
 
 // AWF-2a (#1): очередная попытка по расписанию пауз — не блокирует обработчик
 // событий (эта функция сама вызывается из таска esp_timer, не из handler'а).
+static void ensure_reconnect_timer(void);
 static void reconnect_timer_cb(void *arg)
 {
     (void)arg;
-    if (!wifi_is_connected())
-        esp_wifi_connect();
+    if (wifi_is_connected()) return;
+    if (esp_wifi_connect() != ESP_OK) {   // F6: события DISCONNECTED не будет — перепланировать самим
+        ensure_reconnect_timer();
+        if (s_reconnect_timer) {
+            uint32_t d = wifi_reconnect_delay_s(s_retry_count);
+            s_retry_count++;
+            esp_timer_start_once(s_reconnect_timer, (uint64_t)d * 1000000);
+        }
+    }
 }
 
 /* ---- STA mode ---- */
@@ -485,7 +525,10 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
         // уводить плату в поле раньше, чем роутер успевает подняться.
         if (s_disconnect_started_us == 0) s_disconnect_started_us = esp_timer_get_time();
         uint32_t elapsed_s = (uint32_t)((esp_timer_get_time() - s_disconnect_started_us) / 1000000);
-        if (wifi_reconnect_should_fallback(ap_fallback_enabled(), s_got_ip_this_boot, elapsed_s)) {
+        s_setup_auth_fails = wifi_setup_fail_bump(s_setup_auth_fails, reason);
+        if (wifi_setup_should_return(s_unverified, s_got_ip_this_boot, s_setup_auth_fails, elapsed_s)) {
+            return_to_setup_and_reboot();   // #AWF-F1
+        } else if (wifi_reconnect_should_fallback(ap_fallback_enabled(), s_got_ip_this_boot, elapsed_s)) {
             ESP_LOGE(TAG, "WiFi down %us (reason=%u) -> field AP", (unsigned)elapsed_s, (unsigned)reason);
             set_fb_flag_and_reboot();
         } else {
@@ -503,7 +546,13 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "Connected, IP: " IPSTR, IP2STR(&event->ip_info.ip));
         s_got_ip_this_boot = true;   // AWF-2a доработка
+        if (s_unverified) {          // #AWF-F1: сеть подтверждена
+            s_unverified = false;
+            nvs_handle_t uv;
+            if (nvs_open("wifi", NVS_READWRITE, &uv) == ESP_OK) { nvs_erase_key(uv, "unver"); nvs_commit(uv); nvs_close(uv); }
+        }
         s_retry_count = 0;
+        s_setup_auth_fails = 0;
         s_disconnect_started_us = 0;   // AWF-2a (#1): серия реконнектов закрыта
         if (s_reconnect_timer) esp_timer_stop(s_reconnect_timer);
         wifi_return_note_connected();  // P1: единственная точка сброса ret_fail/ret_pend
@@ -536,6 +585,9 @@ void wifi_manager_init(void)
     if (nvs_open("wifi", NVS_READONLY, &nvs) == ESP_OK) {
         nvs_get_u8(nvs, "ap_mode", &ap_mode);
         nvs_get_u8(nvs, "ap_fb_once", &ap_fb_once);
+        uint8_t unver = 0;
+        nvs_get_u8(nvs, "unver", &unver);
+        s_unverified = (unver != 0);
         nvs_close(nvs);
     }
 
@@ -566,12 +618,16 @@ void wifi_manager_init(void)
     // STA-конфиг из NVS
     wifi_config_t wifi_config = {0};
     if (nvs_open("wifi", NVS_READONLY, &nvs) == ESP_OK) {
-        size_t len = sizeof(wifi_config.sta.ssid);
-        nvs_get_str(nvs, "ssid", (char *)wifi_config.sta.ssid, &len);
-        len = sizeof(wifi_config.sta.password);
-        nvs_get_str(nvs, "pass", (char *)wifi_config.sta.password, &len);
+        // F3: буферы с местом под NUL (sta.ssid[32]/password[64] его не вмещают), затем memcpy.
+        char ssid_buf[WIFI_SSID_MAX + 1] = {0}, pass_buf[WIFI_PASS_MAX + 1] = {0};
+        size_t len = sizeof(ssid_buf);
+        nvs_get_str(nvs, "ssid", ssid_buf, &len);
+        len = sizeof(pass_buf);
+        nvs_get_str(nvs, "pass", pass_buf, &len);
         nvs_close(nvs);
-        ESP_LOGI(TAG, "WiFi from NVS: SSID=%s", wifi_config.sta.ssid);
+        memcpy(wifi_config.sta.ssid, ssid_buf, WIFI_SSID_MAX);
+        memcpy(wifi_config.sta.password, pass_buf, WIFI_PASS_MAX);
+        ESP_LOGI(TAG, "WiFi from NVS: SSID=%s", ssid_buf);
     }
 
     if (wifi_config.sta.ssid[0] == 0) {
@@ -589,7 +645,12 @@ void wifi_manager_init(void)
 
     esp_netif_create_default_wifi_sta();
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    esp_err_t cfg_err = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+    if (cfg_err != ESP_OK) {   // F4: отвергнутый конфиг (пароль 1-7 и т.п.) — не abort, а портал
+        ESP_LOGE(TAG, "STA config rejected: %s -> erase network, setup portal", esp_err_to_name(cfg_err));
+        return_to_setup_and_reboot();
+        return;
+    }
     ESP_ERROR_CHECK(esp_wifi_start());
     /* #PERF-5: дефолтный для STA MIN_MODEM power save даёт джиттер ICMP/HTTP RTT
      * на idle-плате почти без потерь. Trade-off: выше потребление в STA.
@@ -617,8 +678,10 @@ void wifi_manager_init(void)
     if (esp_timer_create(&targs, &s_fallback_timer) == ESP_OK)
         esp_timer_start_once(s_fallback_timer, (uint64_t)WIFI_RECONNECT_FALLBACK_S * 1000000);
 
-    ESP_LOGI(TAG, "WiFi STA starting, SSID=%s (fallback %us)",
-             wifi_config.sta.ssid, (unsigned)WIFI_RECONNECT_FALLBACK_S);
+    // sta.ssid[32] может не содержать NUL (32-байтный SSID) -> %s зашёл бы в password[].
+    ESP_LOGI(TAG, "WiFi STA starting, SSID=%.*s (fallback %us)",
+             (int)strnlen((const char *)wifi_config.sta.ssid, sizeof(wifi_config.sta.ssid)),
+             (const char *)wifi_config.sta.ssid, (unsigned)WIFI_RECONNECT_FALLBACK_S);
 }
 
 bool wifi_is_connected(void)
@@ -761,7 +824,7 @@ void wifi_manager_try_return_to_sta(void)
         return;
     }
 
-    char ssid[WIFI_SSID_MAX] = {0};
+    char ssid[WIFI_SSID_MAX + 1] = {0};
     if (!load_saved_sta_ssid(ssid, sizeof(ssid))) {
         note_return_block("no_saved_ssid");
         return;
