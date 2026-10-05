@@ -56,7 +56,8 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 #wf-row{ --wf-slider:16px; --wf-gap:8px; display:flex; gap:var(--wf-gap); align-items:stretch; }
 #slc-box{ --wf-slider:16px; --wf-gap:8px; padding:0 calc(16px + var(--wf-slider) + var(--wf-gap)) 14px 16px; }
 #wf-row #wrap-wf{ flex:1 1 auto; min-width:0; }
-#wf-scroll{ writing-mode:vertical-lr; -webkit-appearance:slider-vertical; width:var(--wf-slider); flex:0 0 var(--wf-slider); height:auto; margin:0; cursor:pointer; accent-color:var(--accent); background:#10140f; border:1px solid var(--bd); border-radius:8px; }
+#wf-sb{ position:relative; flex:0 0 var(--wf-slider); width:var(--wf-slider); }   /* #AWF-UI-1 (проход A №1): слайдер вне потока — высоту ряда задаёт только канвас, иначе при малой WFHd #cur растягивается по высоте слайдера */
+#wf-scroll{ writing-mode:vertical-lr; -webkit-appearance:slider-vertical; width:100%; position:absolute; left:0; top:0; height:100%; margin:0; cursor:pointer; accent-color:var(--accent); background:#10140f; border:1px solid var(--bd); border-radius:8px; }
 #wf-scroll:disabled{ opacity:.35; cursor:default; }
 #log{ box-sizing:border-box; width:100%; height:120px; overflow:auto; background:#0b0e0a; border:1px solid #1b211a; border-radius:8px; padding:10px 12px; font-size:11px; white-space:pre-wrap; color:#7c887c; line-height:1.5; }
 .seg{ display:flex; border:1px solid #2a322a; border-radius:7px; overflow:hidden; }
@@ -81,6 +82,7 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 .palmod .nm{ font-size:13px; color:#cfd6cd; }
 .palmod .desc{ font-size:11px; color:#6b756a; margin-top:2px; }
 #wf-grip{ position:relative; height:16px; margin-top:6px; border:1px solid var(--bd); border-radius:8px; background:#10140f; cursor:ns-resize; touch-action:none; user-select:none; -webkit-user-select:none; }
+#wf-grip::before{ content:""; position:absolute; left:0; right:0; top:-8px; bottom:-8px; }   /* зона захвата ~32 px (проход A №5) */
 #wf-grip::after{ content:""; position:absolute; left:50%; top:50%; width:48px; height:4px; margin:-2px 0 0 -24px; border-radius:2px; background:#3a4438; }
 #wf-grip:hover::after,#wf-grip:focus-visible::after,#wf-grip.drag::after{ background:var(--accent); }
 @media (max-width:480px){  /* #UI-MOB: 375px, header/rows/nav not wider than screen */
@@ -169,7 +171,7 @@ nav a,nav span{ padding:12px 10px; }
 <canvas id="cur" width="900" height="520"></canvas>
 <div id="hud"></div>
 </div>
-<input id="wf-scroll" type="range" min="0" max="0" value="0" step="1" title="прокрутка истории спектрограммы / spectrogram history scroll" aria-label="spectrogram scroll">
+<div id="wf-sb"><input id="wf-scroll" type="range" min="0" max="0" value="0" step="1" title="прокрутка истории спектрограммы / spectrogram history scroll" aria-label="spectrogram scroll"></div>
 </div>
 <div id="wf-grip" role="separator" aria-orientation="horizontal" tabindex="0" aria-valuemin="160" aria-valuemax="900" aria-valuenow="520"></div>
 </section>
@@ -393,6 +395,7 @@ function setLang(l){
  applyI18n();
  try{if(typeof applyRecState==="function")applyRecState();}catch(e){}   // #REC-7: «● ЗАПИСЬ»/«● REC» сразу на новом языке
  try{if((dskWritable||dskMemChunks)&&typeof updDiskInd==="function")updDiskInd();}catch(e){}
+ try{if(typeof updGrip==="function")updGrip();}catch(e){}   // #AWF-UI-6 №6: подсказка/aria ручки на новом языке
  try{if(typeof draw==="function")draw();}catch(e){}
 }
 
@@ -469,6 +472,14 @@ function wfhParse(s){if(typeof s!=="string"||!/^[0-9]{1,4}$/.test(s))return WFH_
 function wfhRowAt(y,bottom,baseIndex){return Math.floor(bottom-Math.floor(y))-baseIndex;}
 /* окно прокрутки в строках (глубже bottom не уходит): min(h, n) */
 function wfhWin(n,h){return Math.min(h,n);}
+/* #AWF-UI-6 (проход A №3): после смены высоты окна прижать viewBottom к полу окна (нет пустых строк сверху); -1 = live */
+function wfhReclamp(viewBottom,lastIdx,baseIndex,n,h){if(viewBottom<0)return -1;var lo=baseIndex+wfhWin(n,h)-1,b=viewBottom<lo?lo:viewBottom;return b>=lastIdx?-1:b;}
+/* №4: перекрытие подписи «N кэВ» (правый край w-3, ширина wl) и предпоследнего тика (центр (N-1)/N*w, ширина wp), зазор gap px */
+function wfAxisOverlap(w,N,wp,wl,gap){return (w-3-wl)<((N-1)/N*w+wp/2+gap);}
+/* №2: кэш по ключу — build() вызывается только при смене ключа */
+function wfMemo(slot,key,build){if(slot.v===undefined||slot.k!==key){slot.v=build();slot.k=key;}return slot.v;}
+/* №5: не больше одного вызова fn на кадр (raf — requestAnimationFrame или заглушка) */
+function wfCoalesce(raf,fn){var p=false;return function(){if(p)return;p=true;raf(function(){p=false;fn();});};}
 /* #AWF-UI-3: последний канал (N-1, счётчик переполнения) не выводится и не входит в нормировку: верхняя граница показа chHi <= wfChMax(N) = N-1 (данные и экспорт не трогаются) */
 function wfChMax(n){return n>1?n-1:n;}
 /* #AWF-UI-5: число строк данных в окне (y от 0 вниз): ниже — тёмное поле; маркеры/подписи нуклидов рисуются только внутри */
@@ -548,7 +559,7 @@ curResize();hidpi(slc,slcx,SLW,SLH);
 function fitWFHeight(){ /* no-op: высоту bitmap меняет только setWFH (ручка), см. комментарий выше (#UI-4) */ }
 /* #AWF-UI-1: смена высоты окна; save=true → localStorage aswf-wfh (в try/catch) */
 function updGrip(){var g=document.getElementById("wf-grip");if(!g)return;g.setAttribute("aria-valuenow",String(WFHd));g.setAttribute("aria-valuetext",WFHd+" px");g.title=t("wf.grip");g.setAttribute("aria-label",t("wf.grip"));}
-function setWFH(h,save){h=wfhClamp(h);if(h===WFHd)return;WFHd=h;wf.height=h;curResize();updGrip();if(save){try{localStorage.setItem("aswf-wfh",String(h));}catch(e){}}draw();}
+function setWFH(h,save){h=wfhClamp(h);if(h===WFHd)return;WFHd=h;wf.height=h;curResize();updGrip();viewBottom=wfhReclamp(viewBottom,baseIndex+rows.length-1,baseIndex,rows.length,h);if(save){try{localStorage.setItem("aswf-wfh",String(h));}catch(e){}}draw();}
 var slcMode="log", slcHoverLi=-1, slcCursorCh=-1, cursorY=-1;
 // #UI-16: true ⇔ курсор ВНУТРИ canvas, но строка под ним вне rows[] (чёрная зона
 // выше первой/ниже последней строки). Тогда срез ДОЛЖЕН показать «нет данных»,
@@ -593,7 +604,7 @@ function nucAny(){for(var k in nucShow){if(nucShow[k])return true;}return false;
 var nucVis=(function(){try{return localStorage.getItem("aswf-nuc-vis")!=="0";}catch(e){return true;}})();
 function syncNucBtn(){var b=document.getElementById("bNuc");if(!b)return;b.textContent=t("btn.lines")+": "+(nucVis?t("st.on"):t("st.off"));b.style.opacity=nucVis?"":"0.55";}
 
-var normMax=64;
+var normMax=64, drawSeq=0;
 function rowMax(r){var m=0;for(var i=chLo;i<chHi&&i<r.length;i++){if(r[i]>m)m=r[i];}return m;}
 
 /* #AWF-UI-5: заливка спектрограммы в контекст w×h: строка буфера = 1 пиксель по высоте (y -> bottom-y), ниже буфера тёмное; нормировка — текущая normMax */
@@ -626,6 +637,7 @@ function paintHeat(ctx,w,h,bottom){
 }
 function draw(){
  fitWFHeight();   // #UI-4: подогнать высоту канваса под число строк
+ drawSeq++;   // #AWF-UI-6 №2: версия кадра для кэша bitmap оверлея
  var lastIdx=baseIndex+rows.length-1;
  var bottom=(viewBottom<0)?lastIdx:viewBottom;
  var seenMax=1;
@@ -863,15 +875,18 @@ function drawAxis(g,w,h){   /* #AWF-UI-5: цель/размер параметр
  g.strokeStyle="#283024";g.fillStyle="#aeb6a8";g.font="10px ui-monospace,monospace";g.textAlign="center";
  var span=chHi-chLo;
  var N=8;
+ var kevAx=(axisMode==="kev"&&calib);   // #AWF-UI-2: тики — целые кэВ без «k», единица один раз на конце оси
+ // #AWF-UI-6 (проход A №4): подпись «N кэВ» не должна налезать на предпоследний тик — при перекрытии предпоследний не подписываем
+ var hidePen=false;
+ if(kevAx){var wl=g.measureText(wfAxisNum(ch2kev(chLo+span))+" "+t("ax.kev")).width,wp=g.measureText(wfAxisNum(ch2kev(chLo+span*(N-1)/N))).width;hidePen=wfAxisOverlap(w,N,wp,wl,2);}
  for(var i=0;i<=N;i++){
   var x=i/N*w;
   var ch=chLo+span*i/N;
-  var kevAx=(axisMode==="kev"&&calib);   // #AWF-UI-2: тики — целые кэВ без «k», единица один раз на конце оси
   var lbl=kevAx?wfAxisNum(ch2kev(ch)):Math.round(ch);
   g.beginPath();g.moveTo(x,h-16);g.lineTo(x,h-12);g.stroke();
   var tx=x; if(i===0)tx+=12; if(i===N)tx-=12;
   if(i===N&&kevAx){g.textAlign="right";g.fillText(lbl+" "+t("ax.kev"),w-3,h-4);g.textAlign="center";}
-  else g.fillText(lbl,tx,h-4);
+  else if(!(hidePen&&i===N-1))g.fillText(lbl,tx,h-4);
  }
 }
 
@@ -1467,8 +1482,9 @@ wf.addEventListener("wheel",function(e){
   updGrip();
   var gy0=0,gh0=0,gid=-1;
   grip.addEventListener("pointerdown",function(e){if(e.pointerType==="mouse"&&e.button!==0)return;gid=e.pointerId;gy0=e.clientY;gh0=WFHd;grip.classList.add("drag");try{grip.setPointerCapture(gid);}catch(x){}e.preventDefault();});
-  grip.addEventListener("pointermove",function(e){if(e.pointerId!==gid)return;var rc=wf.getBoundingClientRect();setWFH(gh0+(e.clientY-gy0)*(rc.width>0?WFW/rc.width:1),false);});
-  var gend=function(e){if(e.pointerId!==gid)return;gid=-1;grip.classList.remove("drag");try{localStorage.setItem("aswf-wfh",String(WFHd));}catch(x){}};
+  var gPend=WFHd, gFlush=wfCoalesce(requestAnimationFrame.bind(window),function(){setWFH(gPend,false);});   // №5: один пересчёт на кадр
+  grip.addEventListener("pointermove",function(e){if(e.pointerId!==gid)return;var rc=wf.getBoundingClientRect();gPend=gh0+(e.clientY-gy0)*(rc.width>0?WFW/rc.width:1);gFlush();});
+  var gend=function(e){if(e.pointerId!==gid)return;gid=-1;setWFH(gPend,false);grip.classList.remove("drag");try{localStorage.setItem("aswf-wfh",String(WFHd));}catch(x){}};
   grip.addEventListener("pointerup",gend);grip.addEventListener("pointercancel",gend);
   grip.addEventListener("keydown",function(e){var h=({ArrowDown:WFHd+20,ArrowUp:WFHd-20,Home:WFH_MIN,End:WFH_MAX})[e.key];if(h===undefined)return;e.preventDefault();setWFH(h,true);});
   grip.addEventListener("dblclick",function(){setWFH(WFH_DEF,true);});
@@ -1708,8 +1724,12 @@ window.openZoomOverlay=function(sourcesFn,opts){
  var slcEl=document.getElementById("slc");
  var ovH=WFHd;   /* #AWF-UI-5: строк в оверлее = высота области данных (CSS px) */
  /* #AWF-UI-5: bitmap оверлея в разрешении экрана: heat w×h CSS px (строка = 1 px), оси и подписи нуклидов — слоем в device px, без растяжения */
+ var ovSlot={};
  function ovBitmap(W,H){
   var sz=wfOverlaySize(W,H,slcEl?slcEl.width:0,slcEl?slcEl.height:0),k=window.devicePixelRatio||1;ovH=sz.h;
+  return wfMemo(ovSlot,[drawSeq,W,H,k,LANG].join(),function(){return ovBuild(sz,k);});   // №2: перестройка только при смене данных/вида/размера
+ }
+ function ovBuild(sz,k){
   var lastIdx=baseIndex+rows.length-1,bottom=(viewBottom<0)?lastIdx:viewBottom;
   var hc=document.createElement("canvas");hc.width=sz.w;hc.height=sz.h;paintHeat(hc.getContext("2d"),sz.w,sz.h,bottom);
   var lc=document.createElement("canvas");lc.width=Math.round(sz.w*k);lc.height=Math.round(sz.h*k);var lx=lc.getContext("2d");lx.setTransform(k,0,0,k,0,0);

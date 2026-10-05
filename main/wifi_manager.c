@@ -41,10 +41,12 @@ static int64_t s_disconnect_started_us = 0;   // 0 = сейчас не в сер
 static esp_timer_handle_t s_reconnect_timer = NULL;
 
 // #FIELD-2a (ревью-2): единый источник порога — WIFI_RECONNECT_FALLBACK_S
-// (wifi_reconnect_plan.h, 300с), а не своя константа. Было 90с — короче, чем
-// расписание реконнекта (WIFI_RECONNECT_STEPS суммарно ~108с и растёт), из-за
-// чего startup-таймер уводил плату в Field AP раньше событийного пути:
-// "моргнул свет", роутер поднимается 1-2 мин — 90с не хватало.
+// (wifi_reconnect_plan.h, 300с) для ПОДТВЕРЖДЁННОЙ сети, а не своя константа. Было 90с —
+// короче расписания реконнекта (WIFI_RECONNECT_STEPS, сумма пауз 108с), из-за чего
+// startup-таймер уводил плату в Field AP раньше событийного пути: "моргнул свет",
+// роутер поднимается 1-2 мин — 90с не хватало. #AWF-WIFI-1: для НЕПРОВЕРЕННОЙ сети из
+// портала — отдельный срок WIFI_SETUP_FALLBACK_S (120с = 108с расписания + запас 12с,
+// строго больше расписания), выбор — wifi_fallback_timeout_s(s_unverified).
 
 // #FIELD-1: текущий сетевой режим. Дефолт STA, устанавливается в развилке init.
 static net_run_mode_t s_mode = NET_MODE_STA;
@@ -414,6 +416,7 @@ static void fb_reboot_now(void)
 static void fallback_timer_cb(void *arg)
 {
     (void)arg;
+    if (s_got_ip_this_boot) return;   // #AWF-WIFI-1 (W-4): IP уже была — таймер опоздал к GOT_IP
     if (!wifi_is_connected()) {
         if (s_unverified) return_to_setup_and_reboot();   // #AWF-F1
         else set_fb_flag_and_reboot();
@@ -546,6 +549,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "Connected, IP: " IPSTR, IP2STR(&event->ip_info.ip));
         s_got_ip_this_boot = true;   // AWF-2a доработка
+        // #AWF-WIFI-1 (W-4): сначала остановить fallback-таймер, и только потом снимать s_unverified,
+        // иначе сработавший в этот момент таймер увидел бы unverified=false и ушёл в Field AP.
+        if (s_fallback_timer) esp_timer_stop(s_fallback_timer);
         if (s_unverified) {          // #AWF-F1: сеть подтверждена
             s_unverified = false;
             nvs_handle_t uv;
@@ -556,8 +562,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
         s_disconnect_started_us = 0;   // AWF-2a (#1): серия реконнектов закрыта
         if (s_reconnect_timer) esp_timer_stop(s_reconnect_timer);
         wifi_return_note_connected();  // P1: единственная точка сброса ret_fail/ret_pend
-        // #FIELD-2a: STA поднялась — отменить fallback-таймер
-        if (s_fallback_timer) esp_timer_stop(s_fallback_timer);
+        // #FIELD-2a: fallback-таймер уже остановлен выше (до сброса s_unverified)
         xEventGroupSetBits(s_wifi_events, WIFI_CONNECTED_BIT);
     }
 }
@@ -636,7 +641,7 @@ void wifi_manager_init(void)
         return;
     }
 
-    // #FIELD-1: Indoor (STA) + fallback-таймер WIFI_RECONNECT_FALLBACK_S (FIELD-2a).
+    // #FIELD-1: Indoor (STA) + fallback-таймер wifi_fallback_timeout_s() (FIELD-2a; 120 с непроверенная сеть, 300 с подтверждённая).
     esp_event_handler_instance_t inst_any, inst_got_ip;
     esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
         &wifi_event_handler, NULL, &inst_any);
@@ -669,8 +674,9 @@ void wifi_manager_init(void)
     start_mdns();
     s_mode = NET_MODE_STA;
 
-    // fallback-таймер: нет IP за WIFI_RECONNECT_FALLBACK_S -> ребут в полевой AP
-    // (тот же порог, что и событийный путь STA_DISCONNECTED — единый источник).
+    // fallback-таймер: нет IP за wifi_fallback_timeout_s(s_unverified) -> ребут (портал для
+    // непроверенной сети, полевой AP для подтверждённой). s_unverified прочитан из NVS выше
+    // (старт таймера строго после чтения — проверяет wiring_check.sh).
     const esp_timer_create_args_t targs = {
         .callback = fallback_timer_cb,
         .name = "wifi_fb",

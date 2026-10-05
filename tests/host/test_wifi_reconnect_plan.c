@@ -83,11 +83,15 @@ void test_wifi_reconnect_plan(void)
     CHECK(!wifi_reason_is_bad_password(255));   CHECK(!wifi_reason_is_bad_password(1));
 }
 
-// #AWF-WIFI-1: срок fallback-таймера (unverified -> 90 с, подтверждённая -> 300 с).
+// #AWF-WIFI-1: срок fallback-таймера (unverified -> 120 с, подтверждённая -> 300 с).
 // Один CHECK на свойство: точечный мутант красит ровно то, что портит.
 void test_wifi_fallback_timeout(void)
 {
-    CHECK(wifi_fallback_timeout_s(true) == 90u);    // непроверенная сеть из портала, секунды
+    uint32_t sum = 0;   // сумма пауз одного прохода расписания реконнекта, считается из массива
+    for (int i = 0; i < WIFI_RECONNECT_STEPS; i++) sum += WIFI_RECONNECT_SCHEDULE_S[i];
+    CHECK(wifi_fallback_timeout_s(true) == 120u);   // непроверенная сеть из портала, секунды
     CHECK(wifi_fallback_timeout_s(false) == 300u);  // подтверждённая: срок прежний
-    CHECK(WIFI_SETUP_FALLBACK_S < WIFI_RECONNECT_FALLBACK_S);   // инвариант 90 < 300
+    CHECK(WIFI_SETUP_FALLBACK_S > sum);             // заведомо больше расписания реконнекта (108 с)
+    CHECK(sum == WIFI_RECONNECT_SCHEDULE_SUM_S);    // константа суммы не разошлась с массивом
+    CHECK(WIFI_SETUP_FALLBACK_S < WIFI_RECONNECT_FALLBACK_S);   // инвариант 120 < 300
 }

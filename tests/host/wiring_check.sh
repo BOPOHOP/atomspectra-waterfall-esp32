@@ -292,7 +292,24 @@ need wifi_manager.c 1 'wifi_setup_fail_bump(s_setup_auth_fails, reason)'
 need wifi_manager.c 1 'nvs_set_u8(nvs, "unver", 1);'
 need wifi_manager.c 1 'nvs_erase_key(uv, "unver");'
 need wifi_manager.c 1 'if (s_unverified) return_to_setup_and_reboot();'
-need wifi_manager.c 2 'wifi_fallback_timeout_s(s_unverified)'   # #AWF-WIFI-1: таймер и лог берут срок из одной функции
+# #AWF-WIFI-1 (проход B W-1/W-2/W-4): срок таймера - из wifi_fallback_timeout_s(s_unverified); значение s_unverified
+# читается из NVS ДО старта таймера; GOT_IP останавливает таймер ДО сброса s_unverified. Строки целиком (не подстроки, не комментарии).
+lnum() {   # lnum <file> <строка кода целиком, без отступа> -> номер первой такой строки (0 - нет)
+    awk -v s="$2" '{c=$0; sub(/\r$/,"",c); sub(/^[ \t]+/,"",c)} c == s {print NR; exit} END{if(!NR)print 0}' "$1" | head -1
+}
+T_RD='s_unverified = (unver != 0);'
+T_ST='esp_timer_start_once(s_fallback_timer, (uint64_t)wifi_fallback_timeout_s(s_unverified) * 1000000);'
+line wifi_manager.c 1 "$T_RD"
+line wifi_manager.c 1 'nvs_get_u8(nvs, "unver", &unver);'
+line wifi_manager.c 1 "$T_ST"
+line wifi_manager.c 1 '(const char *)wifi_config.sta.ssid, (unsigned)wifi_fallback_timeout_s(s_unverified), (int)s_unverified);'
 need wifi_manager.c 0 'WIFI_RECONNECT_FALLBACK_S) * 1000000'
+a=$(lnum wifi_manager.c "$T_RD"); b=$(lnum wifi_manager.c "$T_ST")
+{ [ "$a" -gt 0 ] && [ "$b" -gt 0 ] && [ "$a" -lt "$b" ]; } || { echo "WIRING FAIL wifi_manager.c: чтение s_unverified (:$a) должно быть строго раньше старта таймера (:$b)"; RC=1; }
+line wifi_manager.c 1 'if (s_fallback_timer) esp_timer_stop(s_fallback_timer);'
+line wifi_manager.c 1 's_unverified = false;'
+line wifi_manager.c 1 'if (s_got_ip_this_boot) return;   // #AWF-WIFI-1 (W-4): IP уже была — таймер опоздал к GOT_IP'
+c=$(lnum wifi_manager.c 'if (s_fallback_timer) esp_timer_stop(s_fallback_timer);'); d=$(lnum wifi_manager.c 's_unverified = false;')
+{ [ "$c" -gt 0 ] && [ "$d" -gt 0 ] && [ "$c" -lt "$d" ]; } || { echo "WIRING FAIL wifi_manager.c: остановка fallback-таймера (:$c) должна быть раньше сброса s_unverified (:$d)"; RC=1; }
 [ "$RC" -eq 0 ] && echo "wiring: OK"
 exit $RC

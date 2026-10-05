@@ -9,7 +9,8 @@ ok("wfChMax: 8192->8191, 4096->4095, 1->1 (не 0)", f(8192) === 8191 && f(4096)
 ok("старт chHi=wfChMax(CH); chHiClamp режет по wfChMax(CH)", /var chLo=0, chHi=wfChMax\(CH\);/.test(page) && /var cm=wfChMax\(CH\);/.test(page) && /if\(chHi>cm\)chHi=cm;/.test(page));
 ok("сброс зума = wfChMax(CH); в HTML chHi max/value 8191", /chLo=0;chHi=wfChMax\(CH\);/.test(page) && /id="chHi" min="1" max="8191" value="8191"/.test(page));
 ok("срез: cHi столбца не выходит за chHi", /if\(cHi>chHi\)cHi=chHi;/.test(page));
-ok("поля: #wf-row gap и #wf-scroll width/flex из --wf-gap/--wf-slider", /#wf-row\{[^}]*--wf-slider:16px;[^}]*--wf-gap:8px;[^}]*gap:var\(--wf-gap\)/.test(page) && /#wf-scroll\{[^}]*width:var\(--wf-slider\);\s*flex:0 0 var\(--wf-slider\)/.test(page));
+ok("поля: #wf-row gap и #wf-scroll width/flex из --wf-gap/--wf-slider", /#wf-row\{[^}]*--wf-slider:16px;[^}]*--wf-gap:8px;[^}]*gap:var\(--wf-gap\)/.test(page) && /#wf-sb\{[^}]*position:relative;\s*flex:0 0 var\(--wf-slider\);\s*width:var\(--wf-slider\)/.test(page));
+ok("проход A №1: слайдер вне потока (#wf-scroll absolute, height:100% внутри #wf-sb) — высоту ряда задаёт только канвас", /#wf-scroll\{[^}]*position:absolute;[^}]*height:100%/.test(page) && /<div id="wf-sb"><input id="wf-scroll"/.test(page));
 ok("поля: #slc-box = 16 + слайдер + зазор справа, 16 слева (как .pad спектрограммы)", /#slc-box\{[^}]*--wf-slider:16px;[^}]*--wf-gap:8px;[^}]*padding:0 calc\(16px \+ var\(--wf-slider\) \+ var\(--wf-gap\)\) 14px 16px;/.test(page) && /<div id="slc-box">/.test(page) && /\.pad\{ padding:13px 16px; \}/.test(page));
 if (failed) { console.log("FAILED: " + failed); process.exit(1); }
 console.log("ALL OK");
