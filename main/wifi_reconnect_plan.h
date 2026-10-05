@@ -17,6 +17,25 @@ static const uint32_t WIFI_RECONNECT_SCHEDULE_S[WIFI_RECONNECT_STEPS] =
 // роутер успевает подняться.
 #define WIFI_RECONNECT_FALLBACK_S 300u
 
+// #AWF-WIFI-1 (1.2.33): сеть из портала настройки, ещё НЕ подтверждённая (ни разу
+// не было IP, s_unverified), возвращается в портал по короткому сроку — при опечатке
+// в пароле/SSID ждать 300 с незачем. Единица — секунды. Подтверждённая сеть: 300 с.
+// Срок ЗАВЕДОМО больше суммы пауз одного прохода расписания реконнекта
+// (WIFI_RECONNECT_SCHEDULE_S: 1+2+5+10+30+60 = 108 с; сами попытки в сумму не входят),
+// иначе таймер срабатывал бы раньше, чем расписание успело отработать (проход B, W-3):
+// 120 = 108 + запас 12 с. Равенство суммы массива и константы — в хост-тесте.
+#define WIFI_RECONNECT_SCHEDULE_SUM_S 108u
+#define WIFI_SETUP_MARGIN_S 12u
+#define WIFI_SETUP_FALLBACK_S (WIFI_RECONNECT_SCHEDULE_SUM_S + WIFI_SETUP_MARGIN_S)
+_Static_assert(WIFI_SETUP_FALLBACK_S > WIFI_RECONNECT_SCHEDULE_SUM_S, "setup fallback must exceed the reconnect schedule");
+_Static_assert(WIFI_SETUP_FALLBACK_S < WIFI_RECONNECT_FALLBACK_S, "setup fallback must stay shorter than the known-network one");
+
+// Срок fallback-таймера в секундах: единственное место выбора (wifi_manager.c).
+static inline uint32_t wifi_fallback_timeout_s(bool unverified)
+{
+    return unverified ? WIFI_SETUP_FALLBACK_S : WIFI_RECONNECT_FALLBACK_S;
+}
+
 // Пауза перед (attempt+1)-й попыткой (attempt считается с 0). После
 // исчерпания расписания повторяет последний шаг, пока не сработает fallback.
 static inline uint32_t wifi_reconnect_delay_s(int attempt)
