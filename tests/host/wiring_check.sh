@@ -292,5 +292,7 @@ need wifi_manager.c 1 'wifi_setup_fail_bump(s_setup_auth_fails, reason)'
 need wifi_manager.c 1 'nvs_set_u8(nvs, "unver", 1);'
 need wifi_manager.c 1 'nvs_erase_key(uv, "unver");'
 need wifi_manager.c 1 'if (s_unverified) return_to_setup_and_reboot();'
+need wifi_manager.c 2 'wifi_fallback_timeout_s(s_unverified)'   # #AWF-WIFI-1: таймер и лог берут срок из одной функции
+need wifi_manager.c 0 'WIFI_RECONNECT_FALLBACK_S) * 1000000'
 [ "$RC" -eq 0 ] && echo "wiring: OK"
 exit $RC

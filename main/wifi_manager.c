@@ -676,12 +676,12 @@ void wifi_manager_init(void)
         .name = "wifi_fb",
     };
     if (esp_timer_create(&targs, &s_fallback_timer) == ESP_OK)
-        esp_timer_start_once(s_fallback_timer, (uint64_t)WIFI_RECONNECT_FALLBACK_S * 1000000);
+        esp_timer_start_once(s_fallback_timer, (uint64_t)wifi_fallback_timeout_s(s_unverified) * 1000000);
 
     // sta.ssid[32] может не содержать NUL (32-байтный SSID) -> %s зашёл бы в password[].
-    ESP_LOGI(TAG, "WiFi STA starting, SSID=%.*s (fallback %us)",
+    ESP_LOGI(TAG, "WiFi STA starting, SSID=%.*s (fallback %us, unverified=%d)",
              (int)strnlen((const char *)wifi_config.sta.ssid, sizeof(wifi_config.sta.ssid)),
-             (const char *)wifi_config.sta.ssid, (unsigned)WIFI_RECONNECT_FALLBACK_S);
+             (const char *)wifi_config.sta.ssid, (unsigned)wifi_fallback_timeout_s(s_unverified), (int)s_unverified);
 }
 
 bool wifi_is_connected(void)
