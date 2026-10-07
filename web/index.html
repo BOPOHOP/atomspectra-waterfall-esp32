@@ -508,7 +508,8 @@ async function update(){
   document.getElementById("big-time").textContent=fmtHMS(d.time);
   document.getElementById("big-cps").textContent=d.cps;
   /* #MX-13 (1.2.34, #62): рядом с целым CPS — только SMA с явной подписью длины окна; среднее за набор (total/live) — на странице «Мониторинг», формула avgCps в common-time.js */
-  var sma=smaCps(d.time,d.total),W=smaWinSec(),es=document.getElementById("big-sma");es.textContent=(sma===null)?"":" / SMA "+W+tr("cps.sec")+" "+sma.toFixed(2);es.title=tr("cps.smaT").replace("%1",W);
+  /* подпись — фактический охват истории (после F5 он короче номинального окна smaWinSec()) */
+  var sma=smaCps(d.time,d.total),es=document.getElementById("big-sma"),W=(sma===null)?0:Math.round(d.time-smaHist[0].t);es.textContent=(sma===null)?"":" / SMA "+W+tr("cps.sec")+" "+sma.toFixed(2);es.title=(sma===null)?"":tr("cps.smaT").replace("%1",W);
   document.getElementById("big-total").textContent=d.total.toLocaleString(lcl());
   if(doseK>0){var bigDr=(d.cps*doseK).toFixed(3);document.getElementById("big-dose").textContent=bigDr;document.getElementById("big-dose-sep").style.display="";document.getElementById("big-dose-wrap").style.display="";}else{document.getElementById("big-dose-sep").style.display="none";document.getElementById("big-dose-wrap").style.display="none";}
   draw(d);
