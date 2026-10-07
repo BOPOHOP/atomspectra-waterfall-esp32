@@ -114,7 +114,7 @@ nav a,nav span{ padding:12px 10px; }
 <div class="ml" style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
 <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;justify-content:flex-end">
 <span class="big" id="big-time">00:00:00</span><span class="mut">|</span>
-<span class="big ac"><span id="big-cps">0</span><span class="mut" id="big-avg" style="font-size:15px"></span><span class="mut" id="big-sma" style="font-size:15px"></span><span class="mut" style="font-size:12px"> CPS</span></span><span class="mut">|</span>
+<span class="big ac"><span id="big-cps">0</span><span class="mut" id="big-sma" style="font-size:15px"></span><span class="mut" style="font-size:12px"> CPS</span></span><span class="mut">|</span>
 <span class="big w"><span id="big-total">0</span><span class="mut" style="font-size:12px" data-i18n="st.counts"> counts</span></span>
 <span class="mut" id="big-dose-sep" style="display:none">|</span>
 <span class="big ac" id="big-dose-wrap" style="display:none"><span id="big-dose">0.000</span><span class="mut" style="font-size:12px"> µSv/h</span></span>
@@ -260,7 +260,7 @@ var DICT={
   "log.del":"Удалено: #%1","log.rebootDev":"Команда перезагрузки прибора отправлена",
   "log.exportOk":"Выгружено: %1","log.exportErr":"Экспорт не удался: %1",
   "log.cal":"Калибровка: [%1]","log.calErr":"Ошибка калибровки: %1","log.calClear":"Калибровка очищена",
-  "cps.avg":"ср.","cps.sec":" с","cps.avgT":"Средний CPS за весь набор: импульсы / живое время","cps.smaT":"SMA: скользящее среднее CPS за последние %1 с","t.d":"д","st.lost":"Потеряно","st.counts":" Импульсов","st.real":"Реал.","st.live":"Живое","st.dead":"Мёртв.","st.dose":"МД",
+  "cps.sec":" с","cps.smaT":"SMA: скользящее среднее CPS за последние %1 с","t.d":"д","st.lost":"Потеряно","st.counts":" Импульсов","st.real":"Реал.","st.live":"Живое","st.dead":"Мёртв.","st.dose":"МД",
   "err.prefix":"Ошибка: %1"
  },
  en:{
@@ -311,7 +311,7 @@ var DICT={
   "log.del":"Deleted #%1","log.rebootDev":"Reboot device sent",
   "log.exportOk":"Exported: %1","log.exportErr":"Export failed: %1",
   "log.cal":"Calibration: [%1]","log.calErr":"Calibration error: %1","log.calClear":"Calibration cleared",
-  "cps.avg":"avg","cps.sec":" s","cps.avgT":"Mean CPS over the whole acquisition: counts / live time","cps.smaT":"SMA: moving-average CPS over the last %1 s","t.d":"d","st.lost":"Lost","st.counts":" counts","st.real":"Real","st.live":"Live","st.dead":"Dead","st.dose":"DR",
+  "cps.sec":" s","cps.smaT":"SMA: moving-average CPS over the last %1 s","t.d":"d","st.lost":"Lost","st.counts":" counts","st.real":"Real","st.live":"Live","st.dead":"Dead","st.dose":"DR",
   "err.prefix":"Error: %1"
  }
 };
@@ -389,7 +389,6 @@ function fmtHMS(s){var dd=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Mat
 var smaHist=[];
 function smaWinSec(){var w=10,iv=10;try{var v=parseInt(localStorage.getItem("aswf-sma-win"),10);if(v>=2&&v<=200)w=v;var st=JSON.parse(localStorage.getItem("aswf-mon-sess")||"{}");if(st.iv>=1)iv=st.iv}catch(e){}return w*iv}
 function smaCps(t,n){if(typeof t!=="number"||typeof n!=="number")return null;if(smaHist.length&&t<smaHist[smaHist.length-1].t)smaHist=[];if(!smaHist.length||t>smaHist[smaHist.length-1].t)smaHist.push({t:t,n:n});var W=smaWinSec();while(smaHist.length>2&&smaHist[1].t<=t-W)smaHist.shift();if(smaHist.length>600)smaHist.shift();var a=smaHist[0];return(t>a.t)?(n-a.n)/(t-a.t):null}
-function avgCps(n,l){return(typeof n==="number"&&typeof l==="number"&&isFinite(n)&&isFinite(l)&&l>0)?n/l:null}
 function fmtNum(n){return Math.round(n).toLocaleString(lcl())}
 /* #MX-10 (1.2.31): степенная шкала Y — y^(1/e): поджимает пики мягче логарифма, по аналогии с BecqMoni */
 function viewSave(){try{localStorage.setItem("aswf-view",JSON.stringify({log:isLog,pow:isPow,cps:isCps,kev:isKev}))}catch(e){}}
@@ -508,8 +507,7 @@ async function update(){
    '<span>t '+tStr+' &deg;C</span>';
   document.getElementById("big-time").textContent=fmtHMS(d.time);
   document.getElementById("big-cps").textContent=d.cps;
-  /* #MX-13 (1.2.34): рядом с целым CPS — среднее за весь набор (total/live, live — живое время в секундах из /api/spectrum.json) и SMA с явной подписью окна; без live (0/нет поля) среднее не выводится */
-  var avg=avgCps(d.total,d.live);var ea=document.getElementById("big-avg");ea.textContent=(avg===null)?"":" / "+tr("cps.avg")+" "+avg.toFixed(2);ea.title=tr("cps.avgT");
+  /* #MX-13 (1.2.34, #62): рядом с целым CPS — только SMA с явной подписью длины окна; среднее за набор (total/live) — на странице «Мониторинг», формула avgCps в common-time.js */
   var sma=smaCps(d.time,d.total),W=smaWinSec(),es=document.getElementById("big-sma");es.textContent=(sma===null)?"":" / SMA "+W+tr("cps.sec")+" "+sma.toFixed(2);es.title=tr("cps.smaT").replace("%1",W);
   document.getElementById("big-total").textContent=d.total.toLocaleString(lcl());
   if(doseK>0){var bigDr=(d.cps*doseK).toFixed(3);document.getElementById("big-dose").textContent=bigDr;document.getElementById("big-dose-sep").style.display="";document.getElementById("big-dose-wrap").style.display="";}else{document.getElementById("big-dose-sep").style.display="none";document.getElementById("big-dose-wrap").style.display="none";}

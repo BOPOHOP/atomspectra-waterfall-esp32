@@ -82,3 +82,8 @@ window.heavyDownload = async function heavyDownload(url, fallbackName) {
   setTimeout(function () { URL.revokeObjectURL(href); }, 10000);
   return name;
 };
+
+/* #MX-13 (1.2.34, #62): средний CPS за набор = импульсы / живое время (секунды); null, если время не конечное число или <= 0, либо импульсы не число. Единственное место формулы; показывается на странице «Мониторинг» */
+window.avgCps = function (n, l) {
+  return (typeof n === "number" && typeof l === "number" && isFinite(n) && isFinite(l) && l > 0) ? n / l : null;
+};
