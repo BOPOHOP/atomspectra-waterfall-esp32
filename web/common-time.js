@@ -83,7 +83,7 @@ window.heavyDownload = async function heavyDownload(url, fallbackName) {
   return name;
 };
 
-/* #MX-13 (1.2.34, #62): средний CPS за набор = импульсы / живое время (секунды); null, если время не конечное число или <= 0, либо импульсы не число. Единственное место формулы; показывается на странице «Мониторинг» */
-window.avgCps = function (n, l) {
+/* #MX-13 (1.2.34, #62): средний CPS за набор = импульсы / время (секунды); null, если время не конечное число или <= 0, либо импульсы не число. Единственное место формулы: главная делит на реальное время (как SMA), «Мониторинг» — на живое. Имя у функции — для test/web/undef_calls_test.mjs */
+window.avgCps = function avgCps(n, l) {
   return (typeof n === "number" && typeof l === "number" && isFinite(n) && isFinite(l) && l > 0) ? n / l : null;
 };
