@@ -260,7 +260,7 @@ var DICT={
   "log.del":"Удалено: #%1","log.rebootDev":"Команда перезагрузки прибора отправлена",
   "log.exportOk":"Выгружено: %1","log.exportErr":"Экспорт не удался: %1",
   "log.cal":"Калибровка: [%1]","log.calErr":"Ошибка калибровки: %1","log.calClear":"Калибровка очищена",
-  "cps.sec":" с","cps.smaT":"SMA: скользящее среднее CPS за последние %1 с","t.d":"д","st.lost":"Потеряно","st.counts":" Импульсов","st.real":"Реал.","st.live":"Живое","st.dead":"Мёртв.","st.dose":"МД",
+  "cps.sec":" с","cps.smaT":"SMA: скользящее среднее CPS за последние %1 с","t.d":"д","st.lost":"Потеряно","st.counts":" Импульсов","st.real":"Реал.","st.live":"Живое","st.avg":"Ср. CPS (реал.)","st.avgT":"Средний CPS за набор: импульсы / реальное время набора, тот же знаменатель, что у SMA","st.dead":"Мёртв.","st.dose":"МД",
   "err.prefix":"Ошибка: %1"
  },
  en:{
@@ -311,7 +311,7 @@ var DICT={
   "log.del":"Deleted #%1","log.rebootDev":"Reboot device sent",
   "log.exportOk":"Exported: %1","log.exportErr":"Export failed: %1",
   "log.cal":"Calibration: [%1]","log.calErr":"Calibration error: %1","log.calClear":"Calibration cleared",
-  "cps.sec":" s","cps.smaT":"SMA: moving-average CPS over the last %1 s","t.d":"d","st.lost":"Lost","st.counts":" counts","st.real":"Real","st.live":"Live","st.dead":"Dead","st.dose":"DR",
+  "cps.sec":" s","cps.smaT":"SMA: moving-average CPS over the last %1 s","t.d":"d","st.lost":"Lost","st.counts":" counts","st.real":"Real","st.live":"Live","st.avg":"Avg CPS (real)","st.avgT":"Average CPS over the acquisition: counts / real acquisition time, the same denominator as SMA","st.dead":"Dead","st.dose":"DR",
   "err.prefix":"Error: %1"
  }
 };
@@ -500,11 +500,14 @@ async function update(){
   if(typeof d.t2==="number" && d.t2>0)tStr+='/'+d.t2;
   if(typeof d.t3==="number" && d.t3>0)tStr+='/'+d.t3;
   var doseStr=(doseK>0)?(d.cps*doseK).toFixed(3):"";
+  /* #MX-13 (1.2.34, #62): средний CPS по реальному времени набора = импульсы / d.time (тот же знаменатель, что у мгновенного CPS и SMA); формула avgCps — common-time.js (подключён в конце страницы); нет значения — элемент не выводится */
+  var avgV=(typeof avgCps==="function")?avgCps(d.total,d.time):null;
+  var avgHtml=(avgV===null)?"":'<span class="sep">|</span><span title="'+tr("st.avgT")+'"><span class="mut">'+tr("st.avg")+'</span> '+avgV.toFixed(2)+'</span>';
   /* #MX-5/#MX-6 (1.2.31): CPS, счёт, МД и реальное время — только крупными цифрами выше; здесь — остальное */
   stEl.innerHTML='<span><span class="mut">'+tr("st.live")+'</span> '+fmtTime(lv)+'</span><span class="sep">|</span>'+
    '<span><span class="mut">'+tr("st.dead")+'</span> '+dpct.toFixed(2)+'%</span><span class="sep">|</span>'+
    '<span>'+tr("st.lost")+' <span>'+d.lost+'</span></span><span class="sep">|</span>'+
-   '<span>t '+tStr+' &deg;C</span>';
+   '<span>t '+tStr+' &deg;C</span>'+avgHtml;
   document.getElementById("big-time").textContent=fmtHMS(d.time);
   document.getElementById("big-cps").textContent=d.cps;
   /* #MX-13 (1.2.34, #62): рядом с целым CPS — только SMA с явной подписью длины окна; среднее за набор (total/live) — на странице «Мониторинг», формула avgCps в common-time.js */
