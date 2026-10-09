@@ -96,6 +96,7 @@ canvas{ width:100%; height:auto; display:block; }
 <div class="mut" style="font-size:11px;margin-top:6px" data-i18n="live.hint">мгновенное значение с прибора</div>
 <div class="kv" style="margin-top:8px"><span data-i18n="live.total">Всего импульсов</span><span id="live-total">—</span></div>
 <div class="kv"><span data-i18n="live.devtime">Время набора, с</span><span id="live-time">—</span></div>
+<div class="kv"><span data-i18n="live.avg">Средний CPS за набор (живое время)</span><span id="live-avg">—</span></div>
 </section>
 <section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#8721;</span> <span data-i18n="avg.title">Средний CPS (сессия)</span></div>
@@ -159,7 +160,7 @@ var DICT={
   "ctl.interval":"Интервал усреднения, с","ctl.start":"Старт","ctl.stop":"Стоп","ctl.clear":"Очистить","ctl.csv":"Выгрузить CSV",
   "run.idle":"остановлено","run.rec":"идёт запись · собрано %1","run.wait":"ожидание набора прибором…","run.paused":"прибор не набирает (время не идёт)","run.cleared":"спектр очищен на приборе — якорь сброшен",
   "run.ring":"история платы (сбор идёт автономно) · показано %1",
-  "live.title":"Текущий CPS","live.hint":"мгновенное значение с прибора","live.total":"Всего импульсов","live.devtime":"Время набора, с",
+  "live.title":"Текущий CPS","live.hint":"мгновенное значение с прибора","live.total":"Всего импульсов","live.devtime":"Время набора, с","live.avg":"Средний CPS за набор (живое время)",
   "avg.title":"Средний CPS (сессия)","avg.rel":"отн. погрешность","avg.samples":"Отсчётов","avg.counts":"Импульсов в сессии","avg.dur":"Длит. сессии, с",
   "last.title":"Последний интервал","last.counts":"Импульсов","last.dur":"Длит., с",
   "chart.title":"CPS по интервалам","chart.raw":"сырые","chart.smaWin":"Окно SMA, отсчётов",
@@ -176,7 +177,7 @@ var DICT={
   "ctl.interval":"Averaging interval, s","ctl.start":"Start","ctl.stop":"Stop","ctl.clear":"Clear","ctl.csv":"Export CSV",
   "run.idle":"stopped","run.rec":"recording · %1 collected","run.wait":"waiting for device acquisition…","run.paused":"device not acquiring (time frozen)","run.cleared":"spectrum cleared on device — anchor reset",
   "run.ring":"board history (acquired autonomously) · %1 shown",
-  "live.title":"Current CPS","live.hint":"instantaneous value from device","live.total":"Total counts","live.devtime":"Acquisition time, s",
+  "live.title":"Current CPS","live.hint":"instantaneous value from device","live.total":"Total counts","live.devtime":"Acquisition time, s","live.avg":"Mean CPS over acquisition (live time)",
   "avg.title":"Mean CPS (session)","avg.rel":"relative error","avg.samples":"Samples","avg.counts":"Counts in session","avg.dur":"Session duration, s",
   "last.title":"Last interval","last.counts":"Counts","last.dur":"Duration, s",
   "chart.title":"CPS per interval","chart.raw":"raw","chart.smaWin":"SMA window, samples",
@@ -344,6 +345,8 @@ async function livePoll(){
  if(cps!==null)  document.getElementById("live-cps").textContent=fmtCps(cps);
  if(total!==null)document.getElementById("live-total").textContent=total.toLocaleString("ru-RU");
  if(time!==null) document.getElementById("live-time").textContent=time.toLocaleString("ru-RU");
+ /* #MX-13 (1.2.34, #62): средний CPS за набор = total / live (живое время, с, из meta.json); формула avgCps — common-time.js; нет live — «—» */
+ var avg=(typeof avgCps==="function")?avgCps(total,r.live):null;  /* common-time.js подключён ниже (:659) — первый опрос может прийти раньше его загрузки */ document.getElementById("live-avg").textContent=(avg===null)?"—":avg.toFixed(2);
 }
 
 // --- Сбор серии с платы (#MON-1) ---
