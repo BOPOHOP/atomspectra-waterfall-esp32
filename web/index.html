@@ -367,9 +367,7 @@ async function pollDevLog(){try{var r=await(await fetch("/api/devlog?since="+dev
 /* #MX-7 (1.2.31): наборы бывают по 30–40 суток — больше 24 ч время показывается с днями (fmtDur/fmtClock — common-time.js, OPT-11) */
 /* #MX-8 (1.2.31): CPS, усреднённый за окно SMA вкладки «Мониторинг» (окно отсчётов × интервал, по умолчанию 10 × 10 с).
    Считается по счёту и времени набора: (Δcounts)/(Δtime) за последние W секунд; сброс набора (time убыл) очищает историю. */
-var smaHist=[];
 function smaWinSec(){var w=10,iv=10;try{var v=parseInt(localStorage.getItem("aswf-sma-win"),10);if(v>=2&&v<=200)w=v;var st=JSON.parse(localStorage.getItem("aswf-mon-sess")||"{}");if(st.iv>=1)iv=st.iv}catch(e){}return w*iv}
-function smaCps(t,n){if(typeof t!=="number"||typeof n!=="number")return null;if(smaHist.length&&t<smaHist[smaHist.length-1].t)smaHist=[];if(!smaHist.length||t>smaHist[smaHist.length-1].t)smaHist.push({t:t,n:n});var W=smaWinSec();while(smaHist.length>2&&smaHist[1].t<=t-W)smaHist.shift();if(smaHist.length>600)smaHist.shift();var a=smaHist[0];return(t>a.t)?(n-a.n)/(t-a.t):null}
 /* #MX-10 (1.2.31): степенная шкала Y — y^(1/e): поджимает пики мягче логарифма, по аналогии с BecqMoni */
 function viewSave(){try{localStorage.setItem("aswf-view",JSON.stringify({log:isLog,pow:isPow,cps:isCps,kev:isKev}))}catch(e){}}
 function setPow(ns){isPow=true;isLog=false;if(!ns)viewSave();setSeg(["btn-lin","btn-log","btn-pow"],2);if(lastD)draw(lastD);else clearCanvas()}
@@ -449,7 +447,7 @@ async function update(){
  try{
   /* #PERF-1: binary bins (32 KiB) + meta JSON — shared 2s server cache */
   var rb=await fetch("/api/spectrum");
-  var rm=await fetch("/api/spectrum/meta.json");
+  var rm=await fetch("/api/spectrum/meta.json?w="+smaWinSec());  /* #MX-14 (1.2.36): SMA окна W с платы (кольцо monitor.c), тем же запросом */
   if(!rb.ok||!rm.ok){
    acqStale();  /* #UI-44 */
    var deadHdr=(rm.headers&&rm.headers.get("X-Spectrometer-Dead"))||(rb.headers&&rb.headers.get("X-Spectrometer-Dead"));
@@ -486,8 +484,8 @@ async function update(){
   document.getElementById("big-time").textContent=fmtClock(d.time);
   document.getElementById("big-cps").textContent=d.cps;
   /* #MX-13 (1.2.34, #62): рядом с целым CPS — SMA с подписью фактического охвата; среднее за набор по реальному времени — в строке статуса, по живому — на «Мониторинге»; формула avgCps в common-time.js */
-  /* подпись — фактический охват истории (после F5 он короче номинального окна smaWinSec()) */
-  var sma=smaCps(d.time,d.total);var es=document.getElementById("big-sma"),W=(sma===null)?0:Math.round(d.time-smaHist[0].t);es.textContent=(sma===null)?"":" / SMA "+W+tr("cps.sec")+" "+sma.toFixed(2);es.title=(sma===null)?"":tr("cps.smaT").replace("%1",W);
+  /* #MX-14 (1.2.36): SMA и фактический охват окна (sma_w, с) приходят с платы в meta.json?w=; без собственной истории вкладки, после F5 не копится заново */
+  var sma=(typeof d.sma==="number")?d.sma:null;var es=document.getElementById("big-sma"),W=(sma===null)?0:Math.round(d.sma_w);es.textContent=(sma===null)?"":" / SMA "+W+tr("cps.sec")+" "+sma.toFixed(2);es.title=(sma===null)?"":tr("cps.smaT").replace("%1",W);
   document.getElementById("big-total").textContent=d.total.toLocaleString(lcl());
   if(doseK>0){var bigDr=(d.cps*doseK).toFixed(3);document.getElementById("big-dose").textContent=bigDr;document.getElementById("big-dose-sep").style.display="";document.getElementById("big-dose-wrap").style.display="";}else{document.getElementById("big-dose-sep").style.display="none";document.getElementById("big-dose-wrap").style.display="none";}
   draw(d);

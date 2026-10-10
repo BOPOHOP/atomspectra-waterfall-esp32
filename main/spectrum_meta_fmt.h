@@ -168,3 +168,13 @@ static inline size_t spec_json_full_fmt(char *buf, size_t cap, const uint32_t *b
     }
     return w.len;
 }
+
+/* 1.2.36 #MX-14 (G): хвост meta.json?w=W - SMA окна «отношение сумм» (Σcounts/Σdur, monitor_window.h). Заменяет закрывающую "}"
+   тела meta: body[0 .. len-1) + хвост. sd==0 (кольцо пусто) - "sma":null. Возвращает длину хвоста (>= cap - не поместилось). */
+static inline size_t spec_meta_sma_tail(char *buf, size_t cap, uint64_t sc, uint32_t sd, uint32_t n)
+{
+    int k;
+    if (sd == 0) k = snprintf(buf, cap, ",\"sma\":null,\"sma_w\":%" PRIu32 ",\"sma_n\":%" PRIu32 "}", sd, n);
+    else k = snprintf(buf, cap, ",\"sma\":%.4f,\"sma_w\":%" PRIu32 ",\"sma_n\":%" PRIu32 "}", (double)sc / (double)sd, sd, n);
+    return (k < 0) ? 0 : (size_t)k;
+}

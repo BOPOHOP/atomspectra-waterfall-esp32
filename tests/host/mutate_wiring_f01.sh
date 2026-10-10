@@ -136,7 +136,7 @@ mut M102_mx3_cpuauto     ../web/system.html    's/,{mn:0,mx:100});/);/' '{mn:0,m
 mut M103_mx4_nohint      ../web/index.html     's/acqSince=(acqHint===false)?now-6000:now;/acqSince=now;/' 'acqSince=(acqHint===false)'
 mut M104_mx6_bigstatus   ../web/index.html     's/data-i18n="status.connecting" style="font-size:11.5px;/data-i18n="status.connecting" style="/' 'style="font-size:11.5px;'
 mut M105_mx7_nodays      ../web/index.html     's/(dd>0?dd+tr("t.d")+" ":"")//' 'dd+tr("t.d")'
-mut M106_mx8_nosma       ../web/index.html     's/var sma=smaCps(d.time,d.total);/var sma=null;/' 'var sma=smaCps('
+mut M106_mx8_nosma       ../web/index.html     's/var sma=(typeof d.sma==="number")?d.sma:null;/var sma=null;/' 'var sma=(typeof d.sma'
 mut M107_mx9_cursor      ../web/index.html     's/var bw=PW\/visN(N);/var bw=PW\/N;/' 'var bw=PW/visN(N);'
 mut M108_mx10_nopow      ../web/index.html     's/Math.pow(v\/mx,1\/Math.E)/(v\/mx)/' 'Math.pow(v/mx,1/Math.E)'
 mut M109_mx11_lastch     ../web/index.html     's/var NM=(NV>=N)?N-1:NV;/var NM=NV;/' 'var NM=(NV>=N)?N-1:NV;'
@@ -225,4 +225,13 @@ mut MA_cache_lost     spectrum_http_cache.c 's/spectrum_get_snapshot_seq(s_sp_bu
 mut MA_cache_old      spectrum_http_cache.c '$a static bool ma_old(void) { return spectrum_get_snapshot(s_sp_build); }' 'spectrum_get_snapshot(s_sp_build)'
 mut MA_fallback_cnt   spectrum.c 's/s_spec_seq_fallback++;/(void)0;/' 's_spec_seq_fallback++;'
 mut MA_retry_field    web_server.c '/"spec_seq_retry", /d' '"spec_seq_retry"'
+# 1.2.36 #MX-14 (G): окно W не уходит на плату / в браузер вернулась своя история / «Мониторинг» без общего определения / обход кольца и хвост потеряны / нет терминатора чанков
+mut MG_idx_nowin      ../web/index.html    's/meta.json?w="+smaWinSec())/meta.json")/' 'meta.json?w='
+mut MG_idx_hist_back  ../web/index.html    '$a <!-- smaHist -->' 'smaHist'
+mut MG_mon_oldavg     ../web/monitor.html  's/var smaAll=smaRatioSeries(/var smaAll=smaMeanSeries(/' 'var smaAll=smaRatioSeries('
+mut MG_ct_def_lost    ../web/common-time.js 's/out.push(sd > 0 ? sc \/ sd : 0);/out.push(sc \/ (sd || 1));/' 'out.push(sd > 0'
+mut MG_ring_lost      monitor.c            's/k = mon_window_sum(s_ring, s_cap, s_head, s_count, w_sec, \&sc, \&sd);/k = 0;/' 'mon_window_sum('
+mut MG_site_lost      web_server.c         's/return spectrum_http_send_meta_sma(req, sc, sd, n);/return spectrum_http_send_meta(req);/' 'spectrum_http_send_meta_sma('
+mut MG_tail_lost      spectrum_http_cache.c 's/size_t tl = spec_meta_sma_tail(/size_t tl = 0 * spec_meta_sma_tail(/' 'spec_meta_sma_tail('
+mut MG_chunk_noterm   spectrum_http_cache.c 's/e = httpd_resp_send_chunk(req, NULL, 0);/e = ESP_OK;/' 'httpd_resp_send_chunk(req, NULL, 0)'
 exit $RC

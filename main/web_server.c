@@ -239,6 +239,20 @@ static esp_err_t handle_spectrum(httpd_req_t *req)
 static esp_err_t handle_spectrum_meta(httpd_req_t *req)
 {
     // #PERF-1: meta without 8192 bins (system/monitor tiles)
+    // 1.2.36 #MX-14: ?w=<секунд наборного времени> - к meta добавляется SMA окна W из кольца платы (ответ идёт чанками);
+    // без w (или с нечисловым w) - прежняя отправка с Content-Length, байты те же.
+    char q[32], v[16];
+    if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK &&
+        httpd_query_key_value(q, "w", v, sizeof(v)) == ESP_OK) {
+        char *end = NULL;
+        unsigned long w = strtoul(v, &end, 10);
+        if (end != v && *end == '\0') {
+            uint64_t sc = 0;
+            uint32_t sd = 0, n = 0;
+            monitor_window((uint32_t)(w > UINT32_MAX ? UINT32_MAX : w), &sc, &sd, &n);   // вне s_mtx кэша
+            return spectrum_http_send_meta_sma(req, sc, sd, n);
+        }
+    }
     return spectrum_http_send_meta(req);
 }
 

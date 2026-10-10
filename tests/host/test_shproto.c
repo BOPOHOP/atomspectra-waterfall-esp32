@@ -108,6 +108,7 @@ void spectrum_meta_fmt_suite(void);          // 1.2.36 B: meta один раз, 
 void ttl_plan_suite(void);                // 1.2.36 H5: срок жизни медленной части /api/system
 void seq_copy_suite(void);               // 1.2.36 H1: снимок кэша без SPEC_LOCK (seqlock, seq_copy.h)
 void spectrum_calib_meta_suite(void);      // 1.2.36 H12: поля хвоста снимка для /api/device
+void monitor_window_suite(void);           // 1.2.36 #MX-14: SMA из кольца платы (окно Σdur, хвост meta.json?w=)
 
 // Тестовая команда. CMD_HISTOGRAM (0x01) объявлена в main/atomspectra.h, но она
 // вне include-path host-сборки; shproto трактует cmd как обычный uint8_t.
@@ -337,6 +338,7 @@ int main(void)
     ttl_plan_suite();
     spectrum_meta_fmt_suite();
     seq_copy_suite();
+    monitor_window_suite();
 
     if (g_failures) {
         printf("\n%d CHECK(S) FAILED\n", g_failures);

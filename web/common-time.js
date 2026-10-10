@@ -350,3 +350,16 @@ function calChan(c, kev, n) {
     return calInv(c || [0, 1], kev, n, 0, n);
 }
 /*CAL-END*/
+
+/* #MX-14 (1.2.36, G): SMA = отношение сумм за окно (Σcounts / Σdur), одно определение на двух страницах: главная берёт его с платы (meta.json?w=, кольцо monitor.c: Σdur до W), «Мониторинг» считает по вёдрам этой функцией (раньше - среднее отношений вёдер). Блок SMA-BEGIN..END вырезает test/web/sma_ratio_test.mjs. */
+/*SMA-BEGIN*/
+function smaRatioSeries(counts, durs, win) {
+    var out = [], sc = 0, sd = 0;
+    for (var i = 0; i < counts.length; i++) {
+        sc += counts[i]; sd += durs[i];
+        if (i >= win) { sc -= counts[i - win]; sd -= durs[i - win]; }
+        out.push(sd > 0 ? sc / sd : 0);
+    }
+    return out;
+}
+/*SMA-END*/

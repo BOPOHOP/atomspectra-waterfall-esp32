@@ -493,8 +493,8 @@ function drawChart(){
  // SMA по всему массиву (trailing, окно = win интервалов) — считаем до вырезки окна, чтобы край окна был корректным
  var win=parseInt(document.getElementById("smaWin")?document.getElementById("smaWin").value:10,10);
  if(!(win>=2))win=2; if(win>200)win=200;
- var smaAll=[],acc=0;
- for(i=0;i<N;i++){ acc+=samples[i].cps; if(i>=win)acc-=samples[i-win].cps; smaAll.push(acc/Math.min(i+1,win)); }
+ /* #MX-14 (1.2.36): SMA - отношение сумм за окно в вёдрах (smaRatioSeries, common-time.js), как у главной (та берёт то же определение с платы) */
+ var smaAll=smaRatioSeries(samples.map(function(s){return s.counts}),samples.map(function(s){return s.dur}),win);
  // Окно просмотра
  var cnt=chartView.cnt==null ? Math.min(DEF_VIEW,N) : clampNum(chartView.cnt,2,N);
  var endIdx=chartView.end==null ? N : clampNum(chartView.end,cnt,N); // exclusive

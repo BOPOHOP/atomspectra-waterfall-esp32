@@ -40,3 +40,7 @@ esp_err_t spectrum_http_send_bins(httpd_req_t *req);
 
 // Send meta JSON without bins (cps, total, calib, …).
 esp_err_t spectrum_http_send_meta(httpd_req_t *req);
+
+// 1.2.36 #MX-14: то же тело meta + хвост SMA ,"sma":..,"sma_w":..,"sma_n":..} (окно считает monitor_window(), вне мьютекса кэша).
+// Ответ чанками (httpd_resp_send_chunk): без Content-Length. Заголовки X-Spectrum-Render-Count / Cache-Control те же.
+esp_err_t spectrum_http_send_meta_sma(httpd_req_t *req, uint64_t sum_counts, uint32_t sum_dur, uint32_t n);

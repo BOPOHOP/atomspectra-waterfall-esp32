@@ -32,3 +32,8 @@ void monitor_init(void);
 size_t monitor_copy_since(uint32_t since, monitor_sample_t *out, size_t max,
                           uint32_t *out_first_seq, uint32_t *out_next_seq,
                           uint32_t *out_epoch);
+
+// 1.2.36 #MX-14: SMA «отношение сумм за окно» прямо по кольцу, под s_lock, без копии (monitor_window.h).
+// w_sec клампится к [1, ёмкость кольца]. *sum_counts / *sum_dur — Σcounts / Σdur последних сэмплов, пока Σdur < W
+// (сэмпл, на котором Σdur достигает W, включается); *n — число сэмплов. Пустое кольцо / монитор отключён — нули.
+void monitor_window(uint32_t w_sec, uint64_t *sum_counts, uint32_t *sum_dur, uint32_t *n);

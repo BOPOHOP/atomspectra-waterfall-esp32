@@ -227,7 +227,13 @@ need ../web/index.html   0 '<span class="ac">CPS <span>'                        
 need ../web/index.html   1 '<div class="status" id="status" data-i18n="status.connecting" style="font-size:11.5px;'   # MX-6
 need ../web/common-time.js 1 'if (d > 0) p.push(d + u.d);'                       # MX-7: дни в длительности словами (fmtDur, OPT-11: перенесено с главной)
 need ../web/common-time.js 1 'var prefix = d > 0 ? d + u.d + " " : "";'          # MX-7: дни в часах ЧЧ:ММ:СС (fmtClock)
-need ../web/index.html   1 'var sma=smaCps(d.time,d.total);'                               # MX-8
+need ../web/index.html   1 'var sma=(typeof d.sma==="number")?d.sma:null;var es=document.getElementById("big-sma"),W=(sma===null)?0:Math.round(d.sma_w);'   # MX-8 / #MX-14 (1.2.36): SMA и охват sma_w - с платы (кольцо monitor.c), вместо smaCps()
+need ../web/index.html   0 'smaHist'                                                      # #MX-14: своя история вкладки удалена
+need ../web/index.html   0 'smaCps('                                                      # #MX-14: расчёт в браузере удалён
+need ../web/index.html   1 'fetch("/api/spectrum/meta.json?w="+smaWinSec())'              # #MX-14: окно W уходит на плату тем же запросом meta
+need ../web/monitor.html 1 'var smaAll=smaRatioSeries('                                   # #MX-14: «Мониторинг» - то же определение (common-time.js)
+need ../web/monitor.html 0 'acc+=samples[i].cps'                                          # #MX-14: среднее отношений вёдер удалено
+need ../web/common-time.js 1 'out.push(sd > 0 ? sc / sd : 0);'                            # #MX-14: smaRatioSeries - отношение сумм
 need ../web/monitor.html 1 'aswf-sma-win"),e=document.getElementById("smaWin")'           # MX-8: окно SMA помнится
 need ../web/index.html   1 'function visN(N){if(!xRange||!isKev||!calib)return N;'          # MX-9
 need ../web/index.html   1 'var bw=PW/visN(N);'                                            # MX-9: курсор в том же масштабе
@@ -355,5 +361,11 @@ need spectrum_http_cache.c 1 'spectrum_get_snapshot_seq(s_sp_build)'
 need spectrum_http_cache.c 0 'spectrum_get_snapshot(s_sp_build)'
 need web_server.c 1 '"spec_seq_retry"'
 need web_server.c 1 '"spec_seq_fallback"'
+# 1.2.36 #MX-14 (G): SMA из кольца платы - meta.json?w=W: обход кольца под s_lock без копии, хвост sma/sma_w/sma_n, ответ чанками с терминатором
+need monitor.c 1 'k = mon_window_sum(s_ring, s_cap, s_head, s_count, w_sec, &sc, &sd);'
+need web_server.c 1 'monitor_window((uint32_t)(w > UINT32_MAX ? UINT32_MAX : w), &sc, &sd, &n);'
+need web_server.c 1 'return spectrum_http_send_meta_sma(req, sc, sd, n);'
+need spectrum_http_cache.c 1 'size_t tl = spec_meta_sma_tail('
+need spectrum_http_cache.c 1 'e = httpd_resp_send_chunk(req, NULL, 0);'
 [ "$RC" -eq 0 ] && echo "wiring: OK"
 exit $RC

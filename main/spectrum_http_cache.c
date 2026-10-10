@@ -427,3 +427,43 @@ esp_err_t spectrum_http_send_meta(httpd_req_t *req)
     snapshot_end();
     return e;
 }
+
+// 1.2.36 #MX-14 (G1): meta + хвост SMA окна W (monitor_window.h), ответ ЧАНКАМИ: s_meta[0 .. len-1) + хвост + терминатор.
+// Заголовки (X-Spectrum-Render-Count, Cache-Control: no-store) ставит snapshot_begin() ДО первого чанка - httpd шлёт их с ним;
+// hdr[] живёт до конца функции (httpd хранит указатель). Без параметра w отправка прежняя (spectrum_http_send_meta).
+esp_err_t spectrum_http_send_meta_sma(httpd_req_t *req, uint64_t sum_counts, uint32_t sum_dur, uint32_t n)
+{
+    if (!spectrum_http_cache_ensure()) {
+        httpd_resp_set_hdr(req, "X-Spectrometer-Dead", usb_host_cdc_spectrometer_dead() ? "1" : "0");
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "No spectrum data yet");
+        return ESP_FAIL;
+    }
+
+    const char *payload = NULL;
+    size_t len = 0;
+    char hdr[16];
+    char tail[128];
+
+    snapshot_begin(req, PAYLOAD_META, &payload, &len, hdr, sizeof(hdr));
+
+    size_t tl = spec_meta_sma_tail(tail, sizeof(tail), sum_counts, sum_dur, n);
+
+    if (len <= 1 || payload[len - 1] != '}' || tl == 0 || tl >= sizeof(tail)) {
+        snapshot_end();
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "meta sma");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+
+    esp_err_t e = httpd_resp_send_chunk(req, payload, (ssize_t)(len - 1));
+    if (e == ESP_OK) {
+        e = httpd_resp_send_chunk(req, tail, (ssize_t)tl);
+    }
+    if (e == ESP_OK) {
+        e = httpd_resp_send_chunk(req, NULL, 0);
+    }
+
+    snapshot_end();
+    return e;
+}
