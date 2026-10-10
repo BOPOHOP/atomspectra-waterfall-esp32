@@ -261,6 +261,9 @@ const spectrum_data_t *spectrum_get_current(void);
 // Поле bins[] в out НЕ заполняется — не читать его после этого вызова.
 bool spectrum_get_meta(spectrum_data_t *out);
 
+// 1.2.36 OPT-1: живое время, с (метод BecqMoni; формула — live_time.h). Одна функция для JSON, XML, N42, SPE.
+float spectrum_compute_live_time(const spectrum_data_t *sp);
+
 // #FW-53: счётчики СВИПОВ (не чанков). commits — собрано полных спектров,
 // drops — отброшено рваных (разрыв в чанках). pkt_hist в usb-diag считает
 // ЧАНКИ гистограммы и в разы больше — это разные величины.

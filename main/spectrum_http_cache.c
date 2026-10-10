@@ -46,18 +46,6 @@ static bool               s_building;
 // более свежим (на самом деле устаревшим) commit'ом.
 static volatile uint32_t  s_gen;
 
-static float compute_live_time(const spectrum_data_t *sp)
-{
-    const device_info_t *di = spectrum_get_device_info();
-    float total = (float)sp->total_time_sec;
-    if (!di->valid || di->freq <= 0.0f) return total;
-    float tau = ((float)di->rise + (float)di->fall + 1.0f) / di->freq;
-    float dead = (float)(sp->total_counts + sp->lost_impulses) * tau;
-    if (dead < 0.0f) dead = 0.0f;
-    if (dead > total) dead = total;
-    return total - dead;
-}
-
 static bool append_fmt(char **buf, size_t *len, size_t *cap, const char *fmt, ...)
 {
     va_list ap;
@@ -128,7 +116,7 @@ static bool build_json_full(const spectrum_data_t *sp, char **out, size_t *out_l
         "\"autosave_age_sec\":%d,\"autosave_fail_streak\":%d,"
         "\"t1\":%s,\"t2\":%s,\"t3\":%s,\"serial\":\"%s\",\"dead\":%d",
         sp->total_counts, (unsigned)sp->cpu_load, sp->cps, sp->lost_impulses,
-        sp->total_time_sec, compute_live_time(sp),
+        sp->total_time_sec, spectrum_compute_live_time(sp),
         tcp_bridge_dropped_bytes(), usb_host_cdc_rx_errors(), usb_host_cdc_rx_ring_drops(),
         hist_ok, hist_drop, as_age, as_streak,
         jt1, jt2, jt3,
@@ -179,7 +167,7 @@ static bool build_json_meta(const spectrum_data_t *sp, char **out, size_t *out_l
         "\"autosave_age_sec\":%d,\"autosave_fail_streak\":%d,"
         "\"t1\":%s,\"t2\":%s,\"t3\":%s,\"serial\":\"%s\",\"dead\":%d,\"channels\":%d",
         sp->total_counts, (unsigned)sp->cpu_load, sp->cps, sp->lost_impulses,
-        sp->total_time_sec, compute_live_time(sp),
+        sp->total_time_sec, spectrum_compute_live_time(sp),
         tcp_bridge_dropped_bytes(), usb_host_cdc_rx_errors(), usb_host_cdc_rx_ring_drops(),
         hist_ok, hist_drop, as_age, as_streak,
         jt1, jt2, jt3,

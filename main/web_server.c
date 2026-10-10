@@ -239,25 +239,11 @@ static esp_err_t handle_spectrum_meta(httpd_req_t *req)
     return spectrum_http_send_meta(req);
 }
 
-// #DT-4: мёртвое время берём ИЗ ДЕТЕКТОРА. STAT-кадр (cmd 0x04) несёт pulse_width
-// [offset 14, u32] = суммарная ширина импульсов (отсчёты АЦП) — реально измеренное прибором
-// занятое время (учитывает наложения). dead = pulse_width/F; live = total - dead.
-// Фоллбэк (#DT-1, модель total_counts*(RISE+FALL+Srise+Sfall)/F) — для прошивок без pulse_width
-// (kADR<18 байт → pulse_width==0) или пока -inf не прочитан / F<=0.
-static float compute_live_time(const spectrum_data_t *sp)
-{
-    const device_info_t *di = spectrum_get_device_info();
-    float total = (float)sp->total_time_sec;
-    if (!di->valid || di->freq <= 0.0f) return total;
-    // #DT-4: метод BecqMoni (эталон Am6er, Utils/LiveTime.cs + AtomSpectraVCPDeviceForm.cs).
-    // Мёртвое время на импульс τ = (RISE+FALL+1)/F (RISE/FALL/F из -inf, т.е. из прибора).
-    // Мёртвое время за набор = (valid+invalid импульсы)·τ; TotalPulseCount = sum + InvalidPulses.
-    float tau = ((float)di->rise + (float)di->fall + 1.0f) / di->freq;
-    float dead = (float)(sp->total_counts + sp->lost_impulses) * tau;
-    if (dead < 0.0f) dead = 0.0f;
-    if (dead > total) dead = total;
-    return total - dead;
-}
+// #DT-4 / 1.2.36 OPT-1: живое время — метод BecqMoni (эталон Am6er, Utils/LiveTime.cs): мёртвое время на
+// импульс tau = (RISE+FALL+1)/F (RISE/FALL/F из -inf прибора), dead = (counts+lost)·tau, live = total - dead.
+// Формула одна на всё (main/live_time.h; обёртка spectrum_compute_live_time() в spectrum.c): раньше здесь и в
+// spectrum_http_cache.c лежали две копии, а этот комментарий описывал pulse_width (STAT offset 14),
+// которого в расчёте нет (поле pulse_width — диагностика, atomspectra.h).
 
 static esp_err_t render_spectrum_json(httpd_req_t *req, const spectrum_data_t *sp)
 {
@@ -293,7 +279,7 @@ static esp_err_t render_spectrum_json(httpd_req_t *req, const spectrum_data_t *s
         "\"autosave_age_sec\":%d,\"autosave_fail_streak\":%d,"
         "\"t1\":%s,\"t2\":%s,\"t3\":%s,\"serial\":\"%s\",\"dead\":%d",
         sp->total_counts, sp->cpu_load, sp->cps, sp->lost_impulses,
-        sp->total_time_sec, compute_live_time(sp),
+        sp->total_time_sec, spectrum_compute_live_time(sp),
         tcp_bridge_dropped_bytes(), usb_host_cdc_rx_errors(), usb_host_cdc_rx_ring_drops(),
         hist_ok, hist_drop, as_age, as_streak,
         jt1, jt2, jt3,
@@ -1338,7 +1324,7 @@ static esp_err_t render_spectrum_xml(httpd_req_t *req, const spectrum_data_t *sp
             "        </EnergyCalibration>\r\n");
     }
 
-    float live_time = compute_live_time(sp);
+    float live_time = spectrum_compute_live_time(sp);
 
     n = snprintf(buf, 4096,
         "        <ValidPulseCount>%" PRIu32 "</ValidPulseCount>\r\n"
@@ -1508,7 +1494,7 @@ static esp_err_t render_spectrum_n42(httpd_req_t *req, const spectrum_data_t *sp
     n = snprintf(buf, 4096,
         "      <LiveTimeDuration>PT%.1fS</LiveTimeDuration>\r\n"
         "      <ChannelData compressionCode=\"None\">",
-        compute_live_time(sp));
+        spectrum_compute_live_time(sp));
     httpd_resp_send_chunk(req, buf, n);
     for (int i = 0; i < SPECTRUM_CHANNELS; ) {
         int pos = 0;
@@ -1561,7 +1547,7 @@ static esp_err_t render_spectrum_spe(httpd_req_t *req, const spectrum_data_t *sp
         sp->serial_number[0] ? sp->serial_number : "AtomSpectra",
         ts.tm_mday, ts.tm_mon + 1, (ts.tm_year + 1900) % 100,
         ts.tm_hour, ts.tm_min, ts.tm_sec,
-        compute_live_time(sp), (double)sp->total_time_sec);
+        spectrum_compute_live_time(sp), (double)sp->total_time_sec);
     // #FIELD-9 (A11): near-epoch → строка COMMENT (SPE игнорирует неизвестные ключи); только при рассинхроне
     if (!time_is_synced(end_time))
         pos += snprintf(buf + pos, 4096 - pos, "COMMENT=TIME NOT SYNCHRONIZED (board clock near-epoch)\r\n");

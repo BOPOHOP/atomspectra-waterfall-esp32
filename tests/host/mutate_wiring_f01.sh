@@ -190,6 +190,12 @@ mut MU4_f1_check  wifi_manager.c 's/wifi_setup_should_return(s_unverified, s_got
 mut MU5_f1_flag   wifi_manager.c 's/nvs_set_u8(nvs, "unver", 1);/nvs_set_u8(nvs, "unvx", 1);/' 'nvs_set_u8(nvs, "unver", 1);'
 mut MU6_f1_clear  wifi_manager.c 's/nvs_erase_key(uv, "unver");/nvs_erase_key(uv, "unvx");/' 'nvs_erase_key(uv, "unver");'
 mut MU7_f1_timer  wifi_manager.c 's/if (s_unverified) return_to_setup_and_reboot();/if (0) return_to_setup_and_reboot();/' 'if (s_unverified) return_to_setup_and_reboot();'
+# 1.2.36 OPT-1 (F): возврат второй копии / потеря вызова общей функции / обёртка не зовёт формулу
+mut MF_old_copy_web    web_server.c         '$a static float compute_live_time(const spectrum_data_t *sp) { return (float)sp->total_time_sec; }' 'static float compute_live_time('
+mut MF_old_copy_cache  spectrum_http_cache.c '$a static float compute_live_time(const spectrum_data_t *sp) { return (float)sp->total_time_sec; }' 'static float compute_live_time('
+mut MF_call_web        web_server.c         '0,/spectrum_compute_live_time(sp)/s//(float)sp->total_time_sec/' 'spectrum_compute_live_time(sp)'
+mut MF_call_cache      spectrum_http_cache.c '0,/spectrum_compute_live_time(sp)/s//(float)sp->total_time_sec/' 'spectrum_compute_live_time(sp)'
+mut MF_wrapper         spectrum.c           's/return live_time_calc(sp->total_time_sec/return 0.0f; live_time_calc(sp->total_time_sec/' 'live_time_calc(sp->total_time_sec'
 # 1.2.36 Commit 0: поле замера в /api/system
 mut MC0_build_us_field web_server.c '/"spectrum_build_us", /d' '"spectrum_build_us"'
 exit $RC

@@ -2,6 +2,7 @@
 #include "calib_autoread.h"  // #AWF-12: calib_is_missing/calib_read_is_success
 #include "spectrum_http_cache.h"  // #AWF-12b R5: spectrum_http_cache_invalidate
 #include "spectrum_t1.h"
+#include "live_time.h"      // 1.2.36 OPT-1: одна формула живого времени
 #include "hist_drop_diag.h"
 #include "flash_quiet.h"
 #include "spectrum_hist_stage.h"
@@ -885,6 +886,15 @@ static void reset_impl(char mark_state)
 // (bins[]+total+calib) использовать spectrum_get_snapshot().
 const spectrum_data_t *spectrum_get_current(void) { return &s_spectrum; }
 const device_info_t   *spectrum_get_device_info(void) { return &s_device_info; }
+
+// 1.2.36 OPT-1: живое время по снимку sp и device_info (одна формула — live_time.h). device_info
+// читается без замка, как и раньше в обеих прежних копиях (спека §3 F «не чинить в этом коммите»).
+float spectrum_compute_live_time(const spectrum_data_t *sp)
+{
+    const device_info_t *di = &s_device_info;
+    return live_time_calc(sp->total_time_sec, sp->total_counts, sp->lost_impulses,
+                          di->valid, di->rise, di->fall, di->freq);
+}
 
 // Атомарный снимок спектра под локом — для сетевых читателей (export/spectrum).
 // Лок держится только на время memcpy; httpd_resp_send идёт уже по копии.
