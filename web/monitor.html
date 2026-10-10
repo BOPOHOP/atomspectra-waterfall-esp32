@@ -196,22 +196,6 @@ function ac(){return getComputedStyle(document.documentElement).getPropertyValue
 
 // --- Форматирование чисел ---
 function fmtCps(v){ if(!isFinite(v))return "—"; if(v>=100)return v.toFixed(1); if(v>=1)return v.toFixed(3); return v.toFixed(4); }
-function pad2(n){return (n<10?"0":"")+n;}
-// #UI-38: часовой пояс — настройка «Система → Часовой пояс» (localStorage aswf-tz):
-// "auto" = пояс браузера, иначе смещение от UTC в минутах (напр. "180" = UTC+03:00).
-function tzMode(){try{return localStorage.getItem("aswf-tz")||"auto";}catch(e){return"auto";}}
-function tzShift(d){ // Date, локальные getters которого дают время в выбранном поясе
- var m=tzMode(); if(m==="auto")return d;
- var off=parseInt(m,10); if(!isFinite(off))return d;
- return new Date(d.getTime()+(off+d.getTimezoneOffset())*60000);
-}
-function tzOffMin(){ var m=tzMode(); if(m!=="auto"){var o=parseInt(m,10); if(isFinite(o))return o;} return -new Date().getTimezoneOffset(); }
-function tzLabel(){ var o=tzOffMin(), s=o<0?"-":"+", a=Math.abs(o); return "UTC"+s+pad2(Math.floor(a/60))+":"+pad2(a%60); }
-function hms(d){d=tzShift(d);return pad2(d.getHours())+":"+pad2(d.getMinutes())+":"+pad2(d.getSeconds());}
-function isoLocal(d){ // время в выбранном поясе, ISO без TZ-суффикса (для CSV/Excel)
- d=tzShift(d);
- return d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate())+" "+pad2(d.getHours())+":"+pad2(d.getMinutes())+":"+pad2(d.getSeconds());
-}
 
 // --- Состояние мониторинга ---
 // #MON-1: сбор серии перенесён на плату. Плата копит базовые 1с-сэмплы
@@ -337,8 +321,8 @@ async function livePoll(){
  if(total!==null){ devDot.classList.remove("off"); devStat.textContent=t("dev.chipOk"); }
  else{ devDot.classList.add("off"); devStat.textContent=t("dev.chipOff"); }
  if(cps!==null)  document.getElementById("live-cps").textContent=fmtCps(cps);
- if(total!==null)document.getElementById("live-total").textContent=total.toLocaleString("ru-RU");
- if(time!==null) document.getElementById("live-time").textContent=time.toLocaleString("ru-RU");
+ if(total!==null)document.getElementById("live-total").textContent=total.toLocaleString(lcl());
+ if(time!==null) document.getElementById("live-time").textContent=time.toLocaleString(lcl());
  /* #MX-13 (1.2.34, #62): средний CPS за набор = total / live (живое время, с, из meta.json); формула avgCps — common-time.js; нет live — «—» */
  var avg=(typeof avgCps==="function")?avgCps(total,r.live):null;  /* common-time.js подключён перед inline-скриптом (OPT-12); проверка typeof — на случай сбоя загрузки файла */ document.getElementById("live-avg").textContent=(avg===null)?"—":avg.toFixed(2);
 }
@@ -439,14 +423,14 @@ async function syncSeries(){
 function appendRow(s){
  var tb=document.getElementById("tbody");
  var tr=document.createElement("tr");
- tr.innerHTML="<td>"+hms(s.ts)+"</td><td>"+s.dur+"</td><td>"+s.counts.toLocaleString("ru-RU")+"</td><td>"+fmtCps(s.cps)+"</td><td>"+(isFinite(s.rel)?s.rel.toFixed(2):"—")+"</td><td>"+(isFinite(s.temp)?s.temp.toFixed(1):"—")+"</td>";
+ tr.innerHTML="<td>"+hms(s.ts)+"</td><td>"+s.dur+"</td><td>"+s.counts.toLocaleString(lcl())+"</td><td>"+fmtCps(s.cps)+"</td><td>"+(isFinite(s.rel)?s.rel.toFixed(2):"—")+"</td><td>"+(isFinite(s.temp)?s.temp.toFixed(1):"—")+"</td>";
  tb.insertBefore(tr,tb.firstChild); // новые сверху
  while(tb.children.length>500) tb.removeChild(tb.lastChild);
 }
 function renderAggregates(){
  document.getElementById("n-samples").textContent=samples.length;
- document.getElementById("sess-counts").textContent=sessCounts.toLocaleString("ru-RU");
- document.getElementById("sess-dur").textContent=sessDur.toLocaleString("ru-RU");
+ document.getElementById("sess-counts").textContent=sessCounts.toLocaleString(lcl());
+ document.getElementById("sess-dur").textContent=sessDur.toLocaleString(lcl());
  if(sessDur>0){
   var g=sessCounts/sessDur, gr=(sessCounts>0)?100/Math.sqrt(sessCounts):NaN;
   document.getElementById("grand-cps").textContent=fmtCps(g);
@@ -459,7 +443,7 @@ function renderAggregates(){
   var l=samples[samples.length-1];
   document.getElementById("last-cps").textContent=fmtCps(l.cps);
   document.getElementById("last-rel").textContent=isFinite(l.rel)?l.rel.toFixed(2)+" %":"—";
-  document.getElementById("last-counts").textContent=l.counts.toLocaleString("ru-RU");
+  document.getElementById("last-counts").textContent=l.counts.toLocaleString(lcl());
   document.getElementById("last-dur").textContent=l.dur;
  }
 }

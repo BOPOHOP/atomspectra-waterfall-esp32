@@ -549,7 +549,7 @@ var slcMode="log", slcHoverLi=-1, slcCursorCh=-1, cursorY=-1;
 // внутрибуферных строк).
 var slcCursorInDark=false;
 
-function lg(m){var d=document.getElementById("log");var t=new Date().toLocaleTimeString();
+function lg(m){var d=document.getElementById("log");var t=fmtTimeOfDay(new Date());
  d.textContent+="["+t+"] "+m+"\n";d.scrollTop=d.scrollHeight}
 
 function cmap(t){
@@ -1043,9 +1043,6 @@ async function refreshStatus(){
  }catch(e){}
 }
 
-function fmtHMS(s){s=Math.max(0,Math.floor(s));
- var h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;
- function p(n){return(n<10?"0":"")+n;}return p(h)+":"+p(m)+":"+p(x);}
 // #FW-21: elapsedBase = последнее elapsed_sec с платы, elapsedAtMs = когда получено.
 // Тик = elapsedBase + прошедшее с момента получения → плавный ход между поллами.
 // -1 = не пишем / плата не отдала elapsed_sec (старая прошивка — fallback ниже).
@@ -1061,7 +1058,7 @@ function recElapsed(){
 function tickRecTime(){
  var el=document.getElementById("rectime"); if(!el)return;
  var e=recElapsed();
- el.textContent=(e<0)?"--:--:--":fmtHMS(e);
+ el.textContent=(e<0)?"--:--:--":fmtClock(e);
  el.style.color=(wfStat&&wfStat.recording)?"var(--accent)":"#f0c45a";
 }
 
@@ -1078,9 +1075,9 @@ async function refreshSystem(){
  }catch(e){}
 }
 
-function dskTs(){var d=new Date();function p(n){return(n<10?"0":"")+n;}
- return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+"_"+
-        p(d.getHours())+p(d.getMinutes())+p(d.getSeconds());}
+function dskTs(){var d=new Date();
+ return d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate())+"_"+
+        pad2(d.getHours())+pad2(d.getMinutes())+pad2(d.getSeconds());}
 function padJson(obj,len){
  var s=JSON.stringify(obj);
  var enc=new TextEncoder().encode(s);
@@ -1242,7 +1239,7 @@ function updDiskInd(){
  var tag=(!dskWritable&&dskMemChunks)?t("disk.ram_tag"):"";   // ОЗУ-режим (Firefox/Safari) — файл скачается на «Стоп»
  var errtag=dskWriteErrs?(" ⚠×"+dskWriteErrs):"";   // #REC-8: ⚠×N — были ретраи записи, но стрим жив
  document.getElementById("disktxt").textContent=
-  tfmt("disk.ind",dskName,dskRows,(dskBytes/1048576).toFixed(2),fmtHMS(sec))+tag+errtag;
+  tfmt("disk.ind",dskName,dskRows,(dskBytes/1048576).toFixed(2),fmtClock(sec))+tag+errtag;
  // #REC-5: цвет надписи «💾 Диск:» по назначению записи — красный=файл на диске, янтарный=буфер ОЗУ.
  // Имя файла (b#disktxt) остаётся near-white по правилу «.ind b» — читаемо.
  document.getElementById("diskwrap").style.color=dskWritable?"#ff5247":"#f0c45a";
@@ -1264,7 +1261,7 @@ function oflSetMsg(s,kind){var m=document.getElementById("oflMsg");if(!m)return;
 function oflRenderStat(j){
  var el=document.getElementById("oflStat"); if(!el)return;
  var busy=j.busy?t("ofl.st_busy"):t("ofl.st_idle");
- var last=j.last_ok_at?(new Date(j.last_ok_at*1000)).toLocaleString():t("ofl.never");
+ var last=j.last_ok_at?fmtDateTime(j.last_ok_at*1000):t("ofl.never");
  var pass=j.has_pass?("   ·   "+t("ofl.pass_set")):"";
  el.textContent=t("ofl.st_sent")+" "+(j.sent_ok||0)+"   "+t("ofl.st_failed")+" "+(j.failed||0)+
    "   "+t("ofl.st_last")+" "+(j.last_status||0)+"   "+busy+"   "+t("ofl.st_lastok")+" "+last+pass;
@@ -1769,7 +1766,7 @@ window.openZoomOverlay=function(sourcesFn,opts){
     var cps=(intervalSec>0)?(cnt/intervalSec):0;
     var eStr=calib?(ch2kev(c).toFixed(1)+" "+t("opt.kev")):("ch "+c);
     var tStr;
-    if(startedAt>0){tStr=new Date((startedAt+gIdx*intervalSec)*1000).toLocaleTimeString(LANG==="ru"?"ru-RU":"en-US");}
+    if(startedAt>0){tStr=fmtTimeOfDay(new Date((startedAt+gIdx*intervalSec)*1000));}
     else{var es=gIdx*intervalSec;tStr="+"+Math.floor(es/60)+"m "+(es%60)+"s";}
     return "CPS "+cps.toFixed(2)+"\nE "+eStr+"\nt "+tStr;
    }

@@ -355,16 +355,16 @@ async function refreshUsbDiag(){
   var d=await(await fetch("/api/usb-diag")).json();
   var good=(d.pkt_hist||0)+(d.pkt_text||0)+(d.pkt_stat||0)+(d.pkt_osc||0)+(d.pkt_unknown||0);
   var bad=d.pkt_bad||0, tot=good+bad;
-  document.getElementById("usbd-good").textContent=good.toLocaleString();
-  document.getElementById("usbd-bad").textContent=bad.toLocaleString();
+  document.getElementById("usbd-good").textContent=good.toLocaleString(lcl());
+  document.getElementById("usbd-bad").textContent=bad.toLocaleString(lcl());
   var rt=document.getElementById("usbd-rate");
   rt.textContent = tot ? (bad*100/tot).toFixed(3)+" %" : "—";
   rt.style.color = (tot && bad*100/tot > 1) ? "var(--red,#e05)" : "";
   // свипы — это НЕ pkt_hist: тот считает чанки (~128 на спектр)
   var sw=d.sweep_commits||0, sd=d.sweep_drops||0;
-  document.getElementById("usbd-sweeps").textContent=sw.toLocaleString();
+  document.getElementById("usbd-sweeps").textContent=sw.toLocaleString(lcl());
   var sdEl=document.getElementById("usbd-sweepdrop");
-  sdEl.textContent=sd.toLocaleString();
+  sdEl.textContent=sd.toLocaleString(lcl());
   sdEl.style.color = (sw+sd && sd*100/(sw+sd) > 5) ? "var(--red,#e05)" : "";
  }catch(e){}
 }

@@ -152,3 +152,129 @@ function setLang(l) {
     applyI18n();
     if (I18N.onLang) I18N.onLang(l);
 }
+
+/* #OPT-11 (OPT, этап 1): единственная реализация форматирования времени/длительности, локали и пояса отображения (раньше 5 функций длительности, pad2 x4, жёсткий ru-RU, пояс читала только вкладка «Мониторинг»). Тест: test/web/time_fmt_test.mjs */
+
+// Форматирование числа с ведущим нулём
+function pad2(n) {
+    return n < 10 ? "0" + n : "" + n;
+}
+
+// Возврат локали в зависимости от языка
+function lcl() {
+    return LANG === "ru" ? "ru-RU" : "en-US";
+}
+
+// Форматирование числа с разделителями
+function fmtNum(n) {
+    return Math.round(n).toLocaleString(lcl());
+}
+
+// Единицы измерения длительности
+var DUR_UNITS = {
+    ru: { d: "д", h: "ч", m: "м", s: "с" },
+    en: { d: "d", h: "h", m: "m", s: "s" }
+};
+
+// Форматирование длительности словами
+function fmtDur(s) {
+    if (typeof s !== "number" || !isFinite(s)) {
+        return "\u2014";
+    }
+    s = Math.max(0, Math.round(s));
+    var u = DUR_UNITS[LANG] || DUR_UNITS.ru;
+    var d = Math.floor(s / 86400);
+    var h = Math.floor((s % 86400) / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    var x = s % 60;
+    var p = [];
+    if (d > 0) p.push(d + u.d);
+    if (d > 0 || h > 0) p.push(h + u.h);
+    if (d > 0 || h > 0 || m > 0) p.push(m + u.m);
+    p.push(x + u.s);
+    return p.join(" ");
+}
+
+// Форматирование длительности в формате ЧЧ:ММ:СС
+function fmtClock(s) {
+    if (typeof s !== "number" || !isFinite(s)) {
+        return "--:--:--";
+    }
+    s = Math.max(0, Math.floor(s));
+    var u = DUR_UNITS[LANG] || DUR_UNITS.ru;
+    var d = Math.floor(s / 86400);
+    var prefix = d > 0 ? d + u.d + " " : "";
+    return prefix + pad2(Math.floor((s % 86400) / 3600)) + ":" + pad2(Math.floor((s % 3600) / 60)) + ":" + pad2(s % 60);
+}
+
+// Ключ для хранения часового пояса
+var TZ_KEY = "aswf-tz";
+
+// Получение режима часового пояса
+function tzMode() {
+    try {
+        return localStorage.getItem(TZ_KEY) || "auto";
+    } catch (e) {
+        return "auto";
+    }
+}
+
+// Установка часового пояса
+function tzSet(v) {
+    try {
+        localStorage.setItem(TZ_KEY, v);
+    } catch (e) {}
+}
+
+// Сдвиг даты на часовой пояс
+function tzShift(d) {
+    var m = tzMode();
+    if (m === "auto") return d;
+    var off = parseInt(m, 10);
+    if (!isFinite(off)) return d;
+    return new Date(d.getTime() + (off + d.getTimezoneOffset()) * 60000);
+}
+
+// Получение смещения часового пояса в минутах
+function tzOffMin() {
+    var m = tzMode();
+    if (m !== "auto") {
+        var o = parseInt(m, 10);
+        if (isFinite(o)) return o;
+    }
+    return -new Date().getTimezoneOffset();
+}
+
+// Формирование метки часового пояса
+function tzOffLabel(min) {
+    var s = min < 0 ? "-" : "+";
+    var a = Math.abs(min);
+    return "UTC" + s + pad2(Math.floor(a / 60)) + ":" + pad2(a % 60);
+}
+
+// Получение метки текущего часового пояса
+function tzLabel() {
+    return tzOffLabel(tzOffMin());
+}
+
+// Форматирование времени ЧЧ:ММ:СС
+function hms(d) {
+    d = tzShift(d);
+    return pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
+}
+
+// Форматирование даты и времени локально
+function isoLocal(d) {
+    d = tzShift(d);
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) + " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
+}
+
+// Форматирование даты и времени по метке времени
+function fmtDateTime(ms) {
+    return tzShift(new Date(ms)).toLocaleString(lcl());
+}
+
+// Форматирование времени суток
+function fmtTimeOfDay(d) {
+    return tzShift(d).toLocaleTimeString(lcl());
+}

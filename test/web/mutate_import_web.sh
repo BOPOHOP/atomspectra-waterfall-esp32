@@ -62,4 +62,18 @@ mut I6_html_as_text  common-time.js i18n_core_test.mjs 's/el.innerHTML = tr(key)
 mut I7_no_onApply    common-time.js i18n_core_test.mjs 's/if (I18N.onApply) I18N.onApply();//'            1
 mut baseline_passA   waterfall.html wf_passA_test.mjs  -                                                   0
 mut A1_no_updGrip    waterfall.html wf_passA_test.mjs  's/try{if(typeof updGrip==="function")updGrip();}catch(e){}//' 1
+# OPT-11 (время/длительность/локаль/пояс в common-time.js; time_fmt_test) - число FAIL = число независимых проверок, затронутых порчей
+mut baseline_time    common-time.js time_fmt_test.mjs  -                                                   0
+mut T1_dur_no_hours  common-time.js time_fmt_test.mjs  's/if (d > 0 || h > 0) p.push(h + u.h);/if (h > 0) p.push(h + u.h);/' 1
+mut T2_dur_no_min    common-time.js time_fmt_test.mjs  's/if (d > 0 || h > 0 || m > 0) p.push(m + u.m);/if (m > 0) p.push(m + u.m);/' 2
+mut T3_dur_floor     common-time.js time_fmt_test.mjs  's/s = Math.max(0, Math.round(s));/s = Math.max(0, Math.floor(s));/' 1
+mut T4_clock_round   common-time.js time_fmt_test.mjs  's/s = Math.max(0, Math.floor(s));/s = Math.max(0, Math.round(s));/' 1
+mut T5_pad2          common-time.js time_fmt_test.mjs  's/return n < 10 ? "0" + n : "" + n;/return "" + n;/' 9
+mut T6_lcl_ru        common-time.js time_fmt_test.mjs  's/return LANG === "ru" ? "ru-RU" : "en-US";/return "ru-RU";/' 3
+mut T7_tz_no_offset  common-time.js time_fmt_test.mjs  's/(off + d.getTimezoneOffset())/(off)/' 1
+mut T8_tz_label_sign common-time.js time_fmt_test.mjs  's/var s = min < 0 ? "-" : "+";/var s = "+";/' 1
+mut T9_clock_no_days common-time.js time_fmt_test.mjs  's/var prefix = d > 0 ? d + u.d + " " : "";/var prefix = "";/' 2
+mut T10_tz_no_default common-time.js time_fmt_test.mjs 's/return localStorage.getItem(TZ_KEY) || "auto";/return localStorage.getItem(TZ_KEY);/' 1
+mut T11_dt_no_tz     common-time.js time_fmt_test.mjs  's/return tzShift(new Date(ms)).toLocaleString(lcl());/return new Date(ms).toLocaleString(lcl());/' 1
+mut T12_tod_no_lcl   common-time.js time_fmt_test.mjs  's/return tzShift(d).toLocaleTimeString(lcl());/return tzShift(d).toLocaleTimeString("en-US");/' 1
 exit $RC

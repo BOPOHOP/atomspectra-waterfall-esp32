@@ -416,7 +416,6 @@ var DICT={
   "tz.title":"Часовой пояс","tz.label":"Пояс отображения","tz.hint":"Влияет на ось времени, таблицу и CSV-экспорт вкладки «Мониторинг». Хранится в браузере.","tz.auto":"Авто (браузер, %1)","tz.saved":"Сохранено: %1",
   "confirm.rebootDev":"Перезагрузить прибор?","confirm.rebootEsp":"Перезагрузить ESP32?","confirm.resetWifi":"Сбросить WiFi и войти в режим настройки?",
   "field.title":"Полевой режим · Время","field.mode":"Режим сети","field.apSsid":"Точка доступа","field.apClients":"Подключено телефонов","field.timeSrc":"Источник времени","field.setTime":"Установить время с телефона","field.timeHint":"В полевом режиме (без интернета) время берётся с телефона. Кнопка задаёт его вручную.","field.apPassTitle":"Пароль полевой точки доступа","field.apPassSave":"Сменить пароль AP (перезагрузка)","field.modeSta":"Домашняя сеть (Indoor)","field.modeAp":"Полевой AP (Outdoor)","field.modeSetup":"Настройка","field.modeApForced":"Outdoor (полевой AP, принудительно)","field.modeApFallback":"Outdoor (полевой AP, fallback)","field.passDefaultWarn":"Пароль AP — публичный по умолчанию; для людных мест смени пароль.","field.srcNone":"нет (1970)","field.srcBrowser":"браузер (авто)","field.srcManual":"ручной","field.passChanged":"Пароль сохранён, перезагрузка...","field.passShort":"Минимум 8 символов","field.confirmPass":"Сменить пароль точки доступа? Плата перезагрузится.",
-  "up.d":"д","up.h":"ч","up.m":"м","up.s":"с",
   "tc":"TC",
   "sect.net":"Сеть и время","sect.meas":"Измерения","sect.maint":"Обслуживание",
   "ap.title":"Точка доступа (AP)","sum.min":"мин","sum.of":"из","sum.ch":"кан.",
@@ -493,7 +492,7 @@ var DICT={
   "tz.title":"Time zone","tz.label":"Display zone","tz.hint":"Affects the time axis, table and CSV export of the Monitoring tab. Stored in the browser.","tz.auto":"Auto (browser, %1)","tz.saved":"Saved: %1",
   "confirm.rebootDev":"Reboot device?","confirm.rebootEsp":"Reboot ESP32?","confirm.resetWifi":"Reset WiFi and enter setup mode?",
   "field.title":"Field mode · Time","field.mode":"Network mode","field.apSsid":"Access point","field.apClients":"Phones connected","field.timeSrc":"Time source","field.setTime":"Set time from phone","field.timeHint":"In field mode (no internet) the time comes from the phone. This button sets it manually.","field.apPassTitle":"Field access point password","field.apPassSave":"Change AP password (reboot)","field.modeSta":"Home network (Indoor)","field.modeAp":"Field AP (Outdoor)","field.modeSetup":"Setup","field.modeApForced":"Outdoor (field AP, forced)","field.modeApFallback":"Outdoor (field AP, fallback)","field.passDefaultWarn":"AP password is public by default; change it for crowded places.","field.srcNone":"none (1970)","field.srcBrowser":"browser (auto)","field.srcManual":"manual","field.passChanged":"Password saved, rebooting...","field.passShort":"Minimum 8 characters","field.confirmPass":"Change access point password? The board will reboot.",
-  "up.d":"d","up.h":"h","up.m":"m","up.s":"s",
+
   "tc":"TC",
   "sect.net":"Network and time","sect.meas":"Measurements","sect.maint":"Maintenance",
   "ap.title":"Access point (AP)","sum.min":"min","sum.of":"of","sum.ch":"ch",
@@ -671,8 +670,6 @@ function pollOtaReboot(){
 }
 
 function fmtKB(n){return (n/1024).toFixed(0)}
-function fmtUp(s){var d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60),x=s%60;
- var p=[]; if(d>0)p.push(d+t("up.d")); if(d>0||h>0)p.push(h+t("up.h")); p.push(m+t("up.m")); if(d===0)p.push(x+t("up.s")); return p.join(" ");}
 
 function spark(id,hist,color,fixed){
  var cv=document.getElementById(id);if(!cv||hist.length<2)return;
@@ -704,13 +701,13 @@ async function refreshSystem(){
   document.getElementById("heap-kv").textContent=heapKB+" "+t("unit.kb");
   document.getElementById("heap-min-kv").textContent=Math.round((r.min_free_heap||0)/1024)+" "+t("unit.kb");
   spark("heapc",heap,ac());
-  document.getElementById("up").textContent=fmtUp(r.uptime_sec||0);
+  document.getElementById("up").textContent=fmtDur(r.uptime_sec||0);
   curFwVer=r.fw_version||"";
   document.getElementById("fw-ver").textContent=curFwVer||"—";
   var fvo=document.getElementById("fw-ver-ota"); if(fvo)fvo.textContent=curFwVer||"—"; // #AWF-6
   // #AWF-8: плитки-сводки (новые id, дублируют уже посчитанные значения).
   var sf=document.getElementById("sum-fw"); if(sf)sf.textContent=curFwVer||"—";
-  var su=document.getElementById("sum-uptime"); if(su)su.textContent="uptime "+fmtUp(r.uptime_sec||0)+" · IDF v5.4";
+  var su=document.getElementById("sum-uptime"); if(su)su.textContent="uptime "+fmtDur(r.uptime_sec||0)+" · IDF v5.4";
   var shm=document.getElementById("sum-heap-min"); if(shm)shm.textContent=Math.round((r.min_free_heap||0)/1024);
   var ft=r.flash_total||0, fu=r.flash_used||0;
   var pct=ft>0?(fu/ft*100):0;
@@ -908,11 +905,9 @@ async function saveBootConfig(statusId){
 }
 // #UI-38: часовой пояс отображения (localStorage aswf-tz: "auto" | смещение от UTC в минутах).
 // Читается вкладкой «Мониторинг» (ось X, таблица, CSV). На плату не уходит — чисто клиентская настройка.
-function pad2(n){return (n<10?"0":"")+n;}
-function tzOffLabel(min){var s=min<0?"-":"+",a=Math.abs(min);return "UTC"+s+pad2(Math.floor(a/60))+":"+pad2(a%60);}
 function initTz(){
  var sel=document.getElementById("tz-sel"); if(!sel)return;
- var cur="auto"; try{cur=localStorage.getItem("aswf-tz")||"auto";}catch(e){}
+ var cur=tzMode();
  var browserOff=-new Date().getTimezoneOffset();
  var html='<option value="auto">'+tfmt("tz.auto",tzOffLabel(browserOff))+'</option>';
  for(var h=-12;h<=14;h++){var m=h*60;html+='<option value="'+m+'">'+tzOffLabel(m)+'</option>';}
@@ -921,8 +916,8 @@ function initTz(){
 }
 function saveTz(){
  var sel=document.getElementById("tz-sel"),s=document.getElementById("tz-status");
- var v=sel.value; try{localStorage.setItem("aswf-tz",v);}catch(e){}
- var off=(v==="auto")?-new Date().getTimezoneOffset():parseInt(v,10);
+ var v=sel.value; tzSet(v);
+ var off=tzOffMin();
  if(s){s.textContent=tfmt("tz.saved",tzOffLabel(off));s.style.color="var(--accent)";setTimeout(function(){s.textContent="";},2500);}
 }
 

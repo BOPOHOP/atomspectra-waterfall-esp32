@@ -261,7 +261,7 @@ var DICT={
   "log.del":"Удалено: #%1","log.rebootDev":"Команда перезагрузки прибора отправлена",
   "log.exportOk":"Выгружено: %1","log.exportErr":"Экспорт не удался: %1",
   "log.cal":"Калибровка: [%1]","log.calErr":"Ошибка калибровки: %1","log.calClear":"Калибровка очищена",
-  "cps.sec":" с","cps.smaT":"SMA: скользящее среднее CPS за последние %1 с","t.d":"д","st.lost":"Потеряно","st.counts":" Импульсов","st.real":"Реал.","st.live":"Живое","st.avg":"Ср. CPS (реал.)","st.avgT":"Средний CPS за набор: импульсы / реальное время набора, тот же знаменатель, что у SMA","st.dead":"Мёртв.","st.dose":"МД",
+  "cps.sec":" с","cps.smaT":"SMA: скользящее среднее CPS за последние %1 с","st.lost":"Потеряно","st.counts":" Импульсов","st.real":"Реал.","st.live":"Живое","st.avg":"Ср. CPS (реал.)","st.avgT":"Средний CPS за набор: импульсы / реальное время набора, тот же знаменатель, что у SMA","st.dead":"Мёртв.","st.dose":"МД",
   "err.prefix":"Ошибка: %1"
  },
  en:{
@@ -312,7 +312,7 @@ var DICT={
   "log.del":"Deleted #%1","log.rebootDev":"Reboot device sent",
   "log.exportOk":"Exported: %1","log.exportErr":"Export failed: %1",
   "log.cal":"Calibration: [%1]","log.calErr":"Calibration error: %1","log.calClear":"Calibration cleared",
-  "cps.sec":" s","cps.smaT":"SMA: moving-average CPS over the last %1 s","t.d":"d","st.lost":"Lost","st.counts":" counts","st.real":"Real","st.live":"Live","st.avg":"Avg CPS (real)","st.avgT":"Average CPS over the acquisition: counts / real acquisition time, the same denominator as SMA","st.dead":"Dead","st.dose":"DR",
+  "cps.sec":" s","cps.smaT":"SMA: moving-average CPS over the last %1 s","st.lost":"Lost","st.counts":" counts","st.real":"Real","st.live":"Live","st.avg":"Avg CPS (real)","st.avgT":"Average CPS over the acquisition: counts / real acquisition time, the same denominator as SMA","st.dead":"Dead","st.dose":"DR",
   "err.prefix":"Error: %1"
  }
 };
@@ -330,7 +330,6 @@ i18nInit(DICT,{
   refreshCalibStatus();
  }
 });
-function lcl(){return LANG==="ru"?"ru-RU":"en-US";}
 
 var C=document.getElementById("sp"),X=C.getContext("2d");
 var Ccur=document.getElementById("spcur"),Xcur=Ccur.getContext("2d");
@@ -359,20 +358,17 @@ async function savePrefix(){var e=document.getElementById("fx-prefix"),st=docume
 
 var LOGMAX=500;
 function lgCount(n){var c=document.getElementById("log-count");if(c)c.textContent=n?String(n):""}
-function lg(m,at){if(!logEl)return;var a=(logEl.textContent+(at||new Date()).toLocaleTimeString()+"  "+m).split("\n").filter(Boolean).slice(-LOGMAX);logEl.textContent=a.join("\n")+"\n";logEl.scrollTop=logEl.scrollHeight;lgCount(a.length)}
+function lg(m,at){if(!logEl)return;var a=(logEl.textContent+fmtTimeOfDay(at||new Date())+"  "+m).split("\n").filter(Boolean).slice(-LOGMAX);logEl.textContent=a.join("\n")+"\n";logEl.scrollTop=logEl.scrollHeight;lgCount(a.length)}
 function clearLog(){logEl.textContent="";lgCount(0)}
-function saveLog(){var d=new Date(),z=function(n){return(n<10?"0":"")+n},u=URL.createObjectURL(new Blob(["# "+d.toLocaleString()+"\n"+logEl.textContent],{type:"text/plain;charset=utf-8"})),a=document.createElement("a");a.href=u;a.download="atomspectra-exchange-"+d.getFullYear()+z(d.getMonth()+1)+z(d.getDate())+"-"+z(d.getHours())+z(d.getMinutes())+z(d.getSeconds())+".txt";document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(u)},1000)}
+function saveLog(){var d=new Date(),u=URL.createObjectURL(new Blob(["# "+d.toLocaleString()+"\n"+logEl.textContent],{type:"text/plain;charset=utf-8"})),a=document.createElement("a");a.href=u;a.download="atomspectra-exchange-"+d.getFullYear()+pad2(d.getMonth()+1)+pad2(d.getDate())+"-"+pad2(d.getHours())+pad2(d.getMinutes())+pad2(d.getSeconds())+".txt";document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(u)},1000)}
 /* #UI-1: подтянуть текстовые ответы прибора из /api/devlog и показать их в логе команд («← ...») */
 async function pollDevLog(){try{var r=await(await fetch("/api/devlog?since="+devSeq)).json();if(r.lines&&r.lines.length){r.lines.forEach(function(e){var t=(e.text||"").replace(/\n+$/,"").replace(/\n/g," ⏎ ");lg("← "+t,(typeof r.up_ms==="number"&&typeof e.t==="number")?new Date(Date.now()-((r.up_ms-e.t)>>>0)):undefined)})}if(typeof r.next==="number")devSeq=r.next}catch(e){}}
-/* #MX-7 (1.2.31): наборы бывают по 30–40 суток — больше 24 ч время показывается с днями */
-function fmtTime(s){s=Math.round(s);var dd=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60),ss=s%60;return(dd>0?dd+tr("t.d")+" ":"")+(dd>0||h>0?h+"h ":"")+(m>0?m+"m ":"")+ss+"s"}
-function fmtHMS(s){var dd=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60),ss=s%60;return(dd>0?dd+tr("t.d")+" ":"")+String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(ss).padStart(2,"0")}
+/* #MX-7 (1.2.31): наборы бывают по 30–40 суток — больше 24 ч время показывается с днями (fmtDur/fmtClock — common-time.js, OPT-11) */
 /* #MX-8 (1.2.31): CPS, усреднённый за окно SMA вкладки «Мониторинг» (окно отсчётов × интервал, по умолчанию 10 × 10 с).
    Считается по счёту и времени набора: (Δcounts)/(Δtime) за последние W секунд; сброс набора (time убыл) очищает историю. */
 var smaHist=[];
 function smaWinSec(){var w=10,iv=10;try{var v=parseInt(localStorage.getItem("aswf-sma-win"),10);if(v>=2&&v<=200)w=v;var st=JSON.parse(localStorage.getItem("aswf-mon-sess")||"{}");if(st.iv>=1)iv=st.iv}catch(e){}return w*iv}
 function smaCps(t,n){if(typeof t!=="number"||typeof n!=="number")return null;if(smaHist.length&&t<smaHist[smaHist.length-1].t)smaHist=[];if(!smaHist.length||t>smaHist[smaHist.length-1].t)smaHist.push({t:t,n:n});var W=smaWinSec();while(smaHist.length>2&&smaHist[1].t<=t-W)smaHist.shift();if(smaHist.length>600)smaHist.shift();var a=smaHist[0];return(t>a.t)?(n-a.n)/(t-a.t):null}
-function fmtNum(n){return Math.round(n).toLocaleString(lcl())}
 /* #MX-10 (1.2.31): степенная шкала Y — y^(1/e): поджимает пики мягче логарифма, по аналогии с BecqMoni */
 function viewSave(){try{localStorage.setItem("aswf-view",JSON.stringify({log:isLog,pow:isPow,cps:isCps,kev:isKev}))}catch(e){}}
 function setPow(ns){isPow=true;isLog=false;if(!ns)viewSave();setSeg(["btn-lin","btn-log","btn-pow"],2);if(lastD)draw(lastD);else clearCanvas()}
@@ -486,11 +482,11 @@ async function update(){
   var avgV=(typeof avgCps==="function")?avgCps(d.total,d.time):null;
   var avgHtml=(avgV===null)?"":'<span class="sep">|</span><span title="'+tr("st.avgT")+'"><span class="mut">'+tr("st.avg")+'</span> '+avgV.toFixed(2)+'</span>';
   /* #MX-5/#MX-6 (1.2.31): CPS, счёт, МД и реальное время — только крупными цифрами выше; здесь — остальное */
-  stEl.innerHTML='<span><span class="mut">'+tr("st.live")+'</span> '+fmtTime(lv)+'</span><span class="sep">|</span>'+
+  stEl.innerHTML='<span><span class="mut">'+tr("st.live")+'</span> '+fmtDur(lv)+'</span><span class="sep">|</span>'+
    '<span><span class="mut">'+tr("st.dead")+'</span> '+dpct.toFixed(2)+'%</span><span class="sep">|</span>'+
    '<span>'+tr("st.lost")+' <span>'+d.lost+'</span></span><span class="sep">|</span>'+
    '<span>t '+tStr+' &deg;C</span>'+avgHtml;
-  document.getElementById("big-time").textContent=fmtHMS(d.time);
+  document.getElementById("big-time").textContent=fmtClock(d.time);
   document.getElementById("big-cps").textContent=d.cps;
   /* #MX-13 (1.2.34, #62): рядом с целым CPS — SMA с подписью фактического охвата; среднее за набор по реальному времени — в строке статуса, по живому — на «Мониторинге»; формула avgCps в common-time.js */
   /* подпись — фактический охват истории (после F5 он короче номинального окна smaWinSec()) */
@@ -701,9 +697,9 @@ async function loadSaved(retry){
   if(!r.spectra||r.spectra.length===0){el.innerHTML='<span class="empty">'+tr("saved.empty")+'</span>';return}
   var html='<table class="saved"><tr><th>'+tr("th.idx")+'</th><th>'+tr("th.saved")+'</th><th>'+tr("th.counts")+'</th><th>'+tr("th.time")+'</th><th>'+tr("th.export")+'</th><th></th></tr>';
   for(var i=0;i<r.spectra.length;i++){
-   var s=r.spectra[i];var dt=s.saved_at>0?new Date(s.saved_at*1000).toLocaleString(lcl()):'—';
+   var s=r.spectra[i];var dt=s.saved_at>0?fmtDateTime(s.saved_at*1000):'—';
    var onCls=s.index===overlayIdx?' class="on"':'';
-   html+='<tr'+onCls+'><td>'+s.index+(s.imp?' <span style="color:#f0c45a;font-size:10.5px">'+tr("saved.impTag")+'</span>':'')+'</td><td>'+dt+'</td><td>'+s.counts.toLocaleString(lcl())+'</td><td>'+fmtTime(s.time)+'</td>'+
+   html+='<tr'+onCls+'><td>'+s.index+(s.imp?' <span style="color:#f0c45a;font-size:10.5px">'+tr("saved.impTag")+'</span>':'')+'</td><td>'+dt+'</td><td>'+s.counts.toLocaleString(lcl())+'</td><td>'+fmtDur(s.time)+'</td>'+
     '<td><a href="/api/saved/'+s.index+'/export.xml" style="color:var(--accent)">XML</a> &middot; <a href="/api/saved/'+s.index+'/export.csv" style="color:var(--accent)">CSV</a></td>'+
     '<td><button class="btn sm" onclick="toggleOverlay('+s.index+')">'+(s.index===overlayIdx?tr("btn.overlayOff"):tr("btn.overlay"))+'</button> <button class="btn sm red" onclick="delSaved('+s.index+')">'+tr("btn.del")+'</button></td></tr>';
   }
@@ -1085,7 +1081,7 @@ window.openZoomOverlay=function(sourcesFn,opts){
     var cnt=lastD.bins[ch];
     var cps=(lastD.time>0)?(cnt/lastD.time):0;
     var eStr=calib?(ch2kev(ch).toFixed(1)+" "+tr("cur.kev")):("ch "+ch);
-    return "CPS "+cps.toFixed(2)+"\nE "+eStr+"\nt "+fmtTime(lastD.time);
+    return "CPS "+cps.toFixed(2)+"\nE "+eStr+"\nt "+fmtDur(lastD.time);
    }
   });
  });

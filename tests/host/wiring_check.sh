@@ -225,7 +225,8 @@ need ../web/system.html  1 "spark(\"cpuc\",cpu,'#f0c45a',{mn:0,mx:100});"       
 need ../web/index.html   1 'acqSince=(acqHint===false)?now-6000:now;'                     # MX-4: начальное состояние из acq_intent
 need ../web/index.html   0 '<span class="ac">CPS <span>'                                   # MX-5: CPS не дублируется в строке статуса
 need ../web/index.html   1 '<div class="status" id="status" data-i18n="status.connecting" style="font-size:11.5px;'   # MX-6
-need ../web/index.html   2 '(dd>0?dd+tr("t.d")+" ":"")'                                   # MX-7: дни в обоих форматах времени
+need ../web/common-time.js 1 'if (d > 0) p.push(d + u.d);'                       # MX-7: дни в длительности словами (fmtDur, OPT-11: перенесено с главной)
+need ../web/common-time.js 1 'var prefix = d > 0 ? d + u.d + " " : "";'          # MX-7: дни в часах ЧЧ:ММ:СС (fmtClock)
 need ../web/index.html   1 'var sma=smaCps(d.time,d.total);'                               # MX-8
 need ../web/monitor.html 1 'aswf-sma-win"),e=document.getElementById("smaWin")'           # MX-8: окно SMA помнится
 need ../web/index.html   1 'function visN(N){if(!xRange||!isKev||!calib)return N;'          # MX-9
