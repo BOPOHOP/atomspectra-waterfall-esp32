@@ -4,13 +4,13 @@
 #include "json_uint_fmt.h"        // UI-P1: быстрый forматтер bins[] (не vsnprintf)
 #include "spectrum_t1.h"
 #include "spec_cache_gen.h"       // М5: чистое решение "отбросить устаревший снимок" (host-pure)
+#include "spectrum_meta_fmt.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include <inttypes.h>
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,8 +21,21 @@ static SemaphoreHandle_t s_mtx;
 static spectrum_data_t   *s_sp;          // PSRAM
 static char              *s_json;        // PSRAM full JSON incl. bins
 static size_t             s_json_len;
+static size_t             s_json_cap;
+static uint32_t           s_json_render;
+static bool               s_json_have;
+static int                s_json_users;
+static volatile uint32_t  s_json_builds;
+
 static char              *s_meta;        // DRAM/PSRAM small meta JSON
 static size_t             s_meta_len;
+static size_t             s_meta_cap;
+static size_t             s_meta_a_end;
+static size_t             s_meta_b_start;
+
+static char              *s_meta_build;
+static size_t             s_meta_build_cap;
+
 static int64_t            s_built_us;
 static uint32_t           s_render_count;
 static volatile uint32_t  s_build_us_last;   // 1.2.36 Commit 0: наблюдаемость (/api/system)
@@ -46,152 +59,48 @@ static bool               s_building;
 // более свежим (на самом деле устаревшим) commit'ом.
 static volatile uint32_t  s_gen;
 
-static bool append_fmt(char **buf, size_t *len, size_t *cap, const char *fmt, ...)
+// Рост буфера до need байт (степень двойки от start): сначала PSRAM, затем обычная куча. false при отказе (буфер не тронут).
+static bool buf_grow(char **buf, size_t *cap, size_t need, size_t start)
 {
-    va_list ap;
-    for (;;) {
-        size_t avail = (*cap > *len) ? (*cap - *len) : 0;
-        va_start(ap, fmt);
-        int n = vsnprintf(*buf + *len, avail, fmt, ap);
-        va_end(ap);
-        if (n < 0) return false;
-        if ((size_t)n < avail) {
-            *len += (size_t)n;
-            return true;
-        }
-        size_t need = *len + (size_t)n + 1;
-        size_t ncap = *cap ? *cap * 2 : 65536;
-        while (ncap < need) ncap *= 2;
-        char *nb = heap_caps_realloc(*buf, ncap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!nb) nb = realloc(*buf, ncap);
-        if (!nb) return false;
-        *buf = nb;
-        *cap = ncap;
-    }
-}
-
-// UI-P1 (ui-perf-2026-09-27.md P1): та же семантика роста буфера, что и
-// append_fmt (доубливание при нехватке места), но ЗАПИСЬ элемента —
-// json_append_uint32_csv (main/json_uint_fmt.h, host-тест
-// tests/host/test_json_uint_fmt.c: побайтовое совпадение со старым
-// vsnprintf-путём) вместо vsnprintf на КАЖДЫЙ из 8192 бинов.
-static bool append_uint32_csv_grow(char **buf, size_t *len, size_t *cap,
-                                    uint32_t v, int need_comma)
-{
-    for (;;) {
-        size_t w = json_append_uint32_csv(*buf, *cap, *len, v, need_comma);
-        if (w > 0) { *len += w; return true; }
-        size_t need = *len + 12;   // max 1 запись ("," + 10 цифр)
-        size_t ncap = *cap ? *cap * 2 : 65536;
-        while (ncap < need) ncap *= 2;
-        char *nb = heap_caps_realloc(*buf, ncap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!nb) nb = realloc(*buf, ncap);
-        if (!nb) return false;
-        *buf = nb; *cap = ncap;
-    }
-}
-
-static bool build_json_full(const spectrum_data_t *sp, char **out, size_t *out_len)
-{
-    char *buf = NULL;
-    size_t len = 0, cap = 0;
-    if (!append_fmt(&buf, &len, &cap, "{\"bins\":[")) goto fail;
-    for (int i = 0; i < SPECTRUM_CHANNELS; i++) {
-        if (!append_uint32_csv_grow(&buf, &len, &cap, sp->bins[i], i != 0)) goto fail;
-    }
-    uint32_t hist_ok = 0, hist_drop = 0;
-    spectrum_get_hist_stats(&hist_ok, &hist_drop);
-    int dead = usb_host_cdc_spectrometer_dead() ? 1 : 0;
-    int as_age = spectrum_autosave_age_sec();
-    int as_streak = spectrum_autosave_fail_streak();
-    char jt1[16], jt2[16], jt3[16];
-    spectrum_temp_json(jt1, sizeof jt1, sp->temperature[0]);
-    spectrum_temp_json(jt2, sizeof jt2, sp->temperature[1]);
-    spectrum_temp_json(jt3, sizeof jt3, sp->temperature[2]);
-    if (!append_fmt(&buf, &len, &cap,
-        "],\"total\":%" PRIu32 ",\"cpu\":%u,\"cps\":%" PRIu32 ",\"lost\":%" PRIu32
-        ",\"time\":%" PRIu32 ",\"live\":%.1f,"
-        "\"bridge_drop\":%" PRIu32 ",\"usb_rx_err\":%" PRIu32 ",\"rx_ring_drops\":%" PRIu32 ","
-        "\"hist_ok\":%" PRIu32 ",\"hist_drop\":%" PRIu32 ","
-        "\"autosave_age_sec\":%d,\"autosave_fail_streak\":%d,"
-        "\"t1\":%s,\"t2\":%s,\"t3\":%s,\"serial\":\"%s\",\"dead\":%d",
-        sp->total_counts, (unsigned)sp->cpu_load, sp->cps, sp->lost_impulses,
-        sp->total_time_sec, spectrum_compute_live_time(sp),
-        tcp_bridge_dropped_bytes(), usb_host_cdc_rx_errors(), usb_host_cdc_rx_ring_drops(),
-        hist_ok, hist_drop, as_age, as_streak,
-        jt1, jt2, jt3,
-        sp->serial_number[0] ? sp->serial_number : "", dead)) goto fail;
-    if (sp->calib_valid) {
-        if (!append_fmt(&buf, &len, &cap, ",\"calib\":[")) goto fail;
-        for (int i = 0; i <= sp->calib_order; i++) {
-            if (!append_fmt(&buf, &len, &cap, "%s%.15g", i ? "," : "", sp->calibration[i])) goto fail;
-        }
-        if (!append_fmt(&buf, &len, &cap, "]")) goto fail;
-    }
-    // #AWF-12b F2 (release-gate-1.2.28-code.md): тот же признак, что
-    // usb_host_cdc.c-гейт и /api/device (web_server.c) — index.html читает
-    // именно этот эндпоинт (/api/spectrum/meta.json) на каждом кадре и
-    // включает кнопку идентификации нуклидов по нему (nucBtnEnable).
-    if (!append_fmt(&buf, &len, &cap, ",\"calib_set\":%s",
-        calib_is_missing(sp->calibration, CALIB_COEFFS, sp->calib_valid) ? "false" : "true")) goto fail;
-    // У-2: главная страница пишет в журнал, когда счётчик растёт (Reset не выполнен прибором).
-    if (!append_fmt(&buf, &len, &cap, ",\"reset_unconfirmed\":%" PRIu32,
-        spectrum_reset_unconfirmed_count())) goto fail;
-    if (!append_fmt(&buf, &len, &cap, "}")) goto fail;
-    *out = buf;
-    *out_len = len;
+    if (*cap >= need) return true;
+    size_t ncap = *cap ? *cap : start;
+    while (ncap < need) ncap *= 2;
+    char *nb = heap_caps_realloc(*buf, ncap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!nb) nb = realloc(*buf, ncap);
+    if (!nb) return false;
+    *buf = nb;
+    *cap = ncap;
     return true;
-fail:
-    free(buf);
-    return false;
 }
 
-static bool build_json_meta(const spectrum_data_t *sp, char **out, size_t *out_len)
+// Поля meta ОДИН раз (счётчики читаются один раз за пересборку): собрать spec_meta_in_t и отформатировать в *buf (рост при нехватке).
+static bool build_meta(const spectrum_data_t *sp, char **buf, size_t *cap, size_t *len, size_t *a_end, size_t *b_start)
 {
-    char *buf = NULL;
-    size_t len = 0, cap = 0;
-    uint32_t hist_ok = 0, hist_drop = 0;
-    spectrum_get_hist_stats(&hist_ok, &hist_drop);
-    int dead = usb_host_cdc_spectrometer_dead() ? 1 : 0;
-    int as_age = spectrum_autosave_age_sec();
-    int as_streak = spectrum_autosave_fail_streak();
-    char jt1[16], jt2[16], jt3[16];
-    spectrum_temp_json(jt1, sizeof jt1, sp->temperature[0]);
-    spectrum_temp_json(jt2, sizeof jt2, sp->temperature[1]);
-    spectrum_temp_json(jt3, sizeof jt3, sp->temperature[2]);
-    if (!append_fmt(&buf, &len, &cap,
-        "{\"total\":%" PRIu32 ",\"cpu\":%u,\"cps\":%" PRIu32 ",\"lost\":%" PRIu32
-        ",\"time\":%" PRIu32 ",\"live\":%.1f,"
-        "\"bridge_drop\":%" PRIu32 ",\"usb_rx_err\":%" PRIu32 ",\"rx_ring_drops\":%" PRIu32 ","
-        "\"hist_ok\":%" PRIu32 ",\"hist_drop\":%" PRIu32 ","
-        "\"autosave_age_sec\":%d,\"autosave_fail_streak\":%d,"
-        "\"t1\":%s,\"t2\":%s,\"t3\":%s,\"serial\":\"%s\",\"dead\":%d,\"channels\":%d",
-        sp->total_counts, (unsigned)sp->cpu_load, sp->cps, sp->lost_impulses,
-        sp->total_time_sec, spectrum_compute_live_time(sp),
-        tcp_bridge_dropped_bytes(), usb_host_cdc_rx_errors(), usb_host_cdc_rx_ring_drops(),
-        hist_ok, hist_drop, as_age, as_streak,
-        jt1, jt2, jt3,
-        sp->serial_number[0] ? sp->serial_number : "", dead, SPECTRUM_CHANNELS)) goto fail;
-    if (sp->calib_valid) {
-        if (!append_fmt(&buf, &len, &cap, ",\"calib\":[")) goto fail;
-        for (int i = 0; i <= sp->calib_order; i++) {
-            if (!append_fmt(&buf, &len, &cap, "%s%.15g", i ? "," : "", sp->calibration[i])) goto fail;
-        }
-        if (!append_fmt(&buf, &len, &cap, "]")) goto fail;
+    spec_meta_live_t lv;
+    memset(&lv, 0, sizeof(lv));
+    spectrum_get_hist_stats(&lv.hist_ok, &lv.hist_drop);
+    lv.dead = usb_host_cdc_spectrometer_dead() ? 1 : 0;
+    lv.as_age = spectrum_autosave_age_sec();
+    lv.as_streak = spectrum_autosave_fail_streak();
+    lv.bridge_drop = tcp_bridge_dropped_bytes();
+    lv.usb_rx_err = usb_host_cdc_rx_errors();
+    lv.rx_ring_drops = usb_host_cdc_rx_ring_drops();
+    lv.reset_unconfirmed = spectrum_reset_unconfirmed_count();
+    lv.live = spectrum_compute_live_time(sp);
+
+    spec_meta_in_t in;
+    spec_meta_in_fill(&in, sp, &lv);
+
+    if (*buf == NULL) {
+        if (!buf_grow(buf, cap, 1, 1024)) return false;
     }
-    // #AWF-12b F2: тот же признак, что build_json_full выше и /api/device.
-    if (!append_fmt(&buf, &len, &cap, ",\"calib_set\":%s",
-        calib_is_missing(sp->calibration, CALIB_COEFFS, sp->calib_valid) ? "false" : "true")) goto fail;
-    // У-2: главная страница пишет в журнал, когда счётчик растёт (Reset не выполнен прибором).
-    if (!append_fmt(&buf, &len, &cap, ",\"reset_unconfirmed\":%" PRIu32,
-        spectrum_reset_unconfirmed_count())) goto fail;
-    if (!append_fmt(&buf, &len, &cap, "}")) goto fail;
-    *out = buf;
-    *out_len = len;
+    size_t n = spec_meta_fmt(*buf, *cap, &in, a_end, b_start);
+    if (n >= *cap) {
+        if (!buf_grow(buf, cap, n + 1, 1024)) return false;
+        n = spec_meta_fmt(*buf, *cap, &in, a_end, b_start);
+    }
+    *len = n;
     return true;
-fail:
-    free(buf);
-    return false;
 }
 
 void spectrum_http_cache_init(void)
@@ -215,11 +124,8 @@ static bool spectrum_http_cache_finish_build(int64_t now, uint32_t gen_before)
 {
     int64_t t_build0 = esp_timer_get_time();   // 1.2.36 Commit 0: цена снимка+сборки (без ожидания s_mtx)
     bool snap_ok = s_sp_build && spectrum_get_snapshot(s_sp_build);
-    char *nj = NULL, *nm = NULL;
-    size_t njl = 0, nml = 0;
-    bool build_ok = snap_ok && build_json_full(s_sp_build, &nj, &njl) &&
-                     build_json_meta(s_sp_build, &nm, &nml);
-    if (!build_ok) { free(nj); nj = NULL; free(nm); nm = NULL; }
+    size_t nml = 0, na = 0, nb = 0;
+    bool build_ok = snap_ok && build_meta(s_sp_build, &s_meta_build, &s_meta_build_cap, &nml, &na, &nb);
     {
         int64_t d = esp_timer_get_time() - t_build0;
         s_build_us_last = (uint32_t)d;
@@ -239,12 +145,10 @@ static bool spectrum_http_cache_finish_build(int64_t now, uint32_t gen_before)
         xSemaphoreGive(s_mtx);
         return have;
     }
-    if (s_readers > 0 && s_have && s_json && s_meta) {
+    if (s_readers > 0 && s_have && s_meta) {
         // Читатели ещё держат ТЕКУЩИЙ s_sp/s_json/s_meta (PAYLOAD_BINS шлёт
         // s_sp->bins напрямую) — свежесобранное в этот раз не применяем.
         xSemaphoreGive(s_mtx);
-        free(nj);
-        free(nm);
         return true;
     }
     if (spec_cache_gen_stale(gen_before, s_gen)) {
@@ -253,20 +157,25 @@ static bool spectrum_http_cache_finish_build(int64_t now, uint32_t gen_before)
         // затираем s_have=false, выставленный invalidate(), устаревшим
         // "свежим" результатом; следующий ensure() пересоберёт заново.
         xSemaphoreGive(s_mtx);
-        free(nj);
-        free(nm);
         return false;
     }
-    free(s_json);
-    free(s_meta);
     // Pointer-swap s_sp<->s_sp_build (без 32КБ memcpy под мьютексом).
     spectrum_data_t *tmp = s_sp;
     s_sp = s_sp_build;
     s_sp_build = tmp;
-    s_json = nj;
-    s_json_len = njl;
-    s_meta = nm;
+
+    // Swap meta buffers
+    char *tmp_meta = s_meta;
+    size_t tmp_meta_cap = s_meta_cap;
+    s_meta = s_meta_build;
+    s_meta_cap = s_meta_build_cap;
+    s_meta_build = tmp_meta;
+    s_meta_build_cap = tmp_meta_cap;
+
     s_meta_len = nml;
+    s_meta_a_end = na;
+    s_meta_b_start = nb;
+
     s_built_us = now;
     s_have = true;
     s_render_count++;
@@ -281,7 +190,7 @@ bool spectrum_http_cache_ensure(void)
 
     xSemaphoreTake(s_mtx, portMAX_DELAY);
     int64_t now = esp_timer_get_time();
-    if (s_have && (now - s_built_us) < SPECTRUM_HTTP_CACHE_TTL_US && s_json && s_meta) {
+    if (s_have && (now - s_built_us) < SPECTRUM_HTTP_CACHE_TTL_US && s_meta) {
         xSemaphoreGive(s_mtx);
         return true;
     }
@@ -321,6 +230,7 @@ uint32_t spectrum_http_cache_render_count(void)
 
 uint32_t spectrum_http_cache_build_us_last(void) { return s_build_us_last; }
 uint32_t spectrum_http_cache_build_us_max(void) { return s_build_us_max; }
+uint32_t spectrum_http_cache_json_builds(void) { return s_json_builds; }
 
 // esp_http_server хранит указатель, а не копию: значение обязано дожить до
 // httpd_resp_send(). Поэтому буфер принадлежит кадру отправителя, а не этой
@@ -333,7 +243,7 @@ static void set_render_hdr(httpd_req_t *req, uint32_t render_count,
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 }
 
-typedef enum { PAYLOAD_JSON, PAYLOAD_META, PAYLOAD_BINS } payload_kind_t;
+typedef enum { PAYLOAD_META, PAYLOAD_BINS } payload_kind_t;
 
 // Зафиксировать снапшот кэша: заголовки и указатели берём под мьютексом, но сама
 // отправка идёт уже без него — иначе медленный клиент держит мьютекс всё время
@@ -345,7 +255,6 @@ static void snapshot_begin(httpd_req_t *req, payload_kind_t kind,
 {
     xSemaphoreTake(s_mtx, portMAX_DELAY);
     switch (kind) {
-    case PAYLOAD_JSON: *payload = s_json; *len = s_json_len; break;
     case PAYLOAD_META: *payload = s_meta; *len = s_meta_len; break;
     case PAYLOAD_BINS:
         *payload = (const char *)s_sp->bins;
@@ -372,13 +281,111 @@ esp_err_t spectrum_http_send_json(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "No spectrum data yet");
         return ESP_FAIL;
     }
+    // 1.2.36 H3: полный JSON (8192 канала текстом) строится ЛЕНИВО, только если его кто-то запросил, и из ТОЙ ЖЕ строки meta,
+    // что отдаёт meta.json этого поколения. Сборка — ВНЕ s_mtx; s_readers держит s_sp/s_meta от смены.
+    
     const char *payload = NULL;
     size_t len = 0;
     char hdr[16];   // живёт до конца функции — дольше, чем httpd_resp_send()
-    snapshot_begin(req, PAYLOAD_JSON, &payload, &len, hdr, sizeof(hdr));
+    uint32_t render_for_hdr = 0;
+    bool claimed = false;
+    char *buf = NULL;
+    size_t cap = 0;
+    uint32_t rc = 0;
+    const uint32_t *bins = NULL;
+    const char *meta = NULL;
+    size_t mlen = 0, a_end = 0, b_start = 0;
+
+    xSemaphoreTake(s_mtx, portMAX_DELAY);
+    rc = s_render_count;
+    if (!spec_json_need_build(s_json_have, s_json_render, rc)) {
+        s_json_users++;
+        payload = s_json;
+        len = s_json_len;
+        render_for_hdr = s_json_render;
+        xSemaphoreGive(s_mtx);
+        set_render_hdr(req, render_for_hdr, hdr, sizeof(hdr));
+        httpd_resp_set_type(req, "application/json");
+        esp_err_t e = httpd_resp_send(req, payload, len);
+        xSemaphoreTake(s_mtx, portMAX_DELAY);
+        if (s_json_users > 0) s_json_users--;
+        xSemaphoreGive(s_mtx);
+        return e;
+    } else {
+        s_readers++;
+        bins = s_sp->bins;
+        meta = s_meta;
+        mlen = s_meta_len;
+        a_end = s_meta_a_end;
+        b_start = s_meta_b_start;
+
+        if (s_json_users == 0) {
+            buf = s_json;
+            cap = s_json_cap;
+            claimed = true;
+            s_json_users++;
+            s_json_have = false;
+        } else {
+            buf = NULL;
+            cap = 0;
+            claimed = false;
+        }
+        xSemaphoreGive(s_mtx);
+    }
+
+    // Build outside mutex
+    if (!buf && !buf_grow(&buf, &cap, 65536, 65536)) {
+        xSemaphoreTake(s_mtx, portMAX_DELAY);
+        s_readers--;
+        if (claimed) s_json_users--;
+        xSemaphoreGive(s_mtx);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+        return ESP_FAIL;
+    }
+
+    size_t n = spec_json_full_fmt(buf, cap, bins, meta, mlen, a_end, b_start);
+    if (n >= cap) {
+        if (!buf_grow(&buf, &cap, n + 1, 65536)) {
+            xSemaphoreTake(s_mtx, portMAX_DELAY);
+            s_readers--;
+            if (claimed) s_json_users--;
+            xSemaphoreGive(s_mtx);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+            return ESP_FAIL;
+        }
+        n = spec_json_full_fmt(buf, cap, bins, meta, mlen, a_end, b_start);
+    }
+
+    xSemaphoreTake(s_mtx, portMAX_DELAY);
+    s_readers--;
+    s_json_builds++;
+    if (claimed) {
+        s_json = buf;
+        s_json_cap = cap;
+        if (s_render_count == rc) {
+            s_json_len = n;
+            s_json_render = rc;
+            s_json_have = true;
+        }
+    }
+    payload = buf;
+    len = n;
+    render_for_hdr = rc;
+    xSemaphoreGive(s_mtx);
+
+    set_render_hdr(req, render_for_hdr, hdr, sizeof(hdr));
     httpd_resp_set_type(req, "application/json");
     esp_err_t e = httpd_resp_send(req, payload, len);
-    snapshot_end();
+
+    xSemaphoreTake(s_mtx, portMAX_DELAY);
+    if (claimed) {
+        if (s_json_users > 0) s_json_users--;
+    } else {
+        // Free private buffer after send
+        free(buf);
+    }
+    xSemaphoreGive(s_mtx);
+
     return e;
 }
 

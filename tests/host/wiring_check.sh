@@ -316,7 +316,7 @@ c=$(lnum wifi_manager.c 'if (s_fallback_timer) esp_timer_stop(s_fallback_timer);
 need web_server.c 0 'static float compute_live_time('
 need spectrum_http_cache.c 0 'static float compute_live_time('
 need web_server.c 4 'spectrum_compute_live_time(sp)'
-need spectrum_http_cache.c 2 'spectrum_compute_live_time(sp)'
+need spectrum_http_cache.c 1 'spectrum_compute_live_time(sp)'   # после B один вызов — в build_meta (раньше два: full+meta)
 need spectrum.c 1 'return live_time_calc(sp->total_time_sec, sp->total_counts, sp->lost_impulses,'
 # 1.2.36 H12 (D): /api/device — поля хвоста снимка в локальной структуре (spectrum_calib_meta.h), без буфера sizeof(spectrum_data_t)
 need web_server.c 1 'bool have_sp = spectrum_get_calib_meta(&m);'
@@ -333,5 +333,16 @@ need web_server.c 1 '"autosave_skips"'
 need web_server.c 2 'ttl_expired('
 need web_server.c 1 'if (ttl_expired(s_slow_at, slow_now, SYS_SLOW_PERIOD_US)) {'
 need web_server.c 1 '"heap_walk_age_ms"'
+# 1.2.36 H2/H3/H4 (B): поля meta — один раз за пересборку (spec_meta_fmt.h, ОДИН build_meta), полный JSON — лениво из send_json, старые build_json_* и per-build free() удалены
+need spectrum_http_cache.c 1 'spec_meta_in_fill(&in, sp, &lv);'
+need spectrum_http_cache.c 2 'spec_meta_fmt('
+need spectrum_http_cache.c 1 'build_meta(s_sp_build, &s_meta_build, &s_meta_build_cap, &nml, &na, &nb);'
+need spectrum_http_cache.c 1 'if (!spec_json_need_build(s_json_have, s_json_render, rc)) {'
+need spectrum_http_cache.c 2 'spec_json_full_fmt('
+need spectrum_http_cache.c 0 'build_json_full('
+need spectrum_http_cache.c 0 'build_json_meta('
+need spectrum_http_cache.c 0 'free(s_meta);'
+need spectrum_http_cache.c 0 'free(s_json);'
+need web_server.c 1 '"spectrum_json_builds"'
 [ "$RC" -eq 0 ] && echo "wiring: OK"
 exit $RC

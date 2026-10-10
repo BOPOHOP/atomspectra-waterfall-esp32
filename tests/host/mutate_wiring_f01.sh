@@ -211,4 +211,10 @@ mut ME_skips_field    web_server.c '/"autosave_skips", /d' '"autosave_skips"'
 mut MC_heap_always    web_server.c '0,/if (ttl_expired(s_slow_at, slow_now, SYS_SLOW_PERIOD_US)) {/s//if (1 || ttl_expired(s_slow_at, slow_now, SYS_SLOW_PERIOD_US)) {/' 'ttl_expired(s_slow_at,'
 mut MC_fs_own_cond    web_server.c 's/if (ttl_expired(s_fs_at, now_us, 30LL \* 1000000LL)) {/if (s_fs_at == 0 || now_us - s_fs_at > 30LL * 1000000LL) {/' 'ttl_expired('
 mut MC_age_field      web_server.c '/"heap_walk_age_ms", /d' '"heap_walk_age_ms"'
+# 1.2.36 B: поля meta снова собираются мимо spec_meta_fmt / полный JSON строится без решения need_build / вернулись build_json_full и free() на каждой пересборке
+mut MB_fill_lost      spectrum_http_cache.c '/spec_meta_in_fill(&in, sp, &lv);/d' 'spec_meta_in_fill(&in, sp, &lv);'
+mut MB_site_lost      spectrum_http_cache.c 's/if (!spec_json_need_build(s_json_have, s_json_render, rc)) {/if (!s_json_have) {/' 'spec_json_need_build(s_json_have'
+mut MB_old_full       spectrum_http_cache.c '$a static bool mb_old(void) { return build_json_full(0, 0, 0); }' 'build_json_full('
+mut MB_free_back      spectrum_http_cache.c '$a static void mb_free(void) { free(s_json); }' 'free(s_json);'
+mut MB_json_field     web_server.c '/"spectrum_json_builds", /d' '"spectrum_json_builds"'
 exit $RC

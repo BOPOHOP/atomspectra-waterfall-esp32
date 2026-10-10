@@ -2096,6 +2096,7 @@ static esp_err_t handle_system(httpd_req_t *req)
     // 1.2.36 Commit 0: счётчики для замера «до/после» (цена пересборки кэша, обходы кучи, записи автосейва)
     cJSON_AddNumberToObject(root, "spectrum_build_us", (double)spectrum_http_cache_build_us_last());
     cJSON_AddNumberToObject(root, "spectrum_build_us_max", (double)spectrum_http_cache_build_us_max());
+    cJSON_AddNumberToObject(root, "spectrum_json_builds", (double)spectrum_http_cache_json_builds());
     cJSON_AddNumberToObject(root, "heap_walk_n", (double)s_heap_walk_n);
     cJSON_AddNumberToObject(root, "autosave_writes", (double)spectrum_autosave_writes());
     cJSON_AddNumberToObject(root, "autosave_skips", (double)spectrum_autosave_skips());
