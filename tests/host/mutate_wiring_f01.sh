@@ -203,7 +203,8 @@ mut MD_from_lost      spectrum.c           's/spectrum_calib_meta_from(&s_spectr
 # 1.2.36 Commit 0: поле замера в /api/system
 mut MC0_build_us_field web_server.c '/"spectrum_build_us", /d' '"spectrum_build_us"'
 # 1.2.36 P1 (E): критерий пропуска потерян / запись не фиксирует CRC / один из четырёх сбросов признака удалён / поле счётчика
-mut ME_check_lost     spectrum.c '0,/if (autosave_unchanged(&s_as_last, snap_crc, snap_gen)) {/s//if (0) {/' 'autosave_unchanged(&s_as_last,'
+mut ME_check_lost     spectrum.c '0,/if (autosave_skip_step(&s_as_last, snap_crc, snap_gen, reset_mark_clear_if_current)) {/s//if (0) {/' 'autosave_skip_step(&s_as_last,'
+mut ME_retry_lost     spectrum.c 's/snap_gen, reset_mark_clear_if_current)) {/snap_gen, as_mark_noop)) {/' 'autosave_skip_step(&s_as_last,'   # С-1: пропуск без повтора снятия reset.mark
 mut ME_record_lost    spectrum.c 's/s_as_last = (as_last_t){ true, snap_crc, snap_gen };/(void)snap_crc;/' 's_as_last = (as_last_t){ true,'
 mut ME_reset_lost     spectrum.c '0,/s_as_last.have = false;/{/s_as_last.have = false;/d}' 's_as_last.have = false;'
 mut ME_skips_field    web_server.c '/"autosave_skips", /d' '"autosave_skips"'

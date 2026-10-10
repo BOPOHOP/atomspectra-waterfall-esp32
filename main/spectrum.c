@@ -1830,8 +1830,9 @@ void spectrum_autosave(void)
     SPEC_UNLOCK();
 
     // 1.2.36 P1: байты снимка те же, что в последней успешной записи этим путём, и Сброса не было -> файл равен RAM.
+    // С-1 (gate pass1): пропуск сам повторяет снятие reset.mark (неудачный unlink иначе не повторялся бы никогда).
     uint32_t snap_crc = imp_crc32((const uint8_t *)snap, sizeof(*snap), 0);
-    if (autosave_unchanged(&s_as_last, snap_crc, snap_gen)) {
+    if (autosave_skip_step(&s_as_last, snap_crc, snap_gen, reset_mark_clear_if_current)) {
         free(snap);
         spectrum_autosave_note_ok();
         s_as_skips++;
