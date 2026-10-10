@@ -411,12 +411,12 @@ function impSer(s){return String(s||"").replace(/^IMP:/,"").replace(/[^\x20-\x7E
 function impNum(x){var n=Number(x);return isFinite(n)?n:NaN;}
 function impUnxml(s){return s.replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&amp;/g,"&");}
 function impTag(s,re){var m=re.exec(s);return m?m[1]:null;}
-/* Калибровка: 1..5 конечных коэффициентов, не все нули, E(ch) строго возрастает на шкале 8192 каналов (calMono, common-time.js, OPT-9) — иначе отбрасывается. */
+/* Калибровка: 1..5 конечных коэффициентов, не все нули, E(ch) строго возрастает на 0..8191 (64 целых канала, calMonoCh, common-time.js, OPT-9; сетка прежняя, не calMono) — иначе отбрасывается. */
 function impCalibOk(c){
  if(!Array.isArray(c)||c.length<1||c.length>5)return false;
  var nz=false,i;for(i=0;i<c.length;i++){if(typeof c[i]!=="number"||!isFinite(c[i]))return false;if(c[i]!==0)nz=true;}
  if(!nz)return false;
- return calMono(c,IMP_CH);
+ return calMonoCh(c,IMP_CH);
 }
 /* Общая проверка результата разбора (все форматы): каналы ровно 8192, счёты u32, сумма 1..2^32-1, время 1..10 лет. */
 function impFinish(p){

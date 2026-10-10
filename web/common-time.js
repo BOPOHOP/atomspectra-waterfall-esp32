@@ -297,6 +297,17 @@ function calMono(c, n) {
     return true;
 }
 
+// Проверка импорта (saved.html, до OPT-9 - 64 целых канала 0..n-1, шаг round(j*(n-1)/63)): сетка отличается от calMono (65 точек -0.5..n-0.5), набор принимаемых калибровок на краях другой - поведение приёма сохранено прежним
+function calMonoCh(c, n) {
+    var p = -Infinity;
+    for (var j = 0; j < 64; j++) {
+        var e = calE(c, Math.round(j * (n - 1) / 63));
+        if (!(e > p)) return false;
+        p = e;
+    }
+    return true;
+}
+
 function calSame(a, b) {
     var p = [0, 2048, 4096, 6144, 8191];
     for (var i = 0; i < p.length; i++) {

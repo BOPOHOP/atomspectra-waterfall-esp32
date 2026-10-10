@@ -83,8 +83,8 @@ mutc() {   # mutc <имя> <тест.mjs> <страница> <sed по common-ti
     echo "== $1: $n FAIL (need $5)"; [ "$n" -eq "$5" ] || RC=1
 }
 mut baseline_cal     common-time.js cal_poly_test.mjs  -                                                   0
-mut K1_horner_order  common-time.js cal_poly_test.mjs  's/for (var i = c.length - 1; i >= 0; i--) e = e \* x + c\[i\];/for (var i = 0; i < c.length; i++) e = e * x + c[i];/' 10
-mut K2_mono_nonstrict common-time.js cal_poly_test.mjs 's/if (!(e > p)) return false;/if (!(e >= p)) return false;/' 1
+mut K1_horner_order  common-time.js cal_poly_test.mjs  's/for (var i = c.length - 1; i >= 0; i--) e = e \* x + c\[i\];/for (var i = 0; i < c.length; i++) e = e * x + c[i];/' 13
+mut K2_mono_nonstrict common-time.js cal_poly_test.mjs 's/if (!(e > p)) return false;/if (!(e >= p)) return false;/' 2
 mut K3_mono_few_pts  common-time.js cal_poly_test.mjs  's/for (var j = 0; j <= 64; j++) {/for (var j = 0; j <= 2; j++) {/' 1
 mut K4_same_tol      common-time.js cal_poly_test.mjs  's/< 0.5)) return false;/< 5)) return false;/'    1
 mut K5_inv_20_iter   common-time.js cal_poly_test.mjs  's/i < 45; i++/i < 20; i++/'                     6
@@ -97,8 +97,11 @@ mut K11_chan_unit    common-time.js cal_poly_test.mjs  's/c || \[0, 1\]/c || [0,
 mutc K12_horner_rebin  rebin_test.mjs index.html 's/for (var i = c.length - 1; i >= 0; i--) e = e \* x + c\[i\];/for (var i = 0; i < c.length; i++) e = e * x + c[i];/' 4
 mutc K13_inv_3_rebin   rebin_test.mjs index.html 's/i < 45; i++/i < 3; i++/' 2
 mutc K14_mono_off_rebin rebin_test.mjs index.html 's/if (!(e > p)) return false;/if (false) return false;/' 2
-mutc K15_mono_off_import import_parse_test.mjs saved.html 's/if (!(e > p)) return false;/if (false) return false;/' 1
-mut  K16_import_no_mono saved.html import_parse_test.mjs 's/ return calMono(c,IMP_CH);/ return true;/'          1
+mutc K15_mono_off_import import_parse_test.mjs saved.html 's/if (!(e > p)) return false;/if (false) return false;/' 2
+mut  K16_import_no_mono saved.html import_parse_test.mjs 's/ return calMonoCh(c,IMP_CH);/ return true;/'          2
+# 1.2.36 (S1-2): приём калибровок при импорте - прежняя сетка 64 целых канала (calMonoCh), а не calMono
+mut  K17_import_calmono saved.html import_parse_test.mjs 's/ return calMonoCh(c,IMP_CH);/ return calMono(c,IMP_CH);/' 1
+mut  K18_monoch_grid common-time.js cal_poly_test.mjs 's/Math.round(j \* (n - 1) \/ 63)/Math.round(j * n \/ 64)/' 2
 # OPT-12 / LOAD-2 водопад: опросы статуса через pollWhileVisible
 mut baseline_wfpoll  waterfall.html poll_waterfall_test.mjs -                                                0
 mut P4_wf_status_bare waterfall.html poll_waterfall_test.mjs 's/(window.pollWhileVisible||setInterval)(refreshStatus,5000)/setInterval(refreshStatus,5000)/' 2

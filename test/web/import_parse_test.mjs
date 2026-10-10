@@ -70,6 +70,10 @@ fails("xml: NumberOfChannels != числу DataPoint", () => L.impParse(xmlTxt("
 fails("не спектр", () => L.impParse("hello", "x.txt", MT), "imp.err.format");
 const badCal = L.impParse(jb((o) => { o.calib = [0, -1]; }), "x", MT);
 ok("калибровка не монотонна: отброшена, импорт идёт, есть предупреждение", badCal.calib === null && badCal.warn.includes("imp.warnCalibBad"));
+// 1.2.36 (риск аудита S1-2): приём калибровок при импорте - прежняя сетка (64 целых канала 0..8191), не calMono (65 точек -0.5..8191.5). E=(x-64.5)^2: минимум в 64.5, E(0)=4160.25<E(130)=4290.25 - старый код принимал, calMono отвергает (E(-0.5)=4225>E(127.5)=3969)
+const oldCalOk = (c) => { let p = -Infinity; for (let j = 0; j < 64; j++) { const ch = Math.round(j * 8191 / 63); let e = 0; for (let i = 0; i < c.length; i++) e += c[i] * Math.pow(ch, i); if (!(e > p)) return false; p = e; } return true; };
+ok("калибровка с минимумом в 64.5 канале: принята, как прежним кодом", L.impCalibOk([4160.25, -129, 1]) === true && oldCalOk([4160.25, -129, 1]) === true && L.impParse(jb((o) => { o.calib = [4160.25, -129, 1]; }), "x", MT).calib !== null);
+ok("калибровка с минимумом в 100 канале: отброшена, как прежним кодом", L.impCalibOk([10000, -200, 1]) === false && oldCalOk([10000, -200, 1]) === false);
 ok("calib_set=false: калибровка не берётся", L.impParse(jb((o) => { o.calib_set = false; }), "x", MT).calib === null);
 ok("total в файле != сумме каналов: предупреждение", L.impParse(jb((o) => { o.total = SUM * 2; }), "x", MT).warn.includes("imp.warnTotal"));
 ok("xml: часы платы не синхронизированы (1970) -> дата из lastModified", L.impParse(xmlTxt("x", 8192).replace(/<EndTime>[^<]*/, "<EndTime>1970-01-01T00:00:10"), "x", MT).savedAt === MT / 1000);
