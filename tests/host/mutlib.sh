@@ -49,9 +49,9 @@ mt_check() {
     local expect="$2"
     
     rm -f test_runner
-    local out
-    out=$(make test 2>&1)
-    
+    local out mrc
+    out=$(make test 2>&1); mrc=$?   # pass2 З-4: код make test - бинарь мог упасть без строки FAIL после «ALL PASSED» test_runner
+
     # Проверка на успешную сборку
     if ! echo "$out" | grep -qE "ALL PASSED|CHECK\(S\) FAILED"; then
         echo "== $label: BUILD FAILED"
@@ -77,13 +77,17 @@ mt_check() {
         named_str=$(echo "$named" | tr '\n' ' ' | sed 's/ $//')
     fi
     
-    echo "== $label: $total FAIL, tests=[$named_str] unnamed=$unnamed"
+    echo "== $label: $total FAIL, tests=[$named_str] unnamed=$unnamed rc=$mrc"
     
     # Вывод INFO строк
     echo "$out" | grep '^INFO ' | sed 's/^/   /'
     
     # Оценка результата
-    if [ "$expect" == "baseline" ]; then
+    if [ "$mrc" -ne 0 ] && [ "$total" -eq 0 ]; then
+        # pass2 З-4: make test упал (бинарь вернул != 0 / не собрался) без единой строки FAIL - ни baseline, ни мутант не засчитываются
+        MT_RC=1
+        echo "   VERDICT BAD (make test rc=$mrc without FAIL line)"
+    elif [ "$expect" == "baseline" ]; then
         if [ "$total" -eq 0 ]; then
             echo "   VERDICT OK"
         else
