@@ -2080,6 +2080,7 @@ static esp_err_t handle_system(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "spectrum_build_us_max", (double)spectrum_http_cache_build_us_max());
     cJSON_AddNumberToObject(root, "heap_walk_n", (double)s_heap_walk_n);
     cJSON_AddNumberToObject(root, "autosave_writes", (double)spectrum_autosave_writes());
+    cJSON_AddNumberToObject(root, "autosave_skips", (double)spectrum_autosave_skips());
     cJSON_AddBoolToObject(root,   "http_heavy_busy", http_io_gate_busy());
     cJSON_AddNumberToObject(root, "http_heavy_rejects", (double)http_io_gate_reject_count());
     char *json = cJSON_PrintUnformatted(root);

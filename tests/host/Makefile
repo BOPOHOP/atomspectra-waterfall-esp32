@@ -55,7 +55,8 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_debug_log_chunk.c \
        test_spectrum_import_plan.c \
        test_live_time.c \
-       test_spectrum_calib_meta.c
+       test_spectrum_calib_meta.c \
+       test_autosave_skip_plan.c
 
 test: $(SRCS) test_util.h test_import_body_plan test_import_tmp_plan test_n42_time_plan
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm

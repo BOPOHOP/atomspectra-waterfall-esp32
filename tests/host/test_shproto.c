@@ -103,6 +103,7 @@ void round3_snapshot_file_suite(void);   // У4 раунда 3
 void round3_ota_reopen_suite(void);      // У5 раунда 3
 void round3_seg_rebuild_entry_suite(void); // У6/О5 раунда 3
 void live_time_suite(void);                // 1.2.36 OPT-1: одна формула живого времени
+void autosave_skip_plan_suite(void);       // 1.2.36 P1: пропуск записи неизменного current.bin
 void spectrum_calib_meta_suite(void);      // 1.2.36 H12: поля хвоста снимка для /api/device
 
 // Тестовая команда. CMD_HISTOGRAM (0x01) объявлена в main/atomspectra.h, но она
@@ -329,6 +330,7 @@ int main(void)
     round3_seg_rebuild_entry_suite();
     live_time_suite();
     spectrum_calib_meta_suite();
+    autosave_skip_plan_suite();
 
     if (g_failures) {
         printf("\n%d CHECK(S) FAILED\n", g_failures);

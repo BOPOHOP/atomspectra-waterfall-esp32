@@ -324,5 +324,10 @@ need web_server.c 0 'spectrum_get_meta('
 need spectrum.c 1 'spectrum_calib_meta_from(&s_spectrum, m);'
 # 1.2.36 Commit 0: счётчики замера «до/после» в /api/system (наблюдаемость; спека §3 Commit 0)
 need web_server.c 1 '"spectrum_build_us"'
+# 1.2.36 P1 (E): пропуск записи неизменного current.bin — проверка критерия в одноразовом пути + сброс признака в 4 местах (Сброс, consume_abort, отказ записи, порционный путь)
+need spectrum.c 1 'if (autosave_unchanged(&s_as_last, snap_crc, snap_gen)) {'
+need spectrum.c 1 's_as_last = (as_last_t){ true, snap_crc, snap_gen };'
+need spectrum.c 4 's_as_last.have = false;'
+need web_server.c 1 '"autosave_skips"'
 [ "$RC" -eq 0 ] && echo "wiring: OK"
 exit $RC

@@ -4,6 +4,8 @@
 #include "spectrum_t1.h"
 #include "live_time.h"      // 1.2.36 OPT-1: одна формула живого времени
 #include "spectrum_calib_meta.h"  // 1.2.36 H12: снимок хвоста для /api/device
+#include "autosave_skip_plan.h"   // 1.2.36 P1: пропуск записи неизменного current.bin
+#include "spectrum_import_plan.h" // imp_crc32() (host-pure, поточная CRC без массивов)
 #include "hist_drop_diag.h"
 #include "flash_quiet.h"
 #include "spectrum_hist_stage.h"
@@ -136,6 +138,8 @@ static uint32_t  s_base_total_counts;
 static uint32_t  s_dev_resets;                    // #7: счётчик сворачиваний с боота шлюза
 static spectrum_hist_stage_t s_hist_stage;        // непрерывность свипа (idle = UINT32_MAX)
 static uint32_t  s_reset_gen;                     // AUD-ASW126 #1/#12: httpd Reset
+static as_last_t s_as_last;    // 1.2.36 P1: CRC+gen последней успешной одноразовой записи current.bin (only autosave task)
+static uint32_t  s_as_skips;   // 1.2.36 P1: пропущенные (неизменные) одноразовые записи, /api/system autosave_skips
 static uint32_t  s_sess_req;   // 1.2.31: запросы новой сессии (Сброс непустого спектра), под SPEC_LOCK
 static uint32_t  s_stage_reset_gen;               // снимок gen на offset==0 (CDC)
 // AWF-4: момент spectrum_reset() (esp_timer, мкс) — гейт правдоподобности STAT
@@ -853,6 +857,7 @@ static void reset_impl(char mark_state)
     // "ok":true immediately) followed by a reboot/power cut inside the deferred
     // window left current.bin on flash; spectrum_restore_autosave() at boot then
     // silently resurrected the pre-reset spectrum — the Reset undid itself.
+    s_as_last.have = false;   // 1.2.36 P1: current.bin удаляется — следующая запись обязательна
     if (unlink(AUTOSAVE_FILE) != 0 && errno != ENOENT)
         ESP_LOGW(TAG, "Reset: current.bin unlink failed (errno=%d)", errno);
     // F2 (итоговое ревью 25.09): restore_resolve() читает current.bin.tmp как
@@ -1523,6 +1528,11 @@ uint32_t spectrum_autosave_writes(void)
     return s_as_writes;
 }
 
+uint32_t spectrum_autosave_skips(void)
+{
+    return s_as_skips;
+}
+
 int spectrum_autosave_fail_streak(void)
 {
     return s_as_fail_streak;
@@ -1573,6 +1583,7 @@ void spectrum_autosave_consume_abort(void)
     // it must be visible, not silently claimed as done.
     if (!unlink_main)
         return;
+    s_as_last.have = false;   // 1.2.36 P1: current.bin удаляется
     if (unlink(AUTOSAVE_FILE) == 0)
         ESP_LOGI(TAG, "autosave consume: current.bin unlinked");
     else if (errno != ENOENT)
@@ -1714,6 +1725,7 @@ void spectrum_autosave_pump(void)
         }
         flash_quiet_writer_unlock();
         http_io_gate_leave();
+        s_as_last.have = false;   // 1.2.36 P1: current.bin записан порционным путём — CRC последней одноразовой записи устарел
         reset_mark_clear_if_current(s_as_snap_gen);
         int64_t total_us = esp_timer_get_time() - s_as_t0;
         ESP_LOGI(TAG, "autosave complete slices=%d total_us=%lld",
@@ -1791,6 +1803,15 @@ void spectrum_autosave(void)
     uint32_t snap_gen = s_reset_gen;
     SPEC_UNLOCK();
 
+    // 1.2.36 P1: байты снимка те же, что в последней успешной записи этим путём, и Сброса не было -> файл равен RAM.
+    uint32_t snap_crc = imp_crc32((const uint8_t *)snap, sizeof(*snap), 0);
+    if (autosave_unchanged(&s_as_last, snap_crc, snap_gen)) {
+        free(snap);
+        spectrum_autosave_note_ok();
+        s_as_skips++;
+        ESP_LOGI(TAG, "autosave skipped: unchanged");
+        return;
+    }
     if (!http_io_gate_try_enter()) {
         free(snap);
         spectrum_autosave_note_fail();
@@ -1805,12 +1826,14 @@ void spectrum_autosave(void)
     // снаружи atomic_write_snapshot() (esp_timer_get_time() вокруг вызова).
     if (!atomic_write_snapshot(AUTOSAVE_TMP_FILE, AUTOSAVE_FILE, snap)) {
         ESP_LOGE(TAG, "Autosave write failed (errno=%d)", errno);
+        s_as_last.have = false;   // 1.2.36 P1: отказ записи — состояние файла неизвестно
         http_io_gate_leave();
     } else {
         http_io_gate_leave();
         reset_mark_clear_if_current(snap_gen);
         spectrum_autosave_note_ok();
         s_as_writes++;
+        s_as_last = (as_last_t){ true, snap_crc, snap_gen };
     }
     free(snap);
 }
