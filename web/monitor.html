@@ -54,6 +54,11 @@ table.mon th{ color:var(--accent); font-weight:600; font-size:11px; position:sti
 table.mon td:first-child,table.mon th:first-child{ text-align:left; color:#8a9686; }
 .twrap{ max-height:340px; overflow:auto; border:1px solid var(--bd); border-radius:8px; }
 canvas{ width:100%; height:auto; display:block; }
+@media (max-width:480px){  /* #UI-MOB: 375px - шапка переносится (как на главной), чипы не шире экрана */
+header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
+.brand{ min-width:0; flex-wrap:wrap; gap:10px; }
+.chips{ min-width:0; justify-content:flex-start; }
+}
 </style>
 </head>
 <body>

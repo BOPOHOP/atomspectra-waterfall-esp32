@@ -1489,10 +1489,10 @@ wf.addEventListener("wheel",function(e){
  connectWS();
  var os=document.getElementById("oflSave"); if(os)os.onclick=saveOffload;   // #REC-11-A2
  loadOffload();
- setInterval(refreshStatus,5000);
- setInterval(refreshSystem,5000);
+ (window.pollWhileVisible||setInterval)(refreshStatus,5000);
+ (window.pollWhileVisible||setInterval)(refreshSystem,5000);
  setInterval(tickRecTime,1000);
- setInterval(oflPollStat,5000);   // #REC-11-A2: статистика выгрузки, только при раскрытой карточке
+ (window.pollWhileVisible||setInterval)(oflPollStat,5000);   // #REC-11-A2: статистика выгрузки, только при раскрытой карточке
 })();
 </script>
 <style>

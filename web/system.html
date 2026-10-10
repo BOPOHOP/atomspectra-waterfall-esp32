@@ -82,6 +82,11 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 @media(max-width:520px){
  .sum-grid{ grid-template-columns:1fr; }
 }
+@media (max-width:480px){  /* #UI-MOB: 375px - шапка переносится (как на главной), чипы не шире экрана */
+header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
+.brand{ min-width:0; flex-wrap:wrap; gap:10px; }
+.chips{ min-width:0; justify-content:flex-start; }
+}
 </style>
 </head>
 <body>

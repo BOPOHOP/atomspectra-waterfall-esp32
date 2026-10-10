@@ -57,6 +57,7 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 .cal-coef input{ flex:1; background:#0c0f0b; border:1px solid #283024; color:var(--accent); padding:7px 10px; border-radius:7px; font-size:12px; outline:none; }
 table.saved{ border-collapse:collapse; width:100%; font-size:12px; }
 table.saved th,table.saved td{ border-bottom:1px solid #1b211a; padding:8px 10px; text-align:left; color:#cfd6cd; }
+#saved{ overflow-x:auto; }   /* #UI-MOB: таблица сохранённых прокручивается внутри панели, страница не растягивается */
 table.saved th{ color:var(--accent); font-weight:600; font-size:11.5px; }
 table.saved tr.on td{ background:rgba(110,168,255,.07); }
 .empty{ color:#5b655a; font-style:italic; font-size:12.5px; }
@@ -124,7 +125,7 @@ nav a,nav span{ padding:12px 10px; }
 </div>
 <div class="row">
 <div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.scale">Шкала Y</span><div class="seg" id="seg-scale"><button id="btn-lin" onclick="setLog(false)">Lin</button><button id="btn-log" class="on" onclick="setLog(true)">Log</button><button id="btn-pow" onclick="setPow()" title="y^(1/e)">x<sup>1/e</sup></button></div></div>
-<div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.value">Величина</span><div class="seg" id="seg-y"><button id="btn-cnt" onclick="setCps(false)">Counts</button><button id="btn-cps" class="on" onclick="setCps(true)">CPS</button></div></div>
+<div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.value">Величина</span><div class="seg" id="seg-y"><button id="btn-cnt" onclick="setCps(false)" data-i18n="ctl.cnt">Отсчёты</button><button id="btn-cps" class="on" onclick="setCps(true)">CPS</button></div></div>
 <div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.x">Ось X</span><div class="seg" id="seg-x"><button id="btn-ch" onclick="setKev(false)">Ch</button><button id="btn-kev" class="on" onclick="setKev(true)">keV</button></div></div>
 <div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.xr">Диапазон X</span><div class="seg" id="seg-xr"><button id="btn-x1k" onclick="setXRange(1000)">0–1000</button><button id="btn-x2k" onclick="setXRange(2000)">0–2000</button><button id="btn-xall" class="on" onclick="setXRange(0)" data-i18n="ctl.xall">весь</button></div></div>
 <!-- #UI-3: оверлей энергетических линий нуклидов -->
@@ -231,7 +232,7 @@ var DICT={
   "btn.expXml":"Экспорт XML","btn.expCsv":"Экспорт CSV","btn.expN42":"Экспорт N42","btn.expSpe":"Экспорт SPE",
   "btn.clearOvl":"Снять overlay",
   "btn.rebootDev":"Reboot прибора","btn.rebootEsp":"Reboot ESP","btn.wifiReset":"WiFi Reset",
-  "ctl.scale":"Шкала Y","ctl.value":"Величина","ctl.x":"Ось X","ctl.xr":"Диапазон X, кэВ","ctl.xall":"весь",
+  "ctl.scale":"Шкала Y","ctl.value":"Величина","ctl.cnt":"Отсчёты","ctl.x":"Ось X","ctl.xr":"Диапазон X, кэВ","ctl.xall":"весь",
   "nuc.toggle":"&#9883; Линии","nuc.title":"Линии нуклидов",
   "nuc.all":"Все","nuc.none":"Снять",
   "nuc.need_cal":"Нужна калибровка энергии",
@@ -243,9 +244,9 @@ var DICT={
   "cal.apply":"Применить","cal.clear":"Очистить","cal.read":"Считать с прибора",
   "saved.title":"Сохранённые спектры","saved.all":"все &rarr;",
   "saved.loading":"Загрузка...","saved.empty":"Нет сохранённых",
-  "ax.ch":"Channel","ax.kev":"кэВ","ax.cnt":"Counts","ax.cps":"CPS",
-  "cur.kev":"кэВ","cur.cnt":"counts",
-  "th.idx":"#","th.saved":"Сохранено","th.counts":"Counts","th.time":"Время","th.export":"Экспорт",
+  "ax.ch":"Channel","ax.kev":"кэВ","ax.cnt":"Отсчёты","ax.cps":"CPS",
+  "cur.kev":"кэВ","cur.cnt":"отсчётов",
+  "th.idx":"#","th.saved":"Сохранено","th.counts":"Импульсы","th.time":"Время","th.export":"Экспорт",
   "btn.overlay":"Overlay","btn.overlayOff":"Снять","btn.del":"Удал.",
   "confirm.del":"Удалить спектр #%1?",
   "confirm.rebootDev":"Перезагрузить спектрометр?",
@@ -282,7 +283,7 @@ var DICT={
   "btn.expXml":"Export XML","btn.expCsv":"Export CSV","btn.expN42":"Export N42","btn.expSpe":"Export SPE",
   "btn.clearOvl":"Clear overlay",
   "btn.rebootDev":"Reboot device","btn.rebootEsp":"Reboot ESP","btn.wifiReset":"WiFi Reset",
-  "ctl.scale":"Y scale","ctl.value":"Value","ctl.x":"X axis","ctl.xr":"X range, keV","ctl.xall":"full",
+  "ctl.scale":"Y scale","ctl.value":"Value","ctl.cnt":"Counts","ctl.x":"X axis","ctl.xr":"X range, keV","ctl.xall":"full",
   "nuc.toggle":"&#9883; Lines","nuc.title":"Nuclide lines",
   "nuc.all":"All","nuc.none":"None",
   "nuc.need_cal":"Energy calibration required",

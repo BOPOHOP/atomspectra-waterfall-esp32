@@ -99,4 +99,7 @@ mutc K13_inv_3_rebin   rebin_test.mjs index.html 's/i < 45; i++/i < 3; i++/' 2
 mutc K14_mono_off_rebin rebin_test.mjs index.html 's/if (!(e > p)) return false;/if (false) return false;/' 2
 mutc K15_mono_off_import import_parse_test.mjs saved.html 's/if (!(e > p)) return false;/if (false) return false;/' 1
 mut  K16_import_no_mono saved.html import_parse_test.mjs 's/ return calMono(c,IMP_CH);/ return true;/'          1
+# OPT-12 / LOAD-2 водопад: опросы статуса через pollWhileVisible
+mut baseline_wfpoll  waterfall.html poll_waterfall_test.mjs -                                                0
+mut P4_wf_status_bare waterfall.html poll_waterfall_test.mjs 's/(window.pollWhileVisible||setInterval)(refreshStatus,5000)/setInterval(refreshStatus,5000)/' 2
 exit $RC
