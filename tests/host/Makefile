@@ -63,7 +63,7 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_monitor_window.c \
        test_autosave_mark_retry.c
 
-test: $(SRCS) test_util.h test_import_body_plan test_import_tmp_plan test_n42_time_plan test_glue_cache test_glue_monitor
+test: $(SRCS) test_util.h test_import_body_plan test_import_tmp_plan test_n42_time_plan test_glue_cache test_glue_monitor test_glue_cache_oom
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm
 	./test_runner
 	./test_import_body_plan
@@ -71,11 +71,16 @@ test: $(SRCS) test_util.h test_import_body_plan test_import_tmp_plan test_n42_ti
 	./test_n42_time_plan
 	./test_glue_cache
 	./test_glue_monitor
+	./test_glue_cache_oom
 
 # release-gate 1.2.36 pass1 С-2: тесты СКЛЕЙКИ - сам main/*.c (не копия) с заглушками IDF/FreeRTOS из glue/ (учёт блоков glue_alloc).
 GLUE_DEPS = glue/glue_stubs.c glue/*.h glue/freertos/*.h
 test_glue_cache: test_glue_cache.c glue/glue_cache_env.h $(GLUE_DEPS) ../../main/spectrum_http_cache.c ../../main/spectrum_meta_fmt.h ../../main/spectrum_t1.c
 	$(CC) $(CFLAGS) -Iglue -I. -o test_glue_cache test_glue_cache.c glue/glue_stubs.c ../../main/spectrum_t1.c -lm
+
+# З-1 (gate pass1): отказ роста буфера spectrum.json сверх 64 КиБ - без утечки (отдельный бинарь: s_json == NULL на старте)
+test_glue_cache_oom: test_glue_cache_oom.c glue/glue_cache_env.h $(GLUE_DEPS) ../../main/spectrum_http_cache.c ../../main/spectrum_meta_fmt.h ../../main/spectrum_t1.c
+	$(CC) $(CFLAGS) -Iglue -I. -o test_glue_cache_oom test_glue_cache_oom.c glue/glue_stubs.c ../../main/spectrum_t1.c -lm
 
 test_glue_monitor: test_glue_monitor.c $(GLUE_DEPS) ../../main/monitor.c ../../main/monitor_window.h
 	$(CC) $(CFLAGS) -Iglue -I. -o test_glue_monitor test_glue_monitor.c glue/glue_stubs.c -lm

@@ -346,10 +346,12 @@ esp_err_t spectrum_http_send_json(httpd_req_t *req)
     size_t n = spec_json_full_fmt(buf, cap, bins, meta, mlen, a_end, b_start);
     if (n >= cap) {
         if (!buf_grow(&buf, &cap, n + 1, 65536)) {
+            // З-1 (gate 1.2.36 pass1): буфер не теряется - захваченный общий остаётся s_json (s_json_have не ставится), частный освобождается.
             xSemaphoreTake(s_mtx, portMAX_DELAY);
             s_readers--;
-            if (claimed) s_json_users--;
+            if (claimed) { s_json = buf; s_json_cap = cap; s_json_users--; }
             xSemaphoreGive(s_mtx);
+            if (!claimed) free(buf);
             httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
             return ESP_FAIL;
         }

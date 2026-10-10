@@ -9,7 +9,11 @@ cd "$(dirname "$0")"
 C=../../main/spectrum_http_cache.c
 M=../../main/monitor.c
 mt_init "$C" "$M"
+# Y4: make test останавливается на первом упавшем бинаре (test_glue_cache), test_glue_cache_oom после него не запускается
 mt_mut Y4_no_a_end   glue_json_body   "$C" '/s_meta_a_end = na;/d'
+# З-1: MZ1 - общий буфер снова теряется (как до правки), MZ2 - частный не освобождается -> ровно glue_json_oom
+mt_mut MZ1_shared_lost glue_json_oom  "$C" 's/if (claimed) { s_json = buf; s_json_cap = cap; s_json_users--; }/if (claimed) s_json_users--;/'
+mt_mut MZ2_private_leak glue_json_oom "$C" '/if (!claimed) free(buf);/d'
 mt_mut Y5_win_60     glue_mon_window  "$M" 's/if (w_sec > s_cap) w_sec = s_cap;/if (w_sec > 60) w_sec = 60;/'
 mt_base
 mt_done

@@ -77,7 +77,7 @@ static uint64_t __attribute__((unused)) glue_bins_sum(const spectrum_data_t *s) 
     return sum;
 }
 
-static char * __attribute__((unused)) glue_expected_json(const char *m, size_t ml, const uint32_t *bins, size_t *out_len) {
+__attribute__((unused)) static char *glue_expected_json(const char *m, size_t ml, const uint32_t *bins, size_t *out_len) {
     const char *needle = ",\"channels\":";
     size_t needle_len = strlen(needle);
     size_t a = (size_t)-1;
