@@ -236,7 +236,8 @@ mut MG_site_lost      web_server.c         's/return spectrum_http_send_meta_sma
 mut MG_tail_lost      spectrum_http_cache.c 's/size_t tl = spec_meta_sma_tail(/size_t tl = 0 * spec_meta_sma_tail(/' 'spec_meta_sma_tail('
 mut MG_chunk_noterm   spectrum_http_cache.c 's/e = httpd_resp_send_chunk(req, NULL, 0);/e = ESP_OK;/' 'httpd_resp_send_chunk(req, NULL, 0)'
 # З-5 (gate 1.2.36 pass1): буфер запроса снова 32 / длинный запрос молча / плохой w молча / прежний strtoul вместо meta_w_parse
-mut MW_q32            web_server.c 's/char q\[META_Q_MAX\];/char q[32];/' 'char q[META_Q_MAX];'
+mut MSW_unlocked_write spectrum.c '$a void msw_bad(void) { s_spectrum.cps = 0; }' 'spec_writers'   # passA З-1: запись s_spectrum вне SPEC_LOCK
+mut MW_q32           web_server.c 's/char q\[META_Q_MAX\];/char q[32];/' 'char q[META_Q_MAX];'
 mut MW_no414          web_server.c '/HTTPD_414_URI_TOO_LONG, "query too long"/d' 'HTTPD_414_URI_TOO_LONG'
 mut MW_no400          web_server.c 's/if (mw == META_W_BAD) { httpd_resp_send_err/if (0) { httpd_resp_send_err/' 'META_W_BAD'
 mut MW_parse_lost     web_server.c 's/? meta_w_parse(q, \&w) : META_W_NONE;/? META_W_NONE : META_W_NONE;/' 'meta_w_parse'

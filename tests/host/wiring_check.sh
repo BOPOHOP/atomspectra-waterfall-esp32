@@ -2,6 +2,7 @@
 # release-gate 1.2.29 (разбор дельты, мутанты MA–MF): host-тесты не компилируют
 # spectrum.c/usb_host_cdc.c/tcp_bridge.c/..., поэтому удаление вызова чистой функции
 # проходило незамеченным. Проверка: каждая строка-вызов есть в файле ровно N раз.
+HERE=$(cd "$(dirname "$0")" && pwd)   # каталог скрипта (spec_writers.py) - до cd в main/
 cd "${1:-$(dirname "$0")/../../main}" || exit 2   # $1 — другой каталог (проверка на копии)
 RC=0
 need() {   # need <file> <count> <fixed string>
@@ -373,5 +374,12 @@ need web_server.c 1 'if (mw == META_W_BAD) { httpd_resp_send_err(req, HTTPD_400_
 need web_server.c 1 'return spectrum_http_send_meta_sma(req, sc, sd, n);'
 need spectrum_http_cache.c 1 'size_t tl = spec_meta_sma_tail('
 need spectrum_http_cache.c 1 'e = httpd_resp_send_chunk(req, NULL, 0);'
+# release-gate 1.2.36 passA З-1: КАЖДАЯ запись s_spectrum - под SPEC_LOCK (или из мест вызова под ним): spec_writers.py с
+# фиксированными флагами. Законные исключения ровно два: memset в spectrum_init (до запуска httpd, одна задача) и const-геттер
+# spectrum_get_current (--scan-dir: приведений без const - 0). Отказ - одна строка WIRING FAIL с перечнем UNLOCKED.
+sw=$(python3 "$HERE/spec_writers.py" spectrum.c --scan-dir . --allow-fn spectrum_init --const-getter spectrum_get_current 2>&1); swrc=$?
+if [ "$swrc" -ne 0 ]; then
+    echo "WIRING FAIL spec_writers rc=$swrc: $(grep '^# summary' <<<"$sw") $(grep -P '\tUNLOCKED\t' <<<"$sw" | cut -f1,2 | tr '\t\n' ': ')"; RC=1
+fi
 [ "$RC" -eq 0 ] && echo "wiring: OK"
 exit $RC
