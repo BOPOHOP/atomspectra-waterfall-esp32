@@ -499,7 +499,6 @@ async function update(){
   var tStr=(typeof d.t1==="number")?(''+d.t1):"—";
   if(typeof d.t2==="number" && d.t2>0)tStr+='/'+d.t2;
   if(typeof d.t3==="number" && d.t3>0)tStr+='/'+d.t3;
-  var doseStr=(doseK>0)?(d.cps*doseK).toFixed(3):"";
   /* #MX-13 (1.2.34, #62): средний CPS по реальному времени набора = импульсы / d.time (тот же знаменатель, что у мгновенного CPS и SMA); формула avgCps — common-time.js (подключён в конце страницы); нет значения — элемент не выводится */
   var avgV=(typeof avgCps==="function")?avgCps(d.total,d.time):null;
   var avgHtml=(avgV===null)?"":'<span class="sep">|</span><span title="'+tr("st.avgT")+'"><span class="mut">'+tr("st.avg")+'</span> '+avgV.toFixed(2)+'</span>';

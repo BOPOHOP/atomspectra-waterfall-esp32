@@ -294,7 +294,8 @@ function refreshMeta(){
  var ti=meta?meta.time:(d&&d.time||0);
  document.getElementById("m-counts").textContent=fmtNum(total);
  document.getElementById("m-time").textContent=fmtTime(ti);
- document.getElementById("m-cps").textContent=ti>0?(total/ti).toFixed(2):"—";
+ var avg=(typeof avgCps==="function")?avgCps(total,ti):null;  /* #OPT-18: формула avgCps - common-time.js (подключён ниже, :591); нет её - «—» */
+ document.getElementById("m-cps").textContent=avg!==null?avg.toFixed(2):"—";
  document.getElementById("m-saved").textContent=meta?fmtDate(meta.saved_at):"—";
  document.getElementById("m-ch").textContent=d&&d.bins?d.bins.length:"—";
  // #AWF-12b R7 (release-gate-1.2.28-code-rc2.md): откат к калибровке платы
