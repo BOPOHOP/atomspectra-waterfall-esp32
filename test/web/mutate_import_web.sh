@@ -51,4 +51,15 @@ mut C5_post_method   common-time.js csrf_retry_test.mjs 's/opts.method="POST";/o
 mut C6_post_twice    common-time.js csrf_retry_test.mjs 's/r=await fetch(url,opts)}return r}/r=await fetch(url,opts);if(r.status===403){await loadCsrf();r=await fetch(url,opts)}}return r}/' 1
 mutw C7_json_no_ctype 's/headers:{"Content-Type":"application\/json"},body:body/headers:{},body:body/' 2
 mutw C8_json_no_stringify 's/body:body?JSON.stringify(body):undefined/body:body/' 1
+# OPT-13 (каркас i18n в common-time.js) и №6 wf_passA_test (setLang -> onLang страницы -> updGrip)
+mut baseline_i18n    common-time.js i18n_core_test.mjs -                                                   0
+mut I1_no_ru_fallback common-time.js i18n_core_test.mjs 's/(D.ru\[k\] || k)/k/'                            1
+mut I2_no_lang_check common-time.js i18n_core_test.mjs 's/if (l !== "ru" && l !== "en") l = "ru";//'      1
+mut I3_no_storage    common-time.js i18n_core_test.mjs 's/try { localStorage.setItem("aswf-lang", l); } catch (e) {}//' 2
+mut I4_no_onLang     common-time.js i18n_core_test.mjs 's/if (I18N.onLang) I18N.onLang(l);//'             1
+mut I5_no_title_attr common-time.js i18n_core_test.mjs 's/el.title = tr(key);//'                           1
+mut I6_html_as_text  common-time.js i18n_core_test.mjs 's/el.innerHTML = tr(key);/el.textContent = tr(key);/' 1
+mut I7_no_onApply    common-time.js i18n_core_test.mjs 's/if (I18N.onApply) I18N.onApply();//'            1
+mut baseline_passA   waterfall.html wf_passA_test.mjs  -                                                   0
+mut A1_no_updGrip    waterfall.html wf_passA_test.mjs  's/try{if(typeof updGrip==="function")updGrip();}catch(e){}//' 1
 exit $RC

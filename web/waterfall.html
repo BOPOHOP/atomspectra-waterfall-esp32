@@ -370,35 +370,16 @@ var DICT={
   "ofl.err_nvs":"NVS write error","ofl.err":"failed to save settings"
  }
 };
-var LANG=(function(){try{return localStorage.getItem("aswf-lang")||"ru";}catch(e){return"ru";}})();
-function t(k){var d=DICT[LANG]||DICT.ru;return(d[k]!==undefined)?d[k]:(DICT.ru[k]||k);}
-function tfmt(k){var s=t(k);for(var i=1;i<arguments.length;i++)s=s.replace("%"+i,arguments[i]);return s;}
-function applyI18n(){
- document.querySelectorAll("[data-i18n]").forEach(function(el){
-  var k=el.getAttribute("data-i18n"); el.textContent=t(k);
- });
- document.querySelectorAll("[data-i18n-html]").forEach(function(el){
-  var k=el.getAttribute("data-i18n-html"); el.innerHTML=t(k);
- });
- document.querySelectorAll("[data-i18n-title]").forEach(function(el){
-  var k=el.getAttribute("data-i18n-title"); el.title=t(k);
- });
- document.querySelectorAll("[data-i18n-placeholder]").forEach(function(el){
-  var k=el.getAttribute("data-i18n-placeholder"); el.placeholder=t(k);
- });
- document.documentElement.lang=LANG;
- var btn=document.getElementById("langBtn"); if(btn)btn.textContent=(LANG==="ru")?"EN":"RU";
- if(typeof syncNucBtn==="function")syncNucBtn();
-}
-function setLang(l){
- if(l!=="ru"&&l!=="en")l="ru";
- LANG=l; try{localStorage.setItem("aswf-lang",l);}catch(e){}
- applyI18n();
- try{if(typeof applyRecState==="function")applyRecState();}catch(e){}   // #REC-7: «● ЗАПИСЬ»/«● REC» сразу на новом языке
- try{if((dskWritable||dskMemChunks)&&typeof updDiskInd==="function")updDiskInd();}catch(e){}
- try{if(typeof updGrip==="function")updGrip();}catch(e){}   // #AWF-UI-6 №6: подсказка/aria ручки на новом языке
- try{if(typeof draw==="function")draw();}catch(e){}
-}
+/* #OPT-13: LANG/t/tfmt/applyI18n/setLang - общий каркас в common-time.js; здесь только страничные хвосты */
+i18nInit(DICT,{
+ onApply:function(){if(typeof syncNucBtn==="function")syncNucBtn();},
+ onLang:function(){
+  try{if(typeof applyRecState==="function")applyRecState();}catch(e){}   // #REC-7: «● ЗАПИСЬ»/«● REC» сразу на новом языке
+  try{if((dskWritable||dskMemChunks)&&typeof updDiskInd==="function")updDiskInd();}catch(e){}
+  try{if(typeof updGrip==="function")updGrip();}catch(e){}   // #AWF-UI-6 №6: подсказка/aria ручки на новом языке
+  try{if(typeof draw==="function")draw();}catch(e){}
+ }
+});
 
 // === 10-стоп палитры (заимствованы из mock v3) ===
 var PALETTES={

@@ -225,7 +225,7 @@ var DICT={
   "dead.retry":"Повторить связь",
   "flash.label":"⚙ Flash LittleFS",
   "flash.fmt":"%1 / %2 КБ (%3%) &middot; свободно %4 КБ",
-  "btn.start":"&#9654; Старт","btn.stop":"&#9632; Стоп","btn.reset":"&#8634; Сброс",
+  "btn.start":"▶ Старт","btn.stop":"■ Стоп","btn.reset":"&#8634; Сброс",
   "acq.run":"● НАБОР","acq.stop":"○ стоп",
   "btn.save":"&#128190; Сохранить",
   "btn.expXml":"Экспорт XML","btn.expCsv":"Экспорт CSV","btn.expN42":"Экспорт N42","btn.expSpe":"Экспорт SPE",
@@ -243,7 +243,7 @@ var DICT={
   "cal.apply":"Применить","cal.clear":"Очистить","cal.read":"Считать с прибора",
   "saved.title":"Сохранённые спектры","saved.all":"все &rarr;",
   "saved.loading":"Загрузка...","saved.empty":"Нет сохранённых",
-  "ax.ch":"Channel","ax.kev":"keV","ax.cnt":"Counts","ax.cps":"CPS",
+  "ax.ch":"Channel","ax.kev":"кэВ","ax.cnt":"Counts","ax.cps":"CPS",
   "cur.kev":"кэВ","cur.cnt":"counts",
   "th.idx":"#","th.saved":"Сохранено","th.counts":"Counts","th.time":"Время","th.export":"Экспорт",
   "btn.overlay":"Overlay","btn.overlayOff":"Снять","btn.del":"Удал.",
@@ -254,7 +254,7 @@ var DICT={
   "saved.savedAs":"Сохранён #%1","saved.saveErr":"Ошибка сохранения",
   "saved.saveErrNoData":"Нет данных спектра (прибор не подключён/не выдаёт спектр)","saved.saveErrNoSpace":"Мало места на flash — удалите старые снимки",
   "log.start":"Старт отправлен","log.stop":"Стоп отправлен","log.reset":"Сброс отправлен","log.resetNotSent":"Прибор не получил -rst (USB не подключён?) — плата повторит его в ближайшие секунды или при подключении прибора","log.resetUnconfirmed":"Прибор не выполнил сброс за ~10 с — показан его набор","log.resetUnconfirmedBoot":"С загрузки платы прибор не выполнил сбросов: {n} — показан его набор","log.info":"Запрошена информация",
-  "log.ovlOk":"Наложение загружено: #%1","log.ovlErr":"Ошибка наложения: %1","log.ovlClear":"Наложение очищено",
+  "log.sent":"Отправлено: %1","log.ovlOk":"Наложение загружено: #%1","log.ovlErr":"Ошибка наложения: %1","log.ovlClear":"Наложение очищено",
   "ovl.noTime":" (время не задано — показан счёт, не CPS)",
   "ovl.rebinned":" (перенесено по энергии)","ovl.byChannel":" (в записи нет калибровки — по каналам)","saved.impTag":"фон, импорт",
   "cal.readEmpty":"Прибор вернул пустую калибровку (нули/NaN) — калибровка платы не изменена",
@@ -276,7 +276,7 @@ var DICT={
   "dead.retry":"Retry link",
   "flash.label":"⚙ Flash LittleFS",
   "flash.fmt":"%1 / %2 KB (%3%) &middot; free %4 KB",
-  "btn.start":"&#9654; Start","btn.stop":"&#9632; Stop","btn.reset":"&#8634; Reset",
+  "btn.start":"▶ Start","btn.stop":"■ Stop","btn.reset":"&#8634; Reset",
   "acq.run":"● ACQ","acq.stop":"○ stop",
   "btn.save":"&#128190; Save",
   "btn.expXml":"Export XML","btn.expCsv":"Export CSV","btn.expN42":"Export N42","btn.expSpe":"Export SPE",
@@ -316,35 +316,21 @@ var DICT={
   "err.prefix":"Error: %1"
  }
 };
-var LANG=(function(){try{return localStorage.getItem("aswf-lang")||"ru";}catch(e){return"ru";}})();
-function tr(k){var d=DICT[LANG]||DICT.ru;return(d[k]!==undefined)?d[k]:(DICT.ru[k]||k);}
-function tfmt(k){var s=tr(k); for(var i=1;i<arguments.length;i++){s=s.replace("%"+i,arguments[i]);} return s;}
+/* #OPT-13: LANG/tr/tfmt/applyI18n/setLang - общий каркас в common-time.js; здесь только страничные хвосты */
+i18nInit(DICT,{
+ onApply:function(){
+  document.title="AtomSpectra · "+tr("nav.spectrum");
+  if(typeof syncNucVisBtn==="function")syncNucVisBtn();   // #UI-40 mirror: подпись кнопки on/off при старте и смене языка
+ },
+ onLang:function(){
+  if(typeof populateNucPanel==="function")populateNucPanel();
+  if(lastD)draw(lastD);else clearCanvas();
+  loadFlashInfo();
+  loadSaved();
+  refreshCalibStatus();
+ }
+});
 function lcl(){return LANG==="ru"?"ru-RU":"en-US";}
-function applyI18n(){
- document.querySelectorAll("[data-i18n]").forEach(function(el){
-  var k=el.getAttribute("data-i18n"); el.textContent=tr(k);
- });
- document.querySelectorAll("[data-i18n-html]").forEach(function(el){
-  var k=el.getAttribute("data-i18n-html"); el.innerHTML=tr(k);
- });
- document.querySelectorAll("[data-i18n-placeholder]").forEach(function(el){
-  var k=el.getAttribute("data-i18n-placeholder"); el.placeholder=tr(k);
- });
- document.documentElement.lang=LANG;
- var b=document.getElementById("langBtn"); if(b)b.textContent=(LANG==="ru")?"EN":"RU";
- document.title="AtomSpectra · "+tr("nav.spectrum");
- if(typeof syncNucVisBtn==="function")syncNucVisBtn();   // #UI-40 mirror: подпись кнопки on/off при старте и смене языка
-}
-function setLang(l){
- if(l!=="ru"&&l!=="en")l="ru";
- LANG=l; try{localStorage.setItem("aswf-lang",l);}catch(e){}
- applyI18n();
- if(typeof populateNucPanel==="function")populateNucPanel();
- if(lastD)draw(lastD);else clearCanvas();
- loadFlashInfo();
- loadSaved();
- refreshCalibStatus();
-}
 
 var C=document.getElementById("sp"),X=C.getContext("2d");
 var Ccur=document.getElementById("spcur"),Xcur=Ccur.getContext("2d");

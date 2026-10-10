@@ -106,3 +106,49 @@ async function loadCsrf(){try{var r=await(await fetch("/api/csrf-token")).json()
 async function post(url,opts){opts=opts||{};opts.method="POST";var h=opts.headers||{};opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});var r=await fetch(url,opts);if(r.status===403){await loadCsrf();opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});r=await fetch(url,opts)}return r}
 /* S-01 (1.2.30): тяжёлые GET требуют CSRF-токен; токен меняется при каждом старте платы — на 403 берём новый и повторяем один раз. */
 async function gget(url,opts){opts=opts||{};if(!csrfToken)await loadCsrf();var f=function(){return fetch(url,Object.assign({},opts,{headers:{"X-CSRF-Token":csrfToken}}))};var r=await f();if(r.status===403){await loadCsrf();r=await f();}return r;}
+
+/* #OPT-13 (OPT, этап 1): общий каркас i18n. Словарь DICT = {ru:{...},en:{...}} остаётся на странице и передаётся в i18nInit(DICT,{onApply,onLang}).
+   t()/tr()/tfmt() ищут ключ в языке LANG, затем в ru, затем возвращают сам ключ. onApply() вызывается в конце applyI18n (страничные хвосты: заголовок,
+   подписи кнопок), onLang(l) - в конце setLang (перерисовка страницы). Ключ localStorage - "aswf-lang" (один на все страницы). Атрибуты разметки:
+   data-i18n (textContent), data-i18n-html (innerHTML), data-i18n-placeholder, data-i18n-title. Имена функций - для test/web/undef_calls_test.mjs. */
+var LANG = (function () { try { return localStorage.getItem("aswf-lang") || "ru"; } catch (e) { return "ru"; } })();
+var I18N = { dict: null, onApply: null, onLang: null };
+function i18nInit(dict, hooks) {
+    I18N.dict = dict;
+    hooks = hooks || {};
+    I18N.onApply = hooks.onApply || null;
+    I18N.onLang = hooks.onLang || null;
+}
+function tr(k) {
+    var D = I18N.dict || { ru: {} };
+    var d = D[LANG] || D.ru;
+    return (d[k] !== undefined) ? d[k] : (D.ru[k] || k);
+}
+function t(k) { return tr(k); }
+function tfmt(k) {
+    var s = tr(k);
+    for (var i = 1; i < arguments.length; i++) s = s.replace("%" + i, arguments[i]);
+    return s;
+}
+function applyI18n() {
+    var els, el, key, i;
+    els = document.querySelectorAll("[data-i18n]");
+    for (i = 0; i < els.length; i++) { el = els[i]; key = el.getAttribute("data-i18n"); el.textContent = tr(key); }
+    els = document.querySelectorAll("[data-i18n-html]");
+    for (i = 0; i < els.length; i++) { el = els[i]; key = el.getAttribute("data-i18n-html"); el.innerHTML = tr(key); }
+    els = document.querySelectorAll("[data-i18n-placeholder]");
+    for (i = 0; i < els.length; i++) { el = els[i]; key = el.getAttribute("data-i18n-placeholder"); el.placeholder = tr(key); }
+    els = document.querySelectorAll("[data-i18n-title]");
+    for (i = 0; i < els.length; i++) { el = els[i]; key = el.getAttribute("data-i18n-title"); el.title = tr(key); }
+    document.documentElement.lang = LANG;
+    var b = document.getElementById("langBtn");
+    if (b) b.textContent = (LANG === "ru") ? "EN" : "RU";
+    if (I18N.onApply) I18N.onApply();
+}
+function setLang(l) {
+    if (l !== "ru" && l !== "en") l = "ru";
+    LANG = l;
+    try { localStorage.setItem("aswf-lang", l); } catch (e) {}
+    applyI18n();
+    if (I18N.onLang) I18N.onLang(l);
+}

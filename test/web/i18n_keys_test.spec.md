@@ -1,0 +1,13 @@
+Write a Node.js ES module test script (file `test/web/i18n_keys_test.mjs`). Output ONLY the JavaScript code, no markdown fences, no explanations.
+
+Purpose: the web pages each carry their own i18n dictionary `var DICT={ ru:{...}, en:{...} };` (a plain object literal, strings only, the declaration ends with a line that is exactly `};`). Check dictionaries for consistency.
+
+Requirements:
+1. Imports: `readFileSync` from "node:fs". Run from repo root. Pages: `web/index.html`, `web/monitor.html`, `web/saved.html`, `web/service.html`, `web/system.html`, `web/waterfall.html`, `web/setup.html`.
+2. For each page read the text (utf8). Extract the dictionary with the regex `/var DICT=(\{[\s\S]*?\n\});/` and evaluate with `new Function("return " + m[1])()`. Throw an Error naming the page if there is no match.
+3. Check A (ru==en): the sets of keys in `ru` and `en` are equal. Every key present in one and missing in the other is a problem: `FAIL <page> ru/en: key "<k>" only in <ru|en>`.
+4. Check B (used keys exist): collect keys used on the page by two regexes over the WHOLE page text: `/(?<![\w$.])(?:t|tr|tfmt)\(\s*["']([^"']+)["']/g` and `/data-i18n(?:-html|-placeholder|-title)?="([^"]+)"/g`. Each used key must exist in BOTH `ru` and `en`; otherwise `FAIL <page> used key "<k>" missing in <ru|en>`. Keys that are built dynamically are not detected - that is acceptable; a match whose closing quote is followed by optional whitespace and `+` (string concatenation, e.g. `t("ghota.st."+x)`) must be skipped: add the lookahead `(?!\s*\+)` right after the closing quote in the first regex.
+5. Check C (shared keys equal across pages): for the keys `ax.kev`, `btn.start`, `btn.stop` and for each language `ru`, `en`: among the pages whose dictionary has the key, all values must be identical; otherwise print `FAIL shared key "<k>" <lang>: <page>="<value>" vs <page2>="<value2>"` (one line per differing page against the first page that has it).
+6. Check D (case of the first letter): for keys `cal.set`, `cal.unset` and each language: the first character of the value must have the same case class (upper vs lower, via `c === c.toUpperCase()`) on all pages that have the key; otherwise print `FAIL case "<k>" <lang>: <page>="<value>" vs <page2>="<value2>"`.
+7. Count problems in `failed`. For information print one line per page: `<page>: ru=<n> en=<n> used=<n>` where used is the number of distinct used keys. After all pages print `failed: <failed>` and `process.exit(failed ? 1 : 0)`.
+8. Keep it under 80 lines. First line comment: `// I18N-1: dictionaries of web pages - ru/en key parity, used keys exist, shared keys equal. Usage: node test/web/i18n_keys_test.mjs`

@@ -189,15 +189,8 @@ var DICT={
   "confirm.clear":"Clear all accumulated monitoring samples?"
  }
 };
-var LANG=(function(){try{return localStorage.getItem("aswf-lang")||"ru";}catch(e){return"ru";}})();
-function t(k){var d=DICT[LANG]||DICT.ru;return(d[k]!==undefined)?d[k]:(DICT.ru[k]||k);}
-function tfmt(k){var s=t(k);for(var i=1;i<arguments.length;i++)s=s.replace("%"+i,arguments[i]);return s;}
-function applyI18n(){
- document.querySelectorAll("[data-i18n]").forEach(function(el){ el.textContent=t(el.getAttribute("data-i18n")); });
- document.documentElement.lang=LANG;
- var b=document.getElementById("langBtn"); if(b)b.textContent=(LANG==="ru")?"EN":"RU";
-}
-function setLang(l){ if(l!=="ru"&&l!=="en")l="ru"; LANG=l; try{localStorage.setItem("aswf-lang",l);}catch(e){} applyI18n(); renderStartBtn(); renderStatus(); try{drawChart();}catch(e){} }
+/* #OPT-13: LANG/t/tfmt/applyI18n/setLang - общий каркас в common-time.js; здесь только перерисовка при смене языка */
+i18nInit(DICT,{onLang:function(){renderStartBtn(); renderStatus(); try{drawChart();}catch(e){}}});
 
 function ac(){return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#34d3c0';}
 

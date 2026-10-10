@@ -312,24 +312,8 @@ var DICT={
   "dbglog.err":"Save error"
  }
 };
-var LANG=(function(){try{return localStorage.getItem("aswf-lang")||"ru";}catch(e){return"ru";}})();
-function t(k){var d=DICT[LANG]||DICT.ru;return(d[k]!==undefined)?d[k]:(DICT.ru[k]||k);}
-function tfmt(k){var s=t(k); for(var i=1;i<arguments.length;i++){s=s.replace("%"+i,arguments[i]);} return s;}
-function applyI18n(){
- document.querySelectorAll("[data-i18n]").forEach(function(el){
-  var k=el.getAttribute("data-i18n"); el.textContent=t(k);
- });
- document.querySelectorAll("[data-i18n-placeholder]").forEach(function(el){
-  var k=el.getAttribute("data-i18n-placeholder"); el.placeholder=t(k);
- });
- document.documentElement.lang=LANG;
- var b=document.getElementById("langBtn"); if(b)b.textContent=(LANG==="ru")?"EN":"RU";
-}
-function setLang(l){
- if(l!=="ru"&&l!=="en")l="ru";
- LANG=l; try{localStorage.setItem("aswf-lang",l);}catch(e){}
- applyI18n();
-}
+/* #OPT-13: LANG/t/tfmt/applyI18n/setLang - общий каркас в common-time.js; страничных хвостов нет */
+i18nInit(DICT);
 
 var devConnected=false;
 

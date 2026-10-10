@@ -149,10 +149,10 @@ var DICT={
   "cnt.saved":"Сохранено: %1",
   "cnt.items":"%1 шт.",
   "no_data":"Нет данных",
-  "ax.ch":"Channel","ax.kev":"keV",
+  "ax.ch":"Channel","ax.kev":"кэВ",
   "confirm.del":"Удалить спектр #%1?",
   "err.load":"Ошибка загрузки спектра #%1: %2",
-  "cal.set":"задана (%1 коэфф.)","cal.unset":"не задана",
+  "cal.set":"Задана (%1 коэфф.)","cal.unset":"Не задана",
   "flash.fmt":"%1 / %2 КБ (%3%) · свободно %4 КБ",
   "time.h":"ч","time.m":"м","time.s":"с"
  },
@@ -181,31 +181,19 @@ var DICT={
   "ax.ch":"Channel","ax.kev":"keV",
   "confirm.del":"Delete spectrum #%1?",
   "err.load":"Error loading spectrum #%1: %2",
-  "cal.set":"set (%1 coef.)","cal.unset":"not set",
+  "cal.set":"Set (%1 coef.)","cal.unset":"Not set",
   "flash.fmt":"%1 / %2 KB (%3%) · free %4 KB",
   "time.h":"h","time.m":"m","time.s":"s"
  }
 };
-var LANG=(function(){try{return localStorage.getItem("aswf-lang")||"ru";}catch(e){return"ru";}})();
-function t(k){var d=DICT[LANG]||DICT.ru;return(d[k]!==undefined)?d[k]:(DICT.ru[k]||k);}
-function tfmt(k){var s=t(k);for(var i=1;i<arguments.length;i++)s=s.replace("%"+i,arguments[i]);return s;}
-function lcl(){return LANG==="ru"?"ru-RU":"en-US";}
-function applyI18n(){
- document.querySelectorAll("[data-i18n]").forEach(function(el){
-  var k=el.getAttribute("data-i18n"); el.textContent=t(k);
- });
- document.documentElement.lang=LANG;
- var b=document.getElementById("langBtn"); if(b)b.textContent=(LANG==="ru")?"EN":"RU";
-}
-function setLang(l){
- if(l!=="ru"&&l!=="en")l="ru";
- LANG=l; try{localStorage.setItem("aswf-lang",l);}catch(e){}
- applyI18n();
+/* #OPT-13: LANG/t/tfmt/applyI18n/setLang - общий каркас в common-time.js; здесь только перерисовка при смене языка */
+i18nInit(DICT,{onLang:function(){
  // re-render dependent UI
  try{loadFlashInfo();}catch(e){}
  try{loadList();}catch(e){}
  if(currentIdx>=0&&currentData)try{drawChart(currentData);refreshMeta();}catch(e){}
-}
+}});
+function lcl(){return LANG==="ru"?"ru-RU":"en-US";}
 
 var spectra=[], currentIdx=-1, currentData=null, calib=null, currentMeta=null;
 /* #AWF-12b F2 (release-gate-1.2.28-code.md): здесь калибровка — СОХРАНЁННОГО
