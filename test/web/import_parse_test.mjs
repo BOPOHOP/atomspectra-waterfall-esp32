@@ -5,7 +5,9 @@ import zlib from "node:zlib";
 const page = readFileSync(process.argv[2] || "web/saved.html", "utf8");
 const a = page.indexOf("/*IMPORT-BEGIN*/"), b = page.indexOf("/*IMPORT-END*/");
 if (a < 0 || b < a) throw new Error("IMPORT-BEGIN/END not found");
-const L = new Function(page.substring(a, b) + "; return {impParse,impEncode,impDetect,impCrc,impCalibOk};")();
+const cs = readFileSync(process.argv[3] || "web/common-time.js", "utf8"), ca = cs.indexOf("/*CAL-BEGIN*/"), cb = cs.indexOf("/*CAL-END*/");   // OPT-9: impCalibOk зовёт calMono из общего блока CAL
+if (ca < 0 || cb < ca) throw new Error("CAL-BEGIN/END not found");
+const L = new Function(cs.substring(ca, cb) + page.substring(a, b) + "; return {impParse,impEncode,impDetect,impCrc,impCalibOk};")();
 const fx = readFileSync("tests/host/fixtures/imp_real_bins.h", "utf8");
 const bins = fx.substring(fx.indexOf("IMP_REAL_BINS[8192]")).match(/\d+/g).slice(1).map(Number);
 const cal = fx.match(/IMP_REAL_CALIB\[5\] = \{([^}]*)\}/)[1].split(",").map(Number);

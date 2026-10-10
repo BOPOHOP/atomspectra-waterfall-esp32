@@ -278,3 +278,51 @@ function fmtDateTime(ms) {
 function fmtTimeOfDay(d) {
     return tzShift(d).toLocaleTimeString(lcl());
 }
+
+/* #OPT-9 (OPT, этап 1): единственная реализация энергетического полинома E(ch), обратной функции и проверки монотонности (раньше ch2kev x3 через Math.pow, kev2ch x2 с разными диапазонами и 30 итерациями, calInv 45 итераций, проверка монотонности x2). Блок CAL-BEGIN..END вырезают тесты rebin_test, import_parse_test, cal_poly_test. */
+/*CAL-BEGIN*/
+function calE(c, x) {
+    var e = 0;
+    for (var i = c.length - 1; i >= 0; i--) e = e * x + c[i];
+    return e;
+}
+
+function calMono(c, n) {
+    var p = -Infinity;
+    for (var j = 0; j <= 64; j++) {
+        var e = calE(c, -0.5 + j * n / 64);
+        if (!(e > p)) return false;
+        p = e;
+    }
+    return true;
+}
+
+function calSame(a, b) {
+    var p = [0, 2048, 4096, 6144, 8191];
+    for (var i = 0; i < p.length; i++) {
+        if (!(Math.abs(calE(a, p[i]) - calE(b, p[i])) < 0.5)) return false;
+    }
+    return true;
+}
+
+function calInv(c, E, n, lo, hi) {
+    // диапазон по умолчанию - границы ячеек шкалы; оси страниц передают lo=0, hi=n
+    if (lo === undefined) lo = -0.5;
+    if (hi === undefined) hi = n - 0.5;
+    for (var i = 0; i < 45; i++) {
+        var m = (lo + hi) / 2;
+        if (calE(c, m) < E) lo = m;
+        else hi = m;
+    }
+    return (lo + hi) / 2;
+}
+
+function calKev(c, ch) {
+    if (c) return calE(c, ch);
+    return ch;
+}
+
+function calChan(c, kev, n) {
+    return calInv(c || [0, 1], kev, n, 0, n);
+}
+/*CAL-END*/

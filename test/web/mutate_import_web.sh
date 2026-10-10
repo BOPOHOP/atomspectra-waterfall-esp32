@@ -76,4 +76,27 @@ mut T9_clock_no_days common-time.js time_fmt_test.mjs  's/var prefix = d > 0 ? d
 mut T10_tz_no_default common-time.js time_fmt_test.mjs 's/return localStorage.getItem(TZ_KEY) || "auto";/return localStorage.getItem(TZ_KEY);/' 1
 mut T11_dt_no_tz     common-time.js time_fmt_test.mjs  's/return tzShift(new Date(ms)).toLocaleString(lcl());/return new Date(ms).toLocaleString(lcl());/' 1
 mut T12_tod_no_lcl   common-time.js time_fmt_test.mjs  's/return tzShift(d).toLocaleTimeString(lcl());/return tzShift(d).toLocaleTimeString("en-US");/' 1
+# OPT-9 (энергетический полином, обратная функция, монотонность: блок CAL в common-time.js; cal_poly_test + боевые rebin_test/import_parse_test)
+mutc() {   # mutc <имя> <тест.mjs> <страница> <sed по common-time.js> <ожидаемое число FAIL>: тест берёт страницу (argv2) и мутанта common-time.js (argv3)
+    cp web/common-time.js "$T/c.js"; sed -i "$4" "$T/c.js"; cmp -s web/common-time.js "$T/c.js" && { echo "== $1: SED DID NOT APPLY"; RC=1; return; }
+    local n; n=$(node "test/web/$2" "web/$3" "$T/c.js" 2>&1 | grep -c '^FAIL ')
+    echo "== $1: $n FAIL (need $5)"; [ "$n" -eq "$5" ] || RC=1
+}
+mut baseline_cal     common-time.js cal_poly_test.mjs  -                                                   0
+mut K1_horner_order  common-time.js cal_poly_test.mjs  's/for (var i = c.length - 1; i >= 0; i--) e = e \* x + c\[i\];/for (var i = 0; i < c.length; i++) e = e * x + c[i];/' 10
+mut K2_mono_nonstrict common-time.js cal_poly_test.mjs 's/if (!(e > p)) return false;/if (!(e >= p)) return false;/' 1
+mut K3_mono_few_pts  common-time.js cal_poly_test.mjs  's/for (var j = 0; j <= 64; j++) {/for (var j = 0; j <= 2; j++) {/' 1
+mut K4_same_tol      common-time.js cal_poly_test.mjs  's/< 0.5)) return false;/< 5)) return false;/'    1
+mut K5_inv_20_iter   common-time.js cal_poly_test.mjs  's/i < 45; i++/i < 20; i++/'                     6
+mut K6_inv_lo        common-time.js cal_poly_test.mjs  's/lo = -0.5;/lo = 0;/'                           1
+mut K7_inv_hi        common-time.js cal_poly_test.mjs  's/hi = n - 0.5;/hi = n;/'                        1
+mut K8_inv_direction common-time.js cal_poly_test.mjs  's/if (calE(c, m) < E) lo = m;/if (calE(c, m) > E) lo = m;/' 6
+mut K9_kev_no_calib  common-time.js cal_poly_test.mjs  's/^    return ch;$/    return 0;/'                1
+mut K10_chan_range   common-time.js cal_poly_test.mjs  's/return calInv(c || \[0, 1\], kev, n, 0, n);/return calInv(c || [0, 1], kev, n);/' 1
+mut K11_chan_unit    common-time.js cal_poly_test.mjs  's/c || \[0, 1\]/c || [0, 2]/'                    1
+mutc K12_horner_rebin  rebin_test.mjs index.html 's/for (var i = c.length - 1; i >= 0; i--) e = e \* x + c\[i\];/for (var i = 0; i < c.length; i++) e = e * x + c[i];/' 4
+mutc K13_inv_3_rebin   rebin_test.mjs index.html 's/i < 45; i++/i < 3; i++/' 2
+mutc K14_mono_off_rebin rebin_test.mjs index.html 's/if (!(e > p)) return false;/if (false) return false;/' 2
+mutc K15_mono_off_import import_parse_test.mjs saved.html 's/if (!(e > p)) return false;/if (false) return false;/' 1
+mut  K16_import_no_mono saved.html import_parse_test.mjs 's/ return calMono(c,IMP_CH);/ return true;/'          1
 exit $RC

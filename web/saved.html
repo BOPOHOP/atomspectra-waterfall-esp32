@@ -207,7 +207,7 @@ var backups=[], curKind="spec", curName="";
 function apiBase(){return curKind==="bk"?("/api/backup/"+curName):("/api/saved/"+currentIdx);}
 
 function fmtDate(ts){return ts>0?fmtDateTime(ts*1000):'—'}
-function ch2kev(c){if(!calib)return c;var e=0;for(var i=0;i<calib.length;i++)e+=calib[i]*Math.pow(c,i);return e}
+function ch2kev(c){return calKev(calib,c)}
 
 async function loadFlashInfo(){
  try{
@@ -368,7 +368,7 @@ function drawChart(d){
  for(var i=0;i<=nTicks;i++){
   var px=PL+i/nTicks*PW;
   var ch=Math.round(i/nTicks*N);
-  var lbl=hasKev?(function(){var e=0;for(var j=0;j<cal.length;j++)e+=cal[j]*Math.pow(ch,j);return e.toFixed(0);})():String(ch);
+  var lbl=hasKev?calKev(cal,ch).toFixed(0):String(ch);
   X.strokeStyle="#283024";X.beginPath();X.moveTo(px,PB);X.lineTo(px,PB+4);X.stroke();
   X.fillText(lbl,px,PB+15);
  }
@@ -411,14 +411,12 @@ function impSer(s){return String(s||"").replace(/^IMP:/,"").replace(/[^\x20-\x7E
 function impNum(x){var n=Number(x);return isFinite(n)?n:NaN;}
 function impUnxml(s){return s.replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&amp;/g,"&");}
 function impTag(s,re){var m=re.exec(s);return m?m[1]:null;}
-/* Калибровка: 1..5 конечных коэффициентов, не все нули, E(ch) строго возрастает на 0..8191 (64 точки) — иначе отбрасывается. */
+/* Калибровка: 1..5 конечных коэффициентов, не все нули, E(ch) строго возрастает на шкале 8192 каналов (calMono, common-time.js, OPT-9) — иначе отбрасывается. */
 function impCalibOk(c){
  if(!Array.isArray(c)||c.length<1||c.length>5)return false;
  var nz=false,i;for(i=0;i<c.length;i++){if(typeof c[i]!=="number"||!isFinite(c[i]))return false;if(c[i]!==0)nz=true;}
  if(!nz)return false;
- var prev=-Infinity;
- for(var j=0;j<64;j++){var ch=Math.round(j*(IMP_CH-1)/63),e=0;for(i=0;i<c.length;i++)e+=c[i]*Math.pow(ch,i);if(!(e>prev))return false;prev=e;}
- return true;
+ return calMono(c,IMP_CH);
 }
 /* Общая проверка результата разбора (все форматы): каналы ровно 8192, счёты u32, сумма 1..2^32-1, время 1..10 лет. */
 function impFinish(p){

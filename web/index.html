@@ -381,16 +381,12 @@ function visN(N){if(!xRange||!isKev||!calib)return N;var c=Math.ceil(kev2ch(xRan
 function setXRange(v){xRange=v;try{localStorage.setItem("aswf-xrange",String(v))}catch(e){}setSeg(["btn-x1k","btn-x2k","btn-xall"],v===1000?0:v===2000?1:2);if(lastD)draw(lastD);drawCursor()}
 function setKev(v,ns){isKev=v;if(!ns)viewSave();setSeg(["btn-ch","btn-kev"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
 function setSeg(ids,onIdx){ids.forEach(function(id,i){var el=document.getElementById(id);if(!el)return;if(i===onIdx)el.classList.add("on");else el.classList.remove("on")})}
-function ch2kev(ch){if(!calib)return ch;var e=0;for(var i=0;i<calib.length;i++)e+=calib[i]*Math.pow(ch,i);return e}
-function kev2ch(kev){var lo=0,hi=8192;for(var i=0;i<30;i++){var m=(lo+hi)/2;if(ch2kev(m)<kev)lo=m;else hi=m}return(lo+hi)/2}
+function ch2kev(ch){return calKev(calib,ch)}
+function kev2ch(kev){return calChan(calib,kev,8192)}
 /*REBIN-BEGIN*/
 /* 1.2.31: перенос оверлея по ЭНЕРГИИ. Запись (импорт фона с другой платы / другая калибровка) рисовалась на тот же КАНАЛ, что живой
    спектр, — при разных калибровках линии не совпадали. Канал i — ячейка [i-1/2, i+1/2]; последний канал — переполнение (всё выше
    шкалы) и остаётся последним. Счёт сохраняется: ячейка источника делится по перекрытию, вышедшее за шкалу приёмника — в край. */
-function calE(c,x){var e=0;for(var i=c.length-1;i>=0;i--)e=e*x+c[i];return e}
-function calMono(c,n){var p=-Infinity;for(var j=0;j<=64;j++){var e=calE(c,-0.5+j*n/64);if(!(e>p))return false;p=e}return true}
-function calSame(a,b){var n=8192,p=[0,2048,4096,6144,8191],i;for(i=0;i<p.length;i++)if(!(Math.abs(calE(a,p[i])-calE(b,p[i]))<0.5))return false;return true}
-function calInv(c,E,n){var lo=-0.5,hi=n-0.5;for(var i=0;i<45;i++){var m=(lo+hi)/2;if(calE(c,m)<E)lo=m;else hi=m}return(lo+hi)/2}
 function rebinByEnergy(src,ca,cb){
  var n=src.length;
  if(!ca||!cb||!ca.length||!cb.length||n<3||!calMono(ca,n)||!calMono(cb,n)||calSame(ca,cb))return src;

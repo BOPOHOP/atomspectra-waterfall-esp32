@@ -558,8 +558,8 @@ function cmap(t){
  var o=i*3;
  return [currentLut[o],currentLut[o+1],currentLut[o+2]];
 }
-function ch2kev(c){if(!calib)return c;var e=0;for(var i=0;i<calib.length;i++)e+=calib[i]*Math.pow(c,i);return e}
-function kev2ch(k){var lo=0,hi=CH;for(var i=0;i<30;i++){var m=(lo+hi)/2;if(ch2kev(m)<k)lo=m;else hi=m}return(lo+hi)/2}
+function ch2kev(c){return calKev(calib,c)}
+function kev2ch(k){return calChan(calib,k,CH)}
 
 /* #DEMO-12: выбранные линии нуклидов — те же, что на «Спектре» (index.html).
    Выбор хранится в общем localStorage["aswf-nuc"]; здесь только читаем и рисуем
