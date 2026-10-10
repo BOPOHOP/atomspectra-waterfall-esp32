@@ -14,6 +14,8 @@ typedef struct httpd_req {
     int sends, chunks, terminated;
     char render_hdr[24];
 } httpd_req_t;
+/* pass2 С-1: when not NULL, called by httpd_resp_send() after the body is recorded (a second request during a send) */
+extern void (*glue_on_send)(httpd_req_t *r);
 void glue_req_init(httpd_req_t *r);
 void glue_req_free(httpd_req_t *r);
 esp_err_t httpd_resp_send(httpd_req_t *r, const char *buf, ssize_t len);

@@ -15,6 +15,7 @@
 size_t glue_fail_above = SIZE_MAX;
 int64_t glue_now_us = 1000000;
 int glue_sem_depth = 0;
+void (*glue_on_send)(httpd_req_t *r) = NULL;
 
 static void *g_ptrs[512];
 static size_t g_nptrs;
@@ -113,6 +114,7 @@ static void body_append(httpd_req_t *r, const char *buf, size_t len) {
 esp_err_t httpd_resp_send(httpd_req_t *r, const char *buf, ssize_t len) {
     r->sends++;
     if (buf && len > 0) body_append(r, buf, (size_t)len);
+    if (glue_on_send) glue_on_send(r);
     return ESP_OK;
 }
 
