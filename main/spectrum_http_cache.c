@@ -123,7 +123,7 @@ void spectrum_http_cache_init(void)
 static bool spectrum_http_cache_finish_build(int64_t now, uint32_t gen_before)
 {
     int64_t t_build0 = esp_timer_get_time();   // 1.2.36 Commit 0: цена снимка+сборки (без ожидания s_mtx)
-    bool snap_ok = s_sp_build && spectrum_get_snapshot(s_sp_build);
+    bool snap_ok = s_sp_build && spectrum_get_snapshot_seq(s_sp_build);   // 1.2.36 H1: без SPEC_LOCK (seqlock)
     size_t nml = 0, na = 0, nb = 0;
     bool build_ok = snap_ok && build_meta(s_sp_build, &s_meta_build, &s_meta_build_cap, &nml, &na, &nb);
     {

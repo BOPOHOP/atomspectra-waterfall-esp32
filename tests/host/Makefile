@@ -58,7 +58,8 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_spectrum_calib_meta.c \
        test_autosave_skip_plan.c \
        test_ttl_plan.c \
-       test_spectrum_meta_fmt.c
+       test_spectrum_meta_fmt.c \
+       test_seq_copy.c
 
 test: $(SRCS) test_util.h test_import_body_plan test_import_tmp_plan test_n42_time_plan
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm
@@ -85,8 +86,21 @@ asan: $(SRCS) test_util.h
 	$(CC) $(CFLAGS) -fsanitize=address,undefined -g -o test_runner_asan $(SRCS) -lm
 	./test_runner_asan
 
+# 1.2.36 H1 (A): многопоточный стресс seqlock (pthread): писатель под мьютексом с теми же seq++/барьерами,
+# что SPEC_LOCK/SPEC_UNLOCK; читатели - seq_copy() без мьютекса; каждый принятый снимок total == сумма bins.
+# Отдельно от test_runner: MA1/MA2 (mutate_seq_copy.sh) обязаны краснить его своим прогоном.
+stress: test_seq_stress.c ../../main/seq_copy.h
+	$(CC) $(CFLAGS) -pthread -o test_seq_stress test_seq_stress.c
+	./test_seq_stress
+
+# То же под ThreadSanitizer: гонка копии с писателем ОЖИДАЕМА (риск R-1, копия отбрасывается проверкой seq);
+# отчёты не валят прогон (exitcode=0) - их места сводит run-лог.
+tsan: test_seq_stress.c ../../main/seq_copy.h
+	$(CC) $(CFLAGS) -pthread -fsanitize=thread -g -o test_seq_stress_tsan test_seq_stress.c
+	TSAN_OPTIONS="halt_on_error=0 exitcode=0" ./test_seq_stress_tsan
+
 clean:
-	rm -f test_runner test_runner_asan bench_json_fmt test_import_body_plan test_import_tmp_plan test_n42_time_plan
+	rm -f test_runner test_runner_asan bench_json_fmt test_import_body_plan test_import_tmp_plan test_n42_time_plan test_seq_stress test_seq_stress_tsan
 
 # UI-P1: замер до/после старого(vsnprintf-loop)/нового(json_append_uint32_csv)
 # форматтера бинов — числа для отчёта, не гейт ALL PASSED.
@@ -94,4 +108,4 @@ bench: bench_json_fmt.c ../../main/json_uint_fmt.h
 	$(CC) -std=c11 -Wall -Wextra -O2 -I../../main -o bench_json_fmt bench_json_fmt.c
 	./bench_json_fmt
 
-.PHONY: test asan clean bench
+.PHONY: test asan clean bench stress tsan

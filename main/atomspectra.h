@@ -269,6 +269,11 @@ float spectrum_compute_live_time(const spectrum_data_t *sp);
 // ЧАНКИ гистограммы и в разы больше — это разные величины.
 void spectrum_get_sweep_stats(uint32_t *commits, uint32_t *drops);
 bool spectrum_get_snapshot(spectrum_data_t *out);
+// 1.2.36 H1 (A): снимок для кэша /api/spectrum* без SPEC_LOCK (seqlock, seq_copy.h); не вышло за
+// 3 попытки — spectrum_get_snapshot(). Счётчики повторов и запасных путей — /api/system.
+bool spectrum_get_snapshot_seq(spectrum_data_t *out);
+uint32_t spectrum_spec_seq_retry(void);
+uint32_t spectrum_spec_seq_fallback(void);
 // У-3: снимок + счётчик переноса опоры водопада (под одним локом).
 bool spectrum_get_snapshot_wf(spectrum_data_t *out, uint32_t *resync_seq);
 // У-2: сколько Reset с боота прибор не выполнил (данные прибора сохранены по таймауту).

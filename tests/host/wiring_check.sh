@@ -344,5 +344,16 @@ need spectrum_http_cache.c 0 'build_json_meta('
 need spectrum_http_cache.c 0 'free(s_meta);'
 need spectrum_http_cache.c 0 'free(s_json);'
 need web_server.c 1 '"spectrum_json_builds"'
+# 1.2.36 H1 (A): seqlock — КАЖДАЯ секция SPEC_LOCK двигает seq (нечётный внутри) с барьерами в макросах; кэш снимает
+# снимок seq_copy() без мьютекса, не вышло — прежний путь под замком (счётчики в /api/system). Барьеры на x86 host-тест не видит.
+line spectrum.c 1 '#define SPEC_LOCK()   do { if (s_spec_lock) xSemaphoreTake(s_spec_lock, portMAX_DELAY); s_spec_seq++; __sync_synchronize(); } while (0)'
+line spectrum.c 1 '#define SPEC_UNLOCK() do { __sync_synchronize(); s_spec_seq++; if (s_spec_lock) xSemaphoreGive(s_spec_lock); } while (0)'
+need seq_copy.h 2 '__sync_synchronize();'
+need spectrum.c 1 'if (seq_copy(&s_spec_seq, out, &s_spectrum, sizeof(*out), SPEC_SEQ_TRIES,'
+need spectrum.c 1 's_spec_seq_fallback++;'
+need spectrum_http_cache.c 1 'spectrum_get_snapshot_seq(s_sp_build)'
+need spectrum_http_cache.c 0 'spectrum_get_snapshot(s_sp_build)'
+need web_server.c 1 '"spec_seq_retry"'
+need web_server.c 1 '"spec_seq_fallback"'
 [ "$RC" -eq 0 ] && echo "wiring: OK"
 exit $RC

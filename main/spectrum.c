@@ -6,6 +6,8 @@
 #include "spectrum_calib_meta.h"  // 1.2.36 H12: снимок хвоста для /api/device
 #include "autosave_skip_plan.h"   // 1.2.36 P1: пропуск записи неизменного current.bin
 #include "spectrum_import_plan.h" // imp_crc32() (host-pure, поточная CRC без массивов)
+#include "seq_copy.h"             // 1.2.36 H1: снимок кэша без SPEC_LOCK (seqlock)
+#include "esp_rom_sys.h"          // esp_rom_delay_us — ожидание чётного seq
 #include "hist_drop_diag.h"
 #include "flash_quiet.h"
 #include "spectrum_hist_stage.h"
@@ -84,8 +86,16 @@ static uint32_t s_tcpot_raw_seq = 0;
 
 // Защищает s_spectrum от гонки между CDC-таском (писатель) и httpd-таском (читатель).
 static SemaphoreHandle_t s_spec_lock;
-#define SPEC_LOCK()   do { if (s_spec_lock) xSemaphoreTake(s_spec_lock, portMAX_DELAY); } while (0)
-#define SPEC_UNLOCK() do { if (s_spec_lock) xSemaphoreGive(s_spec_lock); } while (0)
+// 1.2.36 H1 (A): seqlock поверх мьютекса — КАЖДАЯ секция SPEC_LOCK считается пишущей: seq нечётный
+// внутри секции, чётный вне. Читатель кэша (spectrum_get_snapshot_seq, seq_copy.h) копирует s_spectrum
+// БЕЗ мьютекса и принимает копию, только если seq чётный и не изменился. Барьеры: после seq++ на входе
+// (seq стал видим раньше записей данных) и перед seq++ на выходе (записи данных видимы раньше seq).
+// seq++ вне if — чётность не зависит от того, создан ли мьютекс (до spectrum_init задача одна).
+static volatile uint32_t s_spec_seq;
+static uint32_t s_spec_seq_retry;      // повторы копии (seq изменился во время копии), только задача httpd
+static uint32_t s_spec_seq_fallback;   // снимков запасным путём под мьютексом (seq_copy вернул false)
+#define SPEC_LOCK()   do { if (s_spec_lock) xSemaphoreTake(s_spec_lock, portMAX_DELAY); s_spec_seq++; __sync_synchronize(); } while (0)
+#define SPEC_UNLOCK() do { __sync_synchronize(); s_spec_seq++; if (s_spec_lock) xSemaphoreGive(s_spec_lock); } while (0)
 // Н-5 (release-gate 1.2.29): файловые операции метки reset.mark — под своим
 // мьютексом, НЕ под SPEC_LOCK (#WF-1). Порядок: MARK_LOCK → SPEC_LOCK.
 static SemaphoreHandle_t s_mark_lock;
@@ -911,6 +921,22 @@ bool spectrum_get_snapshot(spectrum_data_t *out)
     SPEC_UNLOCK();
     return out->valid;
 }
+
+// 1.2.36 H1 (A): снимок для кэша /api/spectrum* без мьютекса (seqlock, seq_copy.h) — приём USB
+// (usb_rxw) не ждёт копию 32 КБ. Не вышло за SPEC_SEQ_TRIES — прежний путь под замком.
+#define SPEC_SEQ_TRIES 3
+static void spec_seq_memcpy(void *d, const void *s, size_t n) { memcpy(d, s, n); }
+static void spec_seq_wait(void) { esp_rom_delay_us(200); }   // не vTaskDelay: тик 10 мс
+bool spectrum_get_snapshot_seq(spectrum_data_t *out)
+{
+    if (seq_copy(&s_spec_seq, out, &s_spectrum, sizeof(*out), SPEC_SEQ_TRIES,
+                 spec_seq_memcpy, spec_seq_wait, &s_spec_seq_retry))
+        return out->valid;
+    s_spec_seq_fallback++;
+    return spectrum_get_snapshot(out);
+}
+uint32_t spectrum_spec_seq_retry(void) { return s_spec_seq_retry; }
+uint32_t spectrum_spec_seq_fallback(void) { return s_spec_seq_fallback; }
 
 // У-3: снимок + счётчик переноса опоры под одним локом — иначе водопад может
 // увидеть новые данные со старым счётчиком и выдать строку-скачок.

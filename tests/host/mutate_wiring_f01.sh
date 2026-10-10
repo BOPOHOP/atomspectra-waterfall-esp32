@@ -217,4 +217,12 @@ mut MB_site_lost      spectrum_http_cache.c 's/if (!spec_json_need_build(s_json_
 mut MB_old_full       spectrum_http_cache.c '$a static bool mb_old(void) { return build_json_full(0, 0, 0); }' 'build_json_full('
 mut MB_free_back      spectrum_http_cache.c '$a static void mb_free(void) { free(s_json); }' 'free(s_json);'
 mut MB_json_field     web_server.c '/"spectrum_json_builds", /d' '"spectrum_json_builds"'
+# 1.2.36 H1 (A): seq не двигается на входе / нет барьера на выходе / барьеры seq_copy убраны (MA0 host не ловит) / кэш без seqlock / старый вызов вернулся / запасной путь без счётчика / поля
+mut MA_lock_noseq     spectrum.c '/#define SPEC_LOCK()/s/ s_spec_seq++;//' '#define SPEC_LOCK()'
+mut MA_unlock_nobar   spectrum.c '/#define SPEC_UNLOCK()/s/ __sync_synchronize();//' '#define SPEC_UNLOCK()'
+mut MA0_copy_nobar    seq_copy.h 's/__sync_synchronize();//' '__sync_synchronize();'
+mut MA_cache_lost     spectrum_http_cache.c 's/spectrum_get_snapshot_seq(s_sp_build)/false/' 'spectrum_get_snapshot_seq(s_sp_build)'
+mut MA_cache_old      spectrum_http_cache.c '$a static bool ma_old(void) { return spectrum_get_snapshot(s_sp_build); }' 'spectrum_get_snapshot(s_sp_build)'
+mut MA_fallback_cnt   spectrum.c 's/s_spec_seq_fallback++;/(void)0;/' 's_spec_seq_fallback++;'
+mut MA_retry_field    web_server.c '/"spec_seq_retry", /d' '"spec_seq_retry"'
 exit $RC

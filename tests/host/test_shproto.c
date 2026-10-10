@@ -106,6 +106,7 @@ void live_time_suite(void);                // 1.2.36 OPT-1: одна форму�
 void autosave_skip_plan_suite(void);       // 1.2.36 P1: пропуск записи неизменного current.bin
 void spectrum_meta_fmt_suite(void);          // 1.2.36 B: meta один раз, полный JSON лениво (побайтовое равенство со старым)
 void ttl_plan_suite(void);                // 1.2.36 H5: срок жизни медленной части /api/system
+void seq_copy_suite(void);               // 1.2.36 H1: снимок кэша без SPEC_LOCK (seqlock, seq_copy.h)
 void spectrum_calib_meta_suite(void);      // 1.2.36 H12: поля хвоста снимка для /api/device
 
 // Тестовая команда. CMD_HISTOGRAM (0x01) объявлена в main/atomspectra.h, но она
@@ -335,6 +336,7 @@ int main(void)
     autosave_skip_plan_suite();
     ttl_plan_suite();
     spectrum_meta_fmt_suite();
+    seq_copy_suite();
 
     if (g_failures) {
         printf("\n%d CHECK(S) FAILED\n", g_failures);
