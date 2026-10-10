@@ -91,10 +91,23 @@ window.avgCps = function avgCps(n, l) {
 /* #LOAD-2 (OPT, этап 1): периодический опрос, который молчит в скрытой вкладке. Пока document.hidden - вызовы fn пропускаются
    (не ошибка, счётчики сбоев страниц не трогаются); при возврате вкладки fn вызывается сразу, затем снова по интервалу.
    Без Page Visibility API (document.hidden === undefined) ведёт себя как обычный setInterval. Возвращает id таймера (clearInterval);
-   слушатель visibilitychange остаётся - у вызывающих страниц опросы не отменяются. Имя у функции - для test/web/undef_calls_test.mjs */
+   слушатель visibilitychange остаётся - у вызывающих страниц опросы не отменяются.
+   Защита от повторного входа (риск аудита S1-3, 1.2.36): если fn вернула Promise (async-функция), следующий вызов пропускается, пока он не
+   завершится (resolve ИЛИ reject - ошибка сети флаг не оставляет); возврат вкладки на тике иначе давал два параллельных цикла запросов.
+   Страховка от навсегда зависшего запроса: занятость старше max(30 с, 10 интервалов) снимается. fn без Promise - как раньше. Имя у функции - для test/web/undef_calls_test.mjs */
 window.pollWhileVisible = function pollWhileVisible(fn, ms) {
-  document.addEventListener("visibilitychange", function () { if (!document.hidden) fn(); });
-  return setInterval(function () { if (!document.hidden) fn(); }, ms);
+  var since = 0;
+  var run = function () {
+    if (since && Date.now() - since < Math.max(30000, ms * 10)) return;
+    var r = fn();
+    if (r && typeof r.then === "function") {
+      var mine = since = Date.now();
+      var done = function () { if (since === mine) since = 0; };
+      r.then(done, done);
+    }
+  };
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) run(); });
+  return setInterval(function () { if (!document.hidden) run(); }, ms);
 };
 
 /* #OPT-12 (OPT, этап 1): единственная реализация CSRF-обёрток (раньше loadCsrf/post - 4 копии, gget - 2). Скрипт подключается ДО inline-скрипта

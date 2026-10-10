@@ -33,9 +33,15 @@ mut baseline_undef   index.html undef_calls_test.mjs   -                        
 mut U1_calibsame     index.html undef_calls_test.mjs   's/!calSame(overlayCal,calib)/!calibSame(overlayCal,calib)/' 1
 mut W10_n42_z_flag   saved.html import_parse_test.mjs 's/m\[7\]==="Z"/m[7]==="z"/'  1
 mut baseline_poll    common-time.js poll_visible_test.mjs -                                                0
-mut P1_no_hidden_skip common-time.js poll_visible_test.mjs 's/return setInterval(function () { if (!document.hidden) fn(); }, ms);/return setInterval(function () { fn(); }, ms);/' 3
-mut P2_no_resume_call common-time.js poll_visible_test.mjs 's/function () { if (!document.hidden) fn(); });$/function () {});/' 2
-mut P3_resume_if_hidden common-time.js poll_visible_test.mjs 's/function () { if (!document.hidden) fn(); });$/function () { fn(); });/' 1
+mut P1_no_hidden_skip common-time.js poll_visible_test.mjs 's/return setInterval(function () { if (!document.hidden) run(); }, ms);/return setInterval(function () { run(); }, ms);/' 3
+mut P2_no_resume_call common-time.js poll_visible_test.mjs 's/function () { if (!document.hidden) run(); });$/function () {});/' 2
+mut P3_resume_if_hidden common-time.js poll_visible_test.mjs 's/function () { if (!document.hidden) run(); });$/function () { run(); });/' 1
+# S1-3 (1.2.36): защита от повторного входа в pollWhileVisible
+mut P5_no_reentry_guard common-time.js poll_visible_test.mjs 's/    if (since \&\& Date.now() - since < Math.max(30000, ms \* 10)) return;//' 5
+mut P6_reject_latches common-time.js poll_visible_test.mjs 's/r.then(done, done);/r.then(done, function () {});/' 3
+mut P7_no_stale_release common-time.js poll_visible_test.mjs 's/Date.now() - since < Math.max(30000, ms \* 10)/Date.now() - since < 1e15/' 1
+mut P8_never_busy common-time.js poll_visible_test.mjs 's/var mine = since = Date.now();/var mine = Date.now();/' 5
+mut P9_sync_latch common-time.js poll_visible_test.mjs 's/    var r = fn();/    since = Date.now(); var r = fn();/' 4
 # OPT-12 (общие post/gget в common-time.js; ретрай CSRF) - мутанты common-time.js и обёртки postJson в waterfall.html
 mutw() {   # mutw <имя> <sed> <ожидаемое число FAIL>: мутант waterfall.html (csrf_retry_test берёт вторым аргументом страницу)
     cp web/waterfall.html "$T/w.html"; sed -i "$2" "$T/w.html"; cmp -s web/waterfall.html "$T/w.html" && { echo "== $1: SED DID NOT APPLY"; RC=1; return; }
