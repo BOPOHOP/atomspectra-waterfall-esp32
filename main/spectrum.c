@@ -148,7 +148,13 @@ static uint32_t  s_base_total_counts;
 static uint32_t  s_dev_resets;                    // #7: счётчик сворачиваний с боота шлюза
 static spectrum_hist_stage_t s_hist_stage;        // непрерывность свипа (idle = UINT32_MAX)
 static uint32_t  s_reset_gen;                     // AUD-ASW126 #1/#12: httpd Reset
-static as_last_t s_as_last;    // 1.2.36 P1: CRC+gen последней успешной одноразовой записи current.bin (only autosave task)
+// 1.2.36 P1: CRC+gen последней успешной одноразовой записи current.bin. З-4 (gate pass1): писателей ДВА - spectrum_autosave()
+// (задача автосейва, вся структура после записи и снятия метки) и reset_impl (Сброс, have=false под MARK_LOCK перед unlink
+// current.bin); синхронизации между ними нет. Обычную гонку закрывает gen (s_reset_gen++ до снимка). Остаточное окно: снимок
+// ПОСЛЕ reset_state_zero, его rename до unlink(AUTOSAVE_FILE) в reset_impl, затем автосейв ждёт MARK_LOCK -> файл удалён, метка
+// снята, s_as_last={true,crc,G+1}, и без прибора следующие автосейвы пропускаются до изменения спектра (на старте поднимется bk_*).
+// Нужно вытеснение reset_impl между созданием метки и unlink на всё время записи (~100 мс).
+static as_last_t s_as_last;
 static uint32_t  s_as_skips;   // 1.2.36 P1: пропущенные (неизменные) одноразовые записи, /api/system autosave_skips
 static uint32_t  s_sess_req;   // 1.2.31: запросы новой сессии (Сброс непустого спектра), под SPEC_LOCK
 static uint32_t  s_stage_reset_gen;               // снимок gen на offset==0 (CDC)
