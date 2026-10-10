@@ -32,4 +32,8 @@ mut U4_guid_not_zero   saved.html import_parse_test.mjs 's/0{8}-0{4}-0{4}/1{8}-0
 mut baseline_undef   index.html undef_calls_test.mjs   -                                                      0
 mut U1_calibsame     index.html undef_calls_test.mjs   's/!calSame(overlayCal,calib)/!calibSame(overlayCal,calib)/' 1
 mut W10_n42_z_flag   saved.html import_parse_test.mjs 's/m\[7\]==="Z"/m[7]==="z"/'  1
+mut baseline_poll    common-time.js poll_visible_test.mjs -                                                0
+mut P1_no_hidden_skip common-time.js poll_visible_test.mjs 's/return setInterval(function () { if (!document.hidden) fn(); }, ms);/return setInterval(function () { fn(); }, ms);/' 3
+mut P2_no_resume_call common-time.js poll_visible_test.mjs 's/function () { if (!document.hidden) fn(); });$/function () {});/' 2
+mut P3_resume_if_hidden common-time.js poll_visible_test.mjs 's/function () { if (!document.hidden) fn(); });$/function () { fn(); });/' 1
 exit $RC
