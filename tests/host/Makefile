@@ -63,12 +63,22 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_monitor_window.c \
        test_autosave_mark_retry.c
 
-test: $(SRCS) test_util.h test_import_body_plan test_import_tmp_plan test_n42_time_plan
+test: $(SRCS) test_util.h test_import_body_plan test_import_tmp_plan test_n42_time_plan test_glue_cache test_glue_monitor
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm
 	./test_runner
 	./test_import_body_plan
 	./test_import_tmp_plan
 	./test_n42_time_plan
+	./test_glue_cache
+	./test_glue_monitor
+
+# release-gate 1.2.36 pass1 С-2: тесты СКЛЕЙКИ - сам main/*.c (не копия) с заглушками IDF/FreeRTOS из glue/ (учёт блоков glue_alloc).
+GLUE_DEPS = glue/glue_stubs.c glue/*.h glue/freertos/*.h
+test_glue_cache: test_glue_cache.c glue/glue_cache_env.h $(GLUE_DEPS) ../../main/spectrum_http_cache.c ../../main/spectrum_meta_fmt.h ../../main/spectrum_t1.c
+	$(CC) $(CFLAGS) -Iglue -I. -o test_glue_cache test_glue_cache.c glue/glue_stubs.c ../../main/spectrum_t1.c -lm
+
+test_glue_monitor: test_glue_monitor.c $(GLUE_DEPS) ../../main/monitor.c ../../main/monitor_window.h
+	$(CC) $(CFLAGS) -Iglue -I. -o test_glue_monitor test_glue_monitor.c glue/glue_stubs.c -lm
 
 # #AWF-F4: автономный тест со своим main() (import_tmp_plan.h) — какой файл SPEC_DIR чистить на старте.
 test_import_tmp_plan: test_import_tmp_plan.c ../../main/import_tmp_plan.h
@@ -102,7 +112,7 @@ tsan: test_seq_stress.c ../../main/seq_copy.h
 	TSAN_OPTIONS="halt_on_error=0 exitcode=0" ./test_seq_stress_tsan
 
 clean:
-	rm -f test_runner test_runner_asan bench_json_fmt test_import_body_plan test_import_tmp_plan test_n42_time_plan test_seq_stress test_seq_stress_tsan
+	rm -f test_runner test_runner_asan bench_json_fmt test_import_body_plan test_import_tmp_plan test_n42_time_plan test_seq_stress test_seq_stress_tsan test_glue_cache test_glue_monitor test_glue_cache_oom
 
 # UI-P1: замер до/после старого(vsnprintf-loop)/нового(json_append_uint32_csv)
 # форматтера бинов — числа для отчёта, не гейт ALL PASSED.
