@@ -329,5 +329,9 @@ need spectrum.c 1 'if (autosave_unchanged(&s_as_last, snap_crc, snap_gen)) {'
 need spectrum.c 1 's_as_last = (as_last_t){ true, snap_crc, snap_gen };'
 need spectrum.c 4 's_as_last.have = false;'
 need web_server.c 1 '"autosave_skips"'
+# 1.2.36 H5 (C): медленная часть /api/system (обходы кучи, стеки) и кэш esp_littlefs_info — одна проверка срока ttl_plan.h
+need web_server.c 2 'ttl_expired('
+need web_server.c 1 'if (ttl_expired(s_slow_at, slow_now, SYS_SLOW_PERIOD_US)) {'
+need web_server.c 1 '"heap_walk_age_ms"'
 [ "$RC" -eq 0 ] && echo "wiring: OK"
 exit $RC

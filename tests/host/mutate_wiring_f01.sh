@@ -207,4 +207,8 @@ mut ME_check_lost     spectrum.c '0,/if (autosave_unchanged(&s_as_last, snap_crc
 mut ME_record_lost    spectrum.c 's/s_as_last = (as_last_t){ true, snap_crc, snap_gen };/(void)snap_crc;/' 's_as_last = (as_last_t){ true,'
 mut ME_reset_lost     spectrum.c '0,/s_as_last.have = false;/{/s_as_last.have = false;/d}' 's_as_last.have = false;'
 mut ME_skips_field    web_server.c '/"autosave_skips", /d' '"autosave_skips"'
+# 1.2.36 H5 (C): обход кучи снова на каждый запрос / кэш esp_littlefs_info без общей проверки / поле возраста потеряно
+mut MC_heap_always    web_server.c '0,/if (ttl_expired(s_slow_at, slow_now, SYS_SLOW_PERIOD_US)) {/s//if (1 || ttl_expired(s_slow_at, slow_now, SYS_SLOW_PERIOD_US)) {/' 'ttl_expired(s_slow_at,'
+mut MC_fs_own_cond    web_server.c 's/if (ttl_expired(s_fs_at, now_us, 30LL \* 1000000LL)) {/if (s_fs_at == 0 || now_us - s_fs_at > 30LL * 1000000LL) {/' 'ttl_expired('
+mut MC_age_field      web_server.c '/"heap_walk_age_ms", /d' '"heap_walk_age_ms"'
 exit $RC

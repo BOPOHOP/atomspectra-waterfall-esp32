@@ -48,6 +48,8 @@
 #include "ota_timeout_budget.h"    // D4 (sweep-B задача 1): host-тест границы
 #include "spectrum_import_plan.h"  // 1.2.31: импорт фона (разбор тела ASI1) + путь удаления записи (host-тест)
 #include "n42_time_plan.h"           // #AWF-F2: StartDateTime N42 в UTC с Z (host-тест)
+#include "ttl_plan.h"            // 1.2.36 H5: срок жизни медленной части /api/system (host-тест)
+#define SYS_SLOW_PERIOD_US (10LL * 1000000LL)   // 1.2.36 H5: период обхода кучи/стеков (решение оператора 2026-10-10)
 #include "import_body_plan.h"      // 1.2.32: D-1131-1/#AWF-F3 — план приёма тела /api/import (host-тест)
 _Static_assert(IMPORT_BODY_SIZE == SPEC_IMPORT_SIZE, "import_body_plan.h: IMPORT_BODY_SIZE != SPEC_IMPORT_SIZE");
 #include "snapshot_file.h"         // У4 (раунд 3): слепок DSP — tmp + rename (host-тест)
@@ -1993,13 +1995,32 @@ static esp_err_t handle_system(httpd_req_t *req)
     // историю мониторинга» до сих пор принималось по косвенной цифре. *_free и
     // *_min — счётчики аллокатора; *_largest — ОБХОД блоков кучи в критической
     // секции (У-4): его цена публикуется в heap_walk_us.
-    static uint32_t s_heap_walk_n;   // 1.2.36 Commit 0: число обходов кучи с загрузки (наблюдаемость)
-    s_heap_walk_n++;
-    int64_t walk_t0 = esp_timer_get_time();
-    size_t psram_largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
-    size_t int_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
-    size_t dflt_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DEFAULT);
-    cJSON_AddNumberToObject(root, "heap_walk_us", (double)(esp_timer_get_time() - walk_t0));
+    // 1.2.36 H5 (C): обходы кучи (*_largest, heap_walk_us) и опрос стеков задач — МЕДЛЕННАЯ часть: значение живёт
+    // SYS_SLOW_PERIOD_US (10 с), возраст — heap_walk_age_ms. Счётчики аллокатора (*_free, *_min) читаются на каждый запрос.
+    static const char *const stk_names[] = { "usb_conn", "tcp_rx", "esp_timer", "sys_evt",
+                                             "httpd", "wf_fs", "wf", "usb_rxw", "tcp_tx" };
+    enum { STK_N = sizeof(stk_names) / sizeof(stk_names[0]) };
+    static uint32_t s_heap_walk_n;   // число ОБХОДОВ кучи с загрузки (наблюдаемость, Commit 0)
+    static int64_t  s_slow_at = 0;   // 0 = ещё не читали
+    static size_t   s_psram_largest, s_int_largest, s_dflt_largest;
+    static int64_t  s_walk_us;
+    static int32_t  s_stk_min[STK_N];   // -1 = такой задачи нет
+    int64_t slow_now = esp_timer_get_time();
+    if (ttl_expired(s_slow_at, slow_now, SYS_SLOW_PERIOD_US)) {
+        s_heap_walk_n++;
+        s_psram_largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+        s_int_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+        s_dflt_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DEFAULT);
+        s_walk_us = esp_timer_get_time() - slow_now;
+        for (size_t i = 0; i < STK_N; i++) {
+            TaskHandle_t th = xTaskGetHandle(stk_names[i]);
+            s_stk_min[i] = th ? (int32_t)uxTaskGetStackHighWaterMark(th) : -1;
+        }
+        s_slow_at = slow_now;
+    }
+    size_t psram_largest = s_psram_largest, int_largest = s_int_largest, dflt_largest = s_dflt_largest;
+    cJSON_AddNumberToObject(root, "heap_walk_us", (double)s_walk_us);
+    cJSON_AddNumberToObject(root, "heap_walk_age_ms", (double)((slow_now - s_slow_at) / 1000));
     cJSON_AddNumberToObject(root, "psram_total", heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
     cJSON_AddNumberToObject(root, "psram_free", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     cJSON_AddNumberToObject(root, "psram_largest", psram_largest);
@@ -2021,11 +2042,8 @@ static esp_err_t handle_system(httpd_req_t *req)
     // #AUD-DIAG-1 R5 (часть; F-12/C-38/#RB-STK-1): минимум свободного стека за время работы, байт
     // (ESP-IDF: uxTaskGetStackHighWaterMark — в байтах). Нет задачи — поле не пишется.
     cJSON *stk = cJSON_AddObjectToObject(root, "stack_min_free");
-    static const char *const stk_names[] = { "usb_conn", "tcp_rx", "esp_timer", "sys_evt",
-                                             "httpd", "wf_fs", "wf", "usb_rxw", "tcp_tx" };
-    for (size_t i = 0; stk && i < sizeof(stk_names) / sizeof(stk_names[0]); i++) {
-        TaskHandle_t th = xTaskGetHandle(stk_names[i]);
-        if (th) cJSON_AddNumberToObject(stk, stk_names[i], (double)uxTaskGetStackHighWaterMark(th));
+    for (size_t i = 0; stk && i < STK_N; i++) {
+        if (s_stk_min[i] >= 0) cJSON_AddNumberToObject(stk, stk_names[i], (double)s_stk_min[i]);
     }
     cJSON_AddNumberToObject(root, "uptime_sec", (double)(esp_timer_get_time() / 1000000));
     cJSON_AddBoolToObject(root, "usb_connected", usb_host_cdc_is_connected());
@@ -2042,7 +2060,7 @@ static esp_err_t handle_system(httpd_req_t *req)
     static size_t s_fs_total = 0, s_fs_used = 0;
     static int64_t s_fs_at = 0;                 // 0 = ещё не читали
     int64_t now_us = esp_timer_get_time();
-    if (s_fs_at == 0 || now_us - s_fs_at > 30LL * 1000000LL) {
+    if (ttl_expired(s_fs_at, now_us, 30LL * 1000000LL)) {
         size_t t = 0, u = 0;
         if (esp_littlefs_info("storage", &t, &u) == ESP_OK) {
             s_fs_total = t; s_fs_used = u; s_fs_at = now_us;
