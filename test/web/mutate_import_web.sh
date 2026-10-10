@@ -36,4 +36,19 @@ mut baseline_poll    common-time.js poll_visible_test.mjs -                     
 mut P1_no_hidden_skip common-time.js poll_visible_test.mjs 's/return setInterval(function () { if (!document.hidden) fn(); }, ms);/return setInterval(function () { fn(); }, ms);/' 3
 mut P2_no_resume_call common-time.js poll_visible_test.mjs 's/function () { if (!document.hidden) fn(); });$/function () {});/' 2
 mut P3_resume_if_hidden common-time.js poll_visible_test.mjs 's/function () { if (!document.hidden) fn(); });$/function () { fn(); });/' 1
+# OPT-12 (общие post/gget в common-time.js; ретрай CSRF) - мутанты common-time.js и обёртки postJson в waterfall.html
+mutw() {   # mutw <имя> <sed> <ожидаемое число FAIL>: мутант waterfall.html (csrf_retry_test берёт вторым аргументом страницу)
+    cp web/waterfall.html "$T/w.html"; sed -i "$2" "$T/w.html"; cmp -s web/waterfall.html "$T/w.html" && { echo "== $1: SED DID NOT APPLY"; RC=1; return; }
+    local n; n=$(node test/web/csrf_retry_test.mjs web/common-time.js "$T/w.html" 2>&1 | grep -c '^FAIL ')
+    echo "== $1: $n FAIL (need $3)"; [ "$n" -eq "$3" ] || RC=1
+}
+mut baseline_csrf    common-time.js csrf_retry_test.mjs -                                                  0
+mut C1_post_no_retry common-time.js csrf_retry_test.mjs 's/if(r.status===403){await loadCsrf();opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});r=await fetch(url,opts)}return r}/return r}/' 3
+mut C2_post_no_refresh common-time.js csrf_retry_test.mjs 's/if(r.status===403){await loadCsrf();opts.headers/if(r.status===403){opts.headers/' 3
+mut C3_gget_no_retry common-time.js csrf_retry_test.mjs 's/if(r.status===403){await loadCsrf();r=await f();}return r;}/return r;}/' 1
+mut C4_gget_no_load  common-time.js csrf_retry_test.mjs 's/if(!csrfToken)await loadCsrf();//'              1
+mut C5_post_method   common-time.js csrf_retry_test.mjs 's/opts.method="POST";/opts.method="GET";/'         1
+mut C6_post_twice    common-time.js csrf_retry_test.mjs 's/r=await fetch(url,opts)}return r}/r=await fetch(url,opts);if(r.status===403){await loadCsrf();r=await fetch(url,opts)}}return r}/' 1
+mutw C7_json_no_ctype 's/headers:{"Content-Type":"application\/json"},body:body/headers:{},body:body/' 2
+mutw C8_json_no_stringify 's/body:body?JSON.stringify(body):undefined/body:body/' 1
 exit $RC

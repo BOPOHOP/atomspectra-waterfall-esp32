@@ -239,6 +239,7 @@ nav a,nav span{ padding:12px 10px; }
 </div>
 </div>
 
+<script src="/common-time.js"></script>
 <script>
 "use strict";
 
@@ -1266,12 +1267,10 @@ function updDiskInd(){
  document.getElementById("diskwrap").style.color=dskWritable?"#ff5247":"#f0c45a";
 }
 
-var csrfToken="";
-/* CSRF-1: токен меняется при каждом старте платы — на 403 берём новый и повторяем один раз. */
-async function post(url,body){var f=function(){return fetch(url,{method:"POST",headers:{"X-CSRF-Token":csrfToken,"Content-Type":"application/json"},body:body?JSON.stringify(body):undefined})};var r=await f();if(r.status===403){await loadCsrf();r=await f()}return r}
-async function loadCsrf(){try{var r=await(await fetch("/api/csrf-token")).json();csrfToken=r.token||"";}catch(e){}}
+/* #OPT-12: post(url,body)/loadCsrf/csrfToken - общие в common-time.js (ретрай CSRF там же); здесь только JSON-обёртка: body - объект, всегда Content-Type: application/json */
+function postJson(url,body){return post(url,{headers:{"Content-Type":"application/json"},body:body?JSON.stringify(body):undefined})}
 async function loadPrefix(){try{var r=await(await fetch("/api/boot-config")).json();var e=document.getElementById("fx-prefix");if(e)e.value=r.name_prefix||"";}catch(_){}}
-async function savePrefix(){var e=document.getElementById("fx-prefix"),st=document.getElementById("fx-prefix-st");if(!e)return;st.textContent="…";try{var r=await post("/api/boot-config",{name_prefix:e.value});st.textContent=r.ok?"✓":"✗";}catch(_){st.textContent="✗";}}
+async function savePrefix(){var e=document.getElementById("fx-prefix"),st=document.getElementById("fx-prefix-st");if(!e)return;st.textContent="…";try{var r=await postJson("/api/boot-config",{name_prefix:e.value});st.textContent=r.ok?"✓":"✗";}catch(_){st.textContent="✗";}}
 
 // === #REC-11-A2: автономная выгрузка сегментов (push HTTP POST на адрес оператора) ===
 // Народмон-бан (CLAUDE.md): URL c «narodmon» отвергается ещё в браузере — зеркало
@@ -1312,7 +1311,7 @@ function oflPollStat(){   // лёгкое обновление статисти�
 async function enablePersistNow(){
  var el=document.getElementById("persist"); if(el)el.checked=true;
  try{
-  var r=await post("/api/waterfall/config",{persist:true});
+  var r=await postJson("/api/waterfall/config",{persist:true});
   if(!r.ok)return false;
   await refreshStatus();
   return true;
@@ -1337,24 +1336,24 @@ async function saveOffload(){
  var body={enabled:en,url:url,user:(document.getElementById("oflUser").value||"")};
  var pw=document.getElementById("oflPass").value; if(pw)body.pass=pw;          // пусто → прежний пароль сохраняется
  oflSetMsg("…","");
- post("/api/waterfall/offload",body).then(function(r){return r.json();}).then(function(j){
+ postJson("/api/waterfall/offload",body).then(function(r){return r.json();}).then(function(j){
   if(j&&j.ok){oflSetMsg(t("ofl.saved"),"ok");document.getElementById("oflPass").value="";loadOffload();}
   else{var e=(j&&j.err)||"error";var k={"narodmon-blocked":"ofl.err_blocked","invalid-url":"ofl.err_invalid","nvs":"ofl.err_nvs"}[e]||"ofl.err";oflSetMsg(t(k),"err");}
  }).catch(function(){oflSetMsg(t("ofl.err"),"err");});
 }
 
-document.getElementById("bStart").onclick=async function(){var r=await post("/api/waterfall/start");if(!r.ok)lg("start: HTTP "+r.status);refreshStatus();};
-document.getElementById("bStop").onclick=async function(){var r=await post("/api/waterfall/stop");if(!r.ok)lg("stop: HTTP "+r.status);refreshStatus();};
+document.getElementById("bStart").onclick=async function(){var r=await postJson("/api/waterfall/start");if(!r.ok)lg("start: HTTP "+r.status);refreshStatus();};
+document.getElementById("bStop").onclick=async function(){var r=await postJson("/api/waterfall/stop");if(!r.ok)lg("stop: HTTP "+r.status);refreshStatus();};
 function wfClearDone(){clearRows();draw();refreshStatus();lg(t("log.cleared"));}
 document.getElementById("bClear").onclick=async function(){
  if(!confirm(t("confirm.clear")))return;
- var r=await(await post("/api/waterfall/clear")).json().catch(function(){return{ok:false,err:"busy"};});
+ var r=await(await postJson("/api/waterfall/clear")).json().catch(function(){return{ok:false,err:"busy"};});
  if(r.ok){wfClearDone();return;}
  // #FW-25: сервер отклонил — запись активна. Предложить stop→clear.
  if(r.err==="recording"){
   if(!confirm(t("confirm.clear_rec")))return;
-  await post("/api/waterfall/stop");
-  var r2=await(await post("/api/waterfall/clear")).json().catch(function(){return{ok:false,err:"busy"};});
+  await postJson("/api/waterfall/stop");
+  var r2=await(await postJson("/api/waterfall/clear")).json().catch(function(){return{ok:false,err:"busy"};});
   if(r2.ok){wfClearDone();}else{lg(t("log.clear_err"));refreshStatus();}
   return;
  }
@@ -1363,7 +1362,7 @@ async function applyInterval(){
  var el=document.getElementById("iv");
  var v=parseInt(el.value)||5;
  if(v<5)v=5; if(v>3600)v=3600; el.value=v;
- await post("/api/waterfall/config",{interval:v});refreshStatus();lg(tfmt("log.interval",v));}
+ await postJson("/api/waterfall/config",{interval:v});refreshStatus();lg(tfmt("log.interval",v));}
 document.getElementById("bIv").onclick=applyInterval;
 document.getElementById("iv").onchange=applyInterval;
 document.getElementById("persist").onchange=async function(){
@@ -1381,7 +1380,7 @@ document.getElementById("persist").onchange=async function(){
     if(enEl)enEl.checked=false;
     if(lastOffload.enabled){
      var body={enabled:false,url:lastOffload.url||"",user:lastOffload.user||""};
-     var j=await(await post("/api/waterfall/offload",body)).json();
+     var j=await(await postJson("/api/waterfall/offload",body)).json();
      if(!(j&&j.ok)){oflSetMsg(t("ofl.err"),"err");el.checked=true;if(enEl)enEl.checked=true;return;}
      lastOffload.enabled=false;
      loadOffload();
@@ -1390,7 +1389,7 @@ document.getElementById("persist").onchange=async function(){
   }
   // refreshStatus() перезаписывает чекбокс с платы — не трогаем, если
   // пользователь уже снова кликнул (activeElement == этот же чекбокс).
-  await post("/api/waterfall/config",{persist:want});
+  await postJson("/api/waterfall/config",{persist:want});
   if(document.activeElement!==el)refreshStatus();
  }catch(e){oflSetMsg(t("ofl.err"),"err");el.checked=!want;}
 };
@@ -1806,6 +1805,5 @@ window.addEventListener("storage",function(e){
  if(typeof draw==="function")draw();
 });
 </script>
-<script src="/common-time.js"></script>
 </body>
 </html>

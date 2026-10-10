@@ -342,6 +342,7 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 </div>
 </div>
 
+<script src="/common-time.js"></script>
 <script>
 "use strict";
 var DICT={
@@ -522,7 +523,6 @@ function setLang(l){
  try{refreshSystem();refreshDevice();refreshSpectrum();initTz();}catch(e){}
 }
 
-var csrfToken="";
 var heap=[],cpu=[],flash=[];
 var curFwVer="";
 
@@ -624,11 +624,6 @@ function ghPollReboot(){
 }
 function ac(){return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#34d3c0';}
 
-async function loadCsrf(){try{var r=await(await fetch("/api/csrf-token")).json();csrfToken=r.token||""}catch(e){}}
-/* S-01 (1.2.30): тяжёлые GET требуют CSRF-токен; токен меняется при каждом старте платы — на 403 берём новый и повторяем один раз. */
-async function gget(url,opts){opts=opts||{};if(!csrfToken)await loadCsrf();var f=function(){return fetch(url,Object.assign({},opts,{headers:{"X-CSRF-Token":csrfToken}}))};var r=await f();if(r.status===403){await loadCsrf();r=await f();}return r;}
-/* CSRF-1: токен меняется при каждом старте платы — вкладка, открытая до перезагрузки, получала 403 молча. На 403 берём новый токен и повторяем один раз. */
-async function post(url,opts){opts=opts||{};opts.method="POST";var h=opts.headers||{};opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});var r=await fetch(url,opts);if(r.status===403){await loadCsrf();opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});r=await fetch(url,opts)}return r}
 
 /* AWF-4: Wi-Fi OTA. confirm() -> XHR raw body (progress) -> опрос /api/status
  * до ответа платы после перезагрузки. */
@@ -1082,6 +1077,5 @@ function initOtaDropzone(){
  (window.pollWhileVisible||setInterval)(refreshSpectrum,2000);
 })();
 </script>
-<script src="/common-time.js"></script>
 </body>
 </html>

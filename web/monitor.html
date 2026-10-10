@@ -150,6 +150,7 @@ canvas{ width:100%; height:auto; display:block; }
 
 </div>
 
+<script src="/common-time.js"></script>
 <script>
 "use strict";
 var DICT={
@@ -346,7 +347,7 @@ async function livePoll(){
  if(total!==null)document.getElementById("live-total").textContent=total.toLocaleString("ru-RU");
  if(time!==null) document.getElementById("live-time").textContent=time.toLocaleString("ru-RU");
  /* #MX-13 (1.2.34, #62): средний CPS за набор = total / live (живое время, с, из meta.json); формула avgCps — common-time.js; нет live — «—» */
- var avg=(typeof avgCps==="function")?avgCps(total,r.live):null;  /* common-time.js подключён ниже (:659) — первый опрос может прийти раньше его загрузки */ document.getElementById("live-avg").textContent=(avg===null)?"—":avg.toFixed(2);
+ var avg=(typeof avgCps==="function")?avgCps(total,r.live):null;  /* common-time.js подключён перед inline-скриптом (OPT-12); проверка typeof — на случай сбоя загрузки файла */ document.getElementById("live-avg").textContent=(avg===null)?"—":avg.toFixed(2);
 }
 
 // --- Сбор серии с платы (#MON-1) ---
@@ -656,6 +657,5 @@ async function savePrefix(){var e=document.getElementById("fx-prefix"),st=docume
  window.addEventListener("resize",drawChart);
 })();
 </script>
-<script src="/common-time.js"></script>
 </body>
 </html>

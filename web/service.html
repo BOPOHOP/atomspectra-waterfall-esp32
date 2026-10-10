@@ -149,6 +149,7 @@ pre.preview{ margin-top:12px; font-size:11px; line-height:1.5; color:#9aa496; ba
 
 </div>
 
+<script src="/common-time.js"></script>
 <script>
 "use strict";
 var DICT={
@@ -330,13 +331,7 @@ function setLang(l){
  applyI18n();
 }
 
-var csrfToken="";
 var devConnected=false;
-async function loadCsrf(){try{var r=await(await fetch("/api/csrf-token")).json();csrfToken=r.token||""}catch(e){}}
-/* S-01 (1.2.30): тяжёлые GET требуют CSRF-токен; токен меняется при каждом старте платы — на 403 берём новый и повторяем один раз. */
-async function gget(url,opts){opts=opts||{};if(!csrfToken)await loadCsrf();var f=function(){return fetch(url,Object.assign({},opts,{headers:{"X-CSRF-Token":csrfToken}}))};var r=await f();if(r.status===403){await loadCsrf();r=await f();}return r;}
-/* CSRF-1: токен меняется при каждом старте платы — вкладка, открытая до перезагрузки, получала 403 молча. На 403 берём новый токен и повторяем один раз. */
-async function post(url,opts){opts=opts||{};opts.method="POST";var h=opts.headers||{};opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});var r=await fetch(url,opts);if(r.status===403){await loadCsrf();opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});r=await fetch(url,opts)}return r}
 
 var logEl=document.getElementById("cmd-log");
 var devSeq=0;
@@ -628,6 +623,5 @@ async function doRestore(){
  (window.pollWhileVisible||setInterval)(refreshUsbDiag,10000);
 })();
 </script>
-<script src="/common-time.js"></script>
 </body>
 </html>

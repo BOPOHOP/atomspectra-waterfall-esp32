@@ -209,6 +209,7 @@ nav a,nav span{ padding:12px 10px; }
 </section>
 </div>
 
+<script src="/common-time.js"></script>
 <script>
 "use strict";
 var DICT={
@@ -364,13 +365,9 @@ function calibIsSet(dev){if(!dev)return false;if(typeof dev.calib_set==="boolean
 var devSeq=0;  /* #UI-1: курсор seq последнего показанного ответа прибора (/api/devlog) */
 var failStreak=0;  /* #UI-2: подряд-неудачи fetch спектра; гасим экран только после >=3 (одиночный 503 при конкуренции — не гасит) */
 var PL=65,PT=15,PW=1120,PH=340,PR=PL+PW,PB=PT+PH;
-var csrfToken="";
 var doseK=0;
 
-async function loadCsrf(){try{var r=await(await fetch("/api/csrf-token")).json();csrfToken=r.token||""}catch(e){}}
 async function loadDoseK(){try{var r=await(await fetch("/api/waterfall/dose_k")).json();doseK=(typeof r.dose_k==="number"&&r.dose_k>0)?r.dose_k:0;}catch(e){}}
-/* CSRF-1: токен меняется при каждом старте платы — вкладка, открытая до перезагрузки, получала 403 молча. На 403 берём новый токен и повторяем один раз. */
-async function post(url,opts){opts=opts||{};opts.method="POST";var h=opts.headers||{};opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});var r=await fetch(url,opts);if(r.status===403){await loadCsrf();opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});r=await fetch(url,opts)}return r}
 async function loadPrefix(){try{var r=await(await fetch("/api/boot-config")).json();var e=document.getElementById("fx-prefix");if(e)e.value=r.name_prefix||"";}catch(_){}}
 async function savePrefix(){var e=document.getElementById("fx-prefix"),st=document.getElementById("fx-prefix-st");if(!e)return;st.textContent="…";try{var r=await post("/api/boot-config",{headers:{"Content-Type":"application/json"},body:JSON.stringify({name_prefix:e.value})});st.textContent=r.ok?"✓":"✗";}catch(_){st.textContent="✗";}}
 
@@ -499,7 +496,7 @@ async function update(){
   var tStr=(typeof d.t1==="number")?(''+d.t1):"—";
   if(typeof d.t2==="number" && d.t2>0)tStr+='/'+d.t2;
   if(typeof d.t3==="number" && d.t3>0)tStr+='/'+d.t3;
-  /* #MX-13 (1.2.34, #62): средний CPS по реальному времени набора = импульсы / d.time (тот же знаменатель, что у мгновенного CPS и SMA); формула avgCps — common-time.js (подключён в конце страницы); нет значения — элемент не выводится */
+  /* #MX-13 (1.2.34, #62): средний CPS по реальному времени набора = импульсы / d.time (тот же знаменатель, что у мгновенного CPS и SMA); формула avgCps — common-time.js (подключён перед inline-скриптом, OPT-12); нет значения — элемент не выводится */
   var avgV=(typeof avgCps==="function")?avgCps(d.total,d.time):null;
   var avgHtml=(avgV===null)?"":'<span class="sep">|</span><span title="'+tr("st.avgT")+'"><span class="mut">'+tr("st.avg")+'</span> '+avgV.toFixed(2)+'</span>';
   /* #MX-5/#MX-6 (1.2.31): CPS, счёт, МД и реальное время — только крупными цифрами выше; здесь — остальное */
@@ -1108,6 +1105,5 @@ window.openZoomOverlay=function(sourcesFn,opts){
  });
 })();
 </script>
-<script src="/common-time.js"></script>
 </body>
 </html>

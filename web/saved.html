@@ -123,6 +123,7 @@ canvas{ display:block; width:100%; height:auto; background:#0c0f0b; border-radiu
 
 </div>
 
+<script src="/common-time.js"></script>
 <script>
 "use strict";
 var DICT={
@@ -206,7 +207,7 @@ function setLang(l){
  if(currentIdx>=0&&currentData)try{drawChart(currentData);refreshMeta();}catch(e){}
 }
 
-var csrfToken="", spectra=[], currentIdx=-1, currentData=null, calib=null, currentMeta=null;
+var spectra=[], currentIdx=-1, currentData=null, calib=null, currentMeta=null;
 /* #AWF-12b F2 (release-gate-1.2.28-code.md): здесь калибровка — СОХРАНЁННОГО
    файла (d.calib на спектре), а не платы — по файлу прошивка признак
    calib_set не хранит (снят на момент сохранения, история назад не
@@ -224,9 +225,6 @@ function fmtTime(s){var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),x=s%60;re
 function fmtDate(ts){return ts>0?new Date(ts*1000).toLocaleString(lcl()):'—'}
 function fmtNum(n){return Math.round(n).toLocaleString(lcl())}
 function ch2kev(c){if(!calib)return c;var e=0;for(var i=0;i<calib.length;i++)e+=calib[i]*Math.pow(c,i);return e}
-async function loadCsrf(){try{var r=await(await fetch("/api/csrf-token")).json();csrfToken=r.token||""}catch(e){}}
-/* CSRF-1: токен меняется при каждом старте платы — вкладка, открытая до перезагрузки, получала 403 молча. На 403 берём новый токен и повторяем один раз. */
-async function post(url,opts){opts=opts||{};opts.method="POST";var h=opts.headers||{};opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});var r=await fetch(url,opts);if(r.status===403){await loadCsrf();opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});r=await fetch(url,opts)}return r}
 
 async function loadFlashInfo(){
  try{
@@ -294,7 +292,7 @@ function refreshMeta(){
  var ti=meta?meta.time:(d&&d.time||0);
  document.getElementById("m-counts").textContent=fmtNum(total);
  document.getElementById("m-time").textContent=fmtTime(ti);
- var avg=(typeof avgCps==="function")?avgCps(total,ti):null;  /* #OPT-18: формула avgCps - common-time.js (подключён ниже, :591); нет её - «—» */
+ var avg=(typeof avgCps==="function")?avgCps(total,ti):null;  /* #OPT-18: формула avgCps - common-time.js (подключён перед inline-скриптом, OPT-12); нет её - «—» */
  document.getElementById("m-cps").textContent=avg!==null?avg.toFixed(2):"—";
  document.getElementById("m-saved").textContent=meta?fmtDate(meta.saved_at):"—";
  document.getElementById("m-ch").textContent=d&&d.bins?d.bins.length:"—";
@@ -589,6 +587,5 @@ function overlayOnMain(){
  (window.pollWhileVisible||setInterval)(loadFlashInfo,10000);
 })();
 </script>
-<script src="/common-time.js"></script>
 </body>
 </html>

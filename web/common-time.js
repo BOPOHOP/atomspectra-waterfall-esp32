@@ -96,3 +96,13 @@ window.pollWhileVisible = function pollWhileVisible(fn, ms) {
   document.addEventListener("visibilitychange", function () { if (!document.hidden) fn(); });
   return setInterval(function () { if (!document.hidden) fn(); }, ms);
 };
+
+/* #OPT-12 (OPT, этап 1): единственная реализация CSRF-обёрток (раньше loadCsrf/post - 4 копии, gget - 2). Скрипт подключается ДО inline-скрипта
+   страницы: страницы зовут loadCsrf() в первой же строке старта. csrfToken - общая глобальная переменная (system: XHR-загрузка прошивки,
+   waterfall: backfill читают её напрямую). Имена функций - для test/web/undef_calls_test.mjs; тест ретрая - test/web/csrf_retry_test.mjs. */
+var csrfToken = "";
+async function loadCsrf(){try{var r=await(await fetch("/api/csrf-token")).json();csrfToken=r.token||""}catch(e){}}
+/* CSRF-1: токен меняется при каждом старте платы — вкладка, открытая до перезагрузки, получала 403 молча. На 403 берём новый токен и повторяем один раз. */
+async function post(url,opts){opts=opts||{};opts.method="POST";var h=opts.headers||{};opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});var r=await fetch(url,opts);if(r.status===403){await loadCsrf();opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});r=await fetch(url,opts)}return r}
+/* S-01 (1.2.30): тяжёлые GET требуют CSRF-токен; токен меняется при каждом старте платы — на 403 берём новый и повторяем один раз. */
+async function gget(url,opts){opts=opts||{};if(!csrfToken)await loadCsrf();var f=function(){return fetch(url,Object.assign({},opts,{headers:{"X-CSRF-Token":csrfToken}}))};var r=await f();if(r.status===403){await loadCsrf();r=await f();}return r;}
