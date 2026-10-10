@@ -25,6 +25,8 @@ static char              *s_meta;        // DRAM/PSRAM small meta JSON
 static size_t             s_meta_len;
 static int64_t            s_built_us;
 static uint32_t           s_render_count;
+static volatile uint32_t  s_build_us_last;   // 1.2.36 Commit 0: наблюдаемость (/api/system)
+static volatile uint32_t  s_build_us_max;
 static bool               s_have;
 // Сколько отправок прямо сейчас читают s_json / s_meta / s_sp. Пока счётчик не
 // ноль, пересборка кэша не освобождает буферы — иначе httpd_resp_send() уедет
@@ -223,12 +225,18 @@ void spectrum_http_cache_init(void)
 // вызывается уже с s_building=true и мьютексом ОТПУЩЕННЫМ.
 static bool spectrum_http_cache_finish_build(int64_t now, uint32_t gen_before)
 {
+    int64_t t_build0 = esp_timer_get_time();   // 1.2.36 Commit 0: цена снимка+сборки (без ожидания s_mtx)
     bool snap_ok = s_sp_build && spectrum_get_snapshot(s_sp_build);
     char *nj = NULL, *nm = NULL;
     size_t njl = 0, nml = 0;
     bool build_ok = snap_ok && build_json_full(s_sp_build, &nj, &njl) &&
                      build_json_meta(s_sp_build, &nm, &nml);
     if (!build_ok) { free(nj); nj = NULL; free(nm); nm = NULL; }
+    {
+        int64_t d = esp_timer_get_time() - t_build0;
+        s_build_us_last = (uint32_t)d;
+        if ((uint32_t)d > s_build_us_max) s_build_us_max = (uint32_t)d;
+    }
 
     xSemaphoreTake(s_mtx, portMAX_DELAY);
     s_building = false;
@@ -322,6 +330,9 @@ uint32_t spectrum_http_cache_render_count(void)
 {
     return s_render_count;
 }
+
+uint32_t spectrum_http_cache_build_us_last(void) { return s_build_us_last; }
+uint32_t spectrum_http_cache_build_us_max(void) { return s_build_us_max; }
 
 // esp_http_server хранит указатель, а не копию: значение обязано дожить до
 // httpd_resp_send(). Поэтому буфер принадлежит кадру отправителя, а не этой

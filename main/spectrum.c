@@ -1461,6 +1461,7 @@ static int s_as_slices;
 static int64_t s_as_t0;
 static int s_as_fail_streak;
 static int64_t s_as_last_ok_us;
+static uint32_t s_as_writes;   // 1.2.36 Commit 0: успешные one-shot записи current.bin (наблюдаемость, /api/system autosave_writes)
 static volatile bool s_as_abort;
 static volatile bool s_as_abort_unlink;   // П-6: abort от Сброса — удалить и current.bin
 
@@ -1504,6 +1505,11 @@ void spectrum_autosave_note_ok(void)
 {
     s_as_fail_streak = 0;
     s_as_last_ok_us = esp_timer_get_time();
+}
+
+uint32_t spectrum_autosave_writes(void)
+{
+    return s_as_writes;
 }
 
 int spectrum_autosave_fail_streak(void)
@@ -1793,6 +1799,7 @@ void spectrum_autosave(void)
         http_io_gate_leave();
         reset_mark_clear_if_current(snap_gen);
         spectrum_autosave_note_ok();
+        s_as_writes++;
     }
     free(snap);
 }

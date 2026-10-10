@@ -2006,6 +2006,8 @@ static esp_err_t handle_system(httpd_req_t *req)
     // историю мониторинга» до сих пор принималось по косвенной цифре. *_free и
     // *_min — счётчики аллокатора; *_largest — ОБХОД блоков кучи в критической
     // секции (У-4): его цена публикуется в heap_walk_us.
+    static uint32_t s_heap_walk_n;   // 1.2.36 Commit 0: число обходов кучи с загрузки (наблюдаемость)
+    s_heap_walk_n++;
     int64_t walk_t0 = esp_timer_get_time();
     size_t psram_largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
     size_t int_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
@@ -2086,6 +2088,11 @@ static esp_err_t handle_system(httpd_req_t *req)
     cJSON_AddBoolToObject(root,   "sntp_synced",    net_time_sntp_synced());
     // #PERF-1/#PERF-2: observability for multi-tab spectrum cache + HEAVY gate
     cJSON_AddNumberToObject(root, "spectrum_render_count", (double)spectrum_http_cache_render_count());
+    // 1.2.36 Commit 0: счётчики для замера «до/после» (цена пересборки кэша, обходы кучи, записи автосейва)
+    cJSON_AddNumberToObject(root, "spectrum_build_us", (double)spectrum_http_cache_build_us_last());
+    cJSON_AddNumberToObject(root, "spectrum_build_us_max", (double)spectrum_http_cache_build_us_max());
+    cJSON_AddNumberToObject(root, "heap_walk_n", (double)s_heap_walk_n);
+    cJSON_AddNumberToObject(root, "autosave_writes", (double)spectrum_autosave_writes());
     cJSON_AddBoolToObject(root,   "http_heavy_busy", http_io_gate_busy());
     cJSON_AddNumberToObject(root, "http_heavy_rejects", (double)http_io_gate_reject_count());
     char *json = cJSON_PrintUnformatted(root);

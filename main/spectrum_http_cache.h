@@ -26,6 +26,10 @@ const spectrum_data_t *spectrum_http_cache_data(void);
 
 uint32_t spectrum_http_cache_render_count(void);
 
+// 1.2.36 Commit 0: цена последней / максимальной пересборки (снимок + сборка JSON), мкс.
+uint32_t spectrum_http_cache_build_us_last(void);
+uint32_t spectrum_http_cache_build_us_max(void);
+
 // Send cached full JSON (builds once per TTL). Adds X-Spectrum-Render-Count.
 esp_err_t spectrum_http_send_json(httpd_req_t *req);
 

@@ -312,5 +312,7 @@ line wifi_manager.c 1 's_unverified = false;'
 line wifi_manager.c 1 'if (s_got_ip_this_boot) return;   // #AWF-WIFI-1 (W-4): IP уже была — таймер опоздал к GOT_IP'
 c=$(lnum wifi_manager.c 'if (s_fallback_timer) esp_timer_stop(s_fallback_timer);'); d=$(lnum wifi_manager.c 's_unverified = false;')
 { [ "$c" -gt 0 ] && [ "$d" -gt 0 ] && [ "$c" -lt "$d" ]; } || { echo "WIRING FAIL wifi_manager.c: остановка fallback-таймера (:$c) должна быть раньше сброса s_unverified (:$d)"; RC=1; }
+# 1.2.36 Commit 0: счётчики замера «до/после» в /api/system (наблюдаемость; спека §3 Commit 0)
+need web_server.c 1 '"spectrum_build_us"'
 [ "$RC" -eq 0 ] && echo "wiring: OK"
 exit $RC

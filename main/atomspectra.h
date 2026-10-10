@@ -345,6 +345,8 @@ void spectrum_autosave_yield(void);
 void spectrum_autosave_note_fail(void);
 void spectrum_autosave_note_ok(void);
 int  spectrum_autosave_fail_streak(void);
+/** 1.2.36 Commit 0: число успешных one-shot записей current.bin с загрузки (наблюдаемость). */
+uint32_t spectrum_autosave_writes(void);
 /** Seconds since last successful autosave; -1 if never. */
 int  spectrum_autosave_age_sec(void);
 void spectrum_restore_autosave(void);
