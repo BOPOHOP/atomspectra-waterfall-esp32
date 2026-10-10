@@ -1229,6 +1229,29 @@ static esp_err_t handle_common_time_js(httpd_req_t *req)
     extern const uint8_t common_time_js_start[] asm("_binary_common_time_js_start");
     extern const uint8_t common_time_js_end[]   asm("_binary_common_time_js_end");
     httpd_resp_set_type(req, "application/javascript");
+    // 1.2.36 (риск аудита S1-1): скрипт вырос до ~17 КБ и уходил целиком на каждый показ страницы. ETag = первые 8 байт SHA-256 ELF
+    // (app_elf_sha256: меняется с любой пересборкой, а не только с version.txt -> после OTA старый кеш не подходит) + no-cache:
+    // браузер всегда ревалидирует, при совпадении получает 304 без тела. Версия в URL не нужна (страницы не меняются).
+    char etag[20];
+    const esp_app_desc_t *ad = esp_app_get_description();
+    if (ad) {
+        static const char hx[] = "0123456789abcdef";
+        etag[0] = '"';
+        for (int i = 0; i < 8; i++) {
+            etag[1 + 2 * i] = hx[ad->app_elf_sha256[i] >> 4];
+            etag[2 + 2 * i] = hx[ad->app_elf_sha256[i] & 15];
+        }
+        etag[17] = '"';
+        etag[18] = 0;
+        httpd_resp_set_hdr(req, "ETag", etag);
+        char inm[24];
+        if (httpd_req_get_hdr_value_str(req, "If-None-Match", inm, sizeof(inm)) == ESP_OK && strcmp(inm, etag) == 0) {
+            httpd_resp_set_status(req, "304 Not Modified");
+            httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+            return httpd_resp_send(req, NULL, 0);
+        }
+    }
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
     httpd_resp_send(req, (const char *)common_time_js_start, common_time_js_end - common_time_js_start);
     return ESP_OK;
 }
