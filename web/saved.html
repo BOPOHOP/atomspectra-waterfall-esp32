@@ -585,7 +585,7 @@ function overlayOnMain(){
  await loadCalib();
  await loadFlashInfo();
  await loadList();
- setInterval(loadFlashInfo,10000);
+ (window.pollWhileVisible||setInterval)(loadFlashInfo,10000);
 })();
 </script>
 <script src="/common-time.js"></script>

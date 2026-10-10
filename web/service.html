@@ -623,9 +623,9 @@ async function doRestore(){
  await refreshSystem();
  await loadDbglog();
  await refreshUsbDiag();
- setInterval(refreshSystem,3000);
+ (window.pollWhileVisible||setInterval)(refreshSystem,3000);
  // #FW-53: реже, чем system — счётчики меняются плавно, лишний вызов не нужен
- setInterval(refreshUsbDiag,10000);
+ (window.pollWhileVisible||setInterval)(refreshUsbDiag,10000);
 })();
 </script>
 <script src="/common-time.js"></script>

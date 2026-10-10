@@ -1077,9 +1077,9 @@ function initOtaDropzone(){
  await loadBootConfig();
  await loadDoseK();
  await loadDoseCurveStatus();
- setInterval(refreshSystem,2000);
- setInterval(refreshDevice,5000);
- setInterval(refreshSpectrum,2000);
+ (window.pollWhileVisible||setInterval)(refreshSystem,2000);
+ (window.pollWhileVisible||setInterval)(refreshDevice,5000);
+ (window.pollWhileVisible||setInterval)(refreshSpectrum,2000);
 })();
 </script>
 <script src="/common-time.js"></script>

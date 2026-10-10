@@ -652,7 +652,7 @@ async function savePrefix(){var e=document.getElementById("fx-prefix"),st=docume
  // #MON-1: живая панель + синк серии с платы раз в 2 с; серия дотягивается
  // циклом внутри syncSeries — пропуски фона/F5/закрытой вкладки закрываются сами.
  livePoll(); syncSeries();
- setInterval(function(){ livePoll(); syncSeries(); },2000);
+ (window.pollWhileVisible||setInterval)(function(){ livePoll(); syncSeries(); },2000);
  window.addEventListener("resize",drawChart);
 })();
 </script>

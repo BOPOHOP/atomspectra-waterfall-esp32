@@ -87,3 +87,12 @@ window.heavyDownload = async function heavyDownload(url, fallbackName) {
 window.avgCps = function avgCps(n, l) {
   return (typeof n === "number" && typeof l === "number" && isFinite(n) && isFinite(l) && l > 0) ? n / l : null;
 };
+
+/* #LOAD-2 (OPT, этап 1): периодический опрос, который молчит в скрытой вкладке. Пока document.hidden - вызовы fn пропускаются
+   (не ошибка, счётчики сбоев страниц не трогаются); при возврате вкладки fn вызывается сразу, затем снова по интервалу.
+   Без Page Visibility API (document.hidden === undefined) ведёт себя как обычный setInterval. Возвращает id таймера (clearInterval);
+   слушатель visibilitychange остаётся - у вызывающих страниц опросы не отменяются. Имя у функции - для test/web/undef_calls_test.mjs */
+window.pollWhileVisible = function pollWhileVisible(fn, ms) {
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) fn(); });
+  return setInterval(function () { if (!document.hidden) fn(); }, ms);
+};

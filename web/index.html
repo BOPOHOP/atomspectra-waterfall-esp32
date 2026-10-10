@@ -926,8 +926,8 @@ function viewRestore(){try{var o=JSON.parse(localStorage.getItem("aswf-view")||"
  loadPrefix();
  try{var oi=parseInt(localStorage.getItem("aswf-ovl"),10);var qo=/[?&]overlay=(\d+)/.exec(location.search);if(qo)oi=parseInt(qo[1],10);if(oi>=0)loadOverlay(oi)}catch(e){}   /* ?overlay=N из saved.html */
  populateNucPanel();
- setInterval(update,2000);   /* #UI-15: 1000→2000ms — chunked /api/spectrum.json ел сокеты при F5; макс. uri_handlers=11 */
- setInterval(loadFlashInfo,10000);
+ (window.pollWhileVisible||setInterval)(update,2000);   /* #UI-15: 1000→2000ms — chunked /api/spectrum.json ел сокеты при F5; макс. uri_handlers=11 */
+ (window.pollWhileVisible||setInterval)(loadFlashInfo,10000);
  loadFlashInfo();   // #FIELD-6: сразу показать режим Indoor/Outdoor в шапке
  clearCanvas();
  initCalib();
