@@ -3,6 +3,7 @@
 #include "spectrum_http_cache.h"  // #AWF-12b R5: spectrum_http_cache_invalidate
 #include "spectrum_t1.h"
 #include "live_time.h"      // 1.2.36 OPT-1: одна формула живого времени
+#include "spectrum_calib_meta.h"  // 1.2.36 H12: снимок хвоста для /api/device
 #include "hist_drop_diag.h"
 #include "flash_quiet.h"
 #include "spectrum_hist_stage.h"
@@ -2102,4 +2103,14 @@ bool spectrum_get_meta(spectrum_data_t *out)
            sizeof(spectrum_data_t) - off);
     SPEC_UNLOCK();
     return out->valid;
+}
+
+// 1.2.36 H12: то же для /api/device без буфера sizeof(spectrum_data_t) (~33 КБ) на каждый запрос —
+// только поля хвоста, нужные ответу (spectrum_calib_meta.h, ~110 Б на стеке httpd).
+bool spectrum_get_calib_meta(spectrum_calib_meta_t *m)
+{
+    SPEC_LOCK();
+    spectrum_calib_meta_from(&s_spectrum, m);
+    SPEC_UNLOCK();
+    return m->valid;
 }

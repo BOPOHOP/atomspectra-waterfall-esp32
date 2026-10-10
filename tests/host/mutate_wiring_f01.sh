@@ -196,6 +196,10 @@ mut MF_old_copy_cache  spectrum_http_cache.c '$a static float compute_live_time(
 mut MF_call_web        web_server.c         '0,/spectrum_compute_live_time(sp)/s//(float)sp->total_time_sec/' 'spectrum_compute_live_time(sp)'
 mut MF_call_cache      spectrum_http_cache.c '0,/spectrum_compute_live_time(sp)/s//(float)sp->total_time_sec/' 'spectrum_compute_live_time(sp)'
 mut MF_wrapper         spectrum.c           's/return live_time_calc(sp->total_time_sec/return 0.0f; live_time_calc(sp->total_time_sec/' 'live_time_calc(sp->total_time_sec'
+# 1.2.36 H12 (D): handle_device вернулся на полный снимок / потерял вызов / снимок без копии полей
+mut MD_site_lost      web_server.c         's/bool have_sp = spectrum_get_calib_meta(&m);/bool have_sp = false;/' 'spectrum_get_calib_meta(&m)'
+mut MD_old_getter     web_server.c         '$a static void md_mut(spectrum_data_t *p) { spectrum_get_meta(p); }' 'spectrum_get_meta('
+mut MD_from_lost      spectrum.c           's/spectrum_calib_meta_from(&s_spectrum, m);/memset(m, 0, sizeof(*m));/' 'spectrum_calib_meta_from(&s_spectrum, m)'
 # 1.2.36 Commit 0: поле замера в /api/system
 mut MC0_build_us_field web_server.c '/"spectrum_build_us", /d' '"spectrum_build_us"'
 exit $RC

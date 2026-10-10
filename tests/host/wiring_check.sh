@@ -318,6 +318,10 @@ need spectrum_http_cache.c 0 'static float compute_live_time('
 need web_server.c 4 'spectrum_compute_live_time(sp)'
 need spectrum_http_cache.c 2 'spectrum_compute_live_time(sp)'
 need spectrum.c 1 'return live_time_calc(sp->total_time_sec, sp->total_counts, sp->lost_impulses,'
+# 1.2.36 H12 (D): /api/device — поля хвоста снимка в локальной структуре (spectrum_calib_meta.h), без буфера sizeof(spectrum_data_t)
+need web_server.c 1 'bool have_sp = spectrum_get_calib_meta(&m);'
+need web_server.c 0 'spectrum_get_meta('
+need spectrum.c 1 'spectrum_calib_meta_from(&s_spectrum, m);'
 # 1.2.36 Commit 0: счётчики замера «до/после» в /api/system (наблюдаемость; спека §3 Commit 0)
 need web_server.c 1 '"spectrum_build_us"'
 [ "$RC" -eq 0 ] && echo "wiring: OK"

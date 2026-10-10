@@ -437,4 +437,7 @@ void round2_wiring_sites_suite(void)
     w_site("../../main/spectrum_http_cache.c", "spectrum_http_cache_finish_build", "spec_cache_gen_stale(", NULL);
     /* М6 гейт OTA в автосохранении */
     w_site("../../main/main.c", "app_main", "if (ota_busy_is_busy())", "spectrum_autosave_fail_streak()");
+    /* 1.2.36 H12: /api/device берёт поля хвоста снимка в локальную структуру, без буфера ~33 КБ */
+    w_site("../../main/web_server.c", "handle_device", "spectrum_get_calib_meta(", NULL);
+    w_absent("../../main/web_server.c", "handle_device", "malloc(");
 }

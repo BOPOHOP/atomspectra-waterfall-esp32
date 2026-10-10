@@ -12,6 +12,7 @@
 #include "net_time.h"       // #FIELD-5: guard-логика источника времени
 #include "monitor.h"        // #MON-1: серия CPS-мониторинга (/api/monitor/series)
 #include "spectrum_http_cache.h"  // #PERF-1: 2s snapshot cache + meta/binary
+#include "spectrum_calib_meta.h"  // 1.2.36 H12: /api/device без буфера 33 КБ
 #include "http_io_gate.h"         // #PERF-2: HEAVY lane gate
 #include "flash_quiet.h"          // М7: координация записи слепка DSP с autosave (#FW-8)
 #include "backup_plan.h"          // issue #52: разбор имени снимка в /api/backup/*
@@ -1891,11 +1892,12 @@ static esp_err_t handle_device(httpd_req_t *req)
     // #PERF-4: только метаданные — bins[] здесь не нужны (используются
     // serial_number/calibration/calib_order/calib_valid). Полный снимок держал
     // SPEC_LOCK на 32 КБ и отнимал 8,5 % свипов у приёма USB.
-    spectrum_data_t *sp = malloc(sizeof(*sp));
-    bool have_sp = sp && spectrum_get_meta(sp);
+    // 1.2.36 H12: и буфер на ~33 КБ под этот снимок не выделяется — пять нужных полей
+    // (~110 Б) лежат в локальной структуре на стеке httpd.
+    spectrum_calib_meta_t m;
+    bool have_sp = spectrum_get_calib_meta(&m);
     cJSON *root = cJSON_CreateObject();
     if (!root) {  // P2-7: при OOM cJSON_Add* разыменует NULL
-        free(sp);
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
         return ESP_FAIL;
     }
@@ -1919,14 +1921,14 @@ static esp_err_t handle_device(httpd_req_t *req)
         cJSON_AddBoolToObject(root, "tc_on", di->tc_on);
         cJSON_AddNumberToObject(root, "tp", di->tp);
     }
-    if (have_sp && sp->serial_number[0])
-        cJSON_AddStringToObject(root, "serial", sp->serial_number);
-    if (have_sp && sp->calib_valid) {
+    if (have_sp && m.serial_number[0])
+        cJSON_AddStringToObject(root, "serial", m.serial_number);
+    if (have_sp && m.calib_valid) {
         cJSON *cal = cJSON_CreateArray();
-        for (int i = 0; i <= sp->calib_order; i++)
-            cJSON_AddItemToArray(cal, cJSON_CreateNumber(sp->calibration[i]));
+        for (int i = 0; i <= m.calib_order; i++)
+            cJSON_AddItemToArray(cal, cJSON_CreateNumber(m.calibration[i]));
         cJSON_AddItemToObject(root, "calibration", cal);
-        cJSON_AddNumberToObject(root, "calib_order", sp->calib_order);
+        cJSON_AddNumberToObject(root, "calib_order", m.calib_order);
     }
     // #AWF-12b F2 (release-gate-1.2.28-code.md): ОДИН признак "калибровка
     // задана" для прошивки и всех страниц — тот же предикат, что гейт
@@ -1944,7 +1946,7 @@ static esp_err_t handle_device(httpd_req_t *req)
     // локами, куда мог встать разбор дампа usb_rxw, давало "calib_set":true
     // без "calibration"). have_sp==false — тоже "не задана".
     cJSON_AddBoolToObject(root, "calib_set",
-        have_sp && !calib_is_missing(sp->calibration, CALIB_COEFFS, sp->calib_valid));
+        have_sp && !calib_is_missing(m.calibration, CALIB_COEFFS, m.calib_valid));
     // F12/RO1 (release-gate-1.2.28-code-fixes.md:128): счётчик отвергнутых
     // -cal (CRC ok, нули/NaN) — web/service.html "Считать" сверяет "до"/"после".
     cJSON_AddNumberToObject(root, "calib_reject_seq", spectrum_get_calib_reject_seq());
@@ -1954,7 +1956,6 @@ static esp_err_t handle_device(httpd_req_t *req)
     httpd_resp_sendstr(req, json ? json : "{\"ok\":false,\"err\":\"oom\"}");
     free(json);
     cJSON_Delete(root);
-    free(sp);
     return ESP_OK;
 }
 
