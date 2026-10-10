@@ -5,11 +5,21 @@
 HERE=$(cd "$(dirname "$0")" && pwd)   # каталог скрипта (spec_writers.py) - до cd в main/
 cd "${1:-$(dirname "$0")/../../main}" || exit 2   # $1 — другой каталог (проверка на копии)
 RC=0
+# release-gate 1.2.36 pass2 С-2: отсутствующий проверяемый файл = WIRING FAIL. Раньше grep -c на нём давал пустое n, [ -ne ]
+# падал с ошибкой, и проверка молча проходила (нет spectrum_http_cache.c -> «wiring: OK»). Перечень - первые аргументы need/line
+# этого скрипта; одна строка на отсутствующий файл, и гейт кончается сразу (awk-проверки без файла тоже молчали бы).
+miss=0
+for f in $(sed -nE 's/^ *(need|line) +([^ $]+) .*/\2/p' "$HERE/wiring_check.sh" | sort -u); do
+    [ -f "$f" ] || { echo "WIRING FAIL $f: файл отсутствует"; miss=1; }
+done
+[ "$miss" -eq 0 ] || exit 1
 need() {   # need <file> <count> <fixed string>
+    [ -f "$1" ] || { echo "WIRING FAIL $1: файл отсутствует"; RC=1; return; }
     local n; n=$(grep -cF -- "$3" "$1")
     if [ "$n" -ne "$2" ]; then echo "WIRING FAIL $1: '$3' x$n (need $2)"; RC=1; fi
 }
 line() {   # line <file> <count> <строка кода целиком, без отступа> — не подстрока и не в комментарии (разбор pass4 P3-1)
+    [ -f "$1" ] || { echo "WIRING FAIL $1: файл отсутствует"; RC=1; return; }
     local n; n=$(awk -v s="$3" '{c=$0; sub(/\r$/,"",c); sub(/^[ \t]+/,"",c)} c == s {n++} END{print n+0}' "$1")
     if [ "$n" -ne "$2" ]; then echo "WIRING FAIL $1: line '$3' x$n (need $2)"; RC=1; fi
 }

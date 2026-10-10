@@ -5,7 +5,7 @@ set -u; cd "$(dirname "$0")"; T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; RC=0
 mut() {   # mut <name> <file> <sed-expr> ; "baseline" — без правки
     rm -rf "$T/main" "$T/web" "$T/scripts"; cp -r ../../main "$T/main"; cp -r ../../web "$T/web"; mkdir "$T/scripts"; cp ../../scripts/waterfall_n42.py ../../scripts/wf_pull_client.py "$T/scripts/"   # web/ — для need ../web/index.html
     sed -i 's/\r$//' "$T"/main/*.c "$T"/main/*.h "$T"/web/*.html 2>/dev/null   # рабочая копия на Windows в CRLF — мутанты с якорем $ не применялись
-    if [ "$1" != baseline ]; then cp "$T/main/$2" "$T/o"; sed -i "$3" "$T/main/$2"
+    if [ "$1" != baseline ]; then cp "$T/main/$2" "$T/o"; if [ "$3" = RM ]; then rm -f "$T/main/$2"; else sed -i "$3" "$T/main/$2"; fi   # RM - файла нет (pass2 С-2)
         cmp -s "$T/o" "$T/main/$2" && { echo "== $1: SED DID NOT APPLY"; RC=1; return; }; fi
     local out n; out=$(bash wiring_check.sh "$T/main"); n=$(grep -c 'WIRING FAIL' <<<"$out")
     local want=1; [ "$1" = baseline ] && want=0
@@ -241,4 +241,9 @@ mut MW_q32           web_server.c 's/char q\[META_Q_MAX\];/char q[32];/' 'char q
 mut MW_no414          web_server.c '/HTTPD_414_URI_TOO_LONG, "query too long"/d' 'HTTPD_414_URI_TOO_LONG'
 mut MW_no400          web_server.c 's/if (mw == META_W_BAD) { httpd_resp_send_err/if (0) { httpd_resp_send_err/' 'META_W_BAD'
 mut MW_parse_lost     web_server.c 's/? meta_w_parse(q, \&w) : META_W_NONE;/? META_W_NONE : META_W_NONE;/' 'meta_w_parse'
+# pass2 С-2: проверяемого файла нет -> ровно одна строка WIRING FAIL (раньше нет spectrum_http_cache.c / index.html -> «wiring: OK»)
+mut MF_rm_cache      spectrum_http_cache.c RM 'spectrum_http_cache.c: файл отсутствует'
+mut MF_rm_web        web_server.c          RM 'web_server.c: файл отсутствует'
+mut MF_rm_index      ../web/index.html     RM '../web/index.html: файл отсутствует'
+mut MF_rm_wifi       wifi_manager.c        RM 'wifi_manager.c: файл отсутствует'
 exit $RC
