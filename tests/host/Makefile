@@ -61,7 +61,8 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_spectrum_meta_fmt.c \
        test_seq_copy.c \
        test_monitor_window.c \
-       test_autosave_mark_retry.c
+       test_autosave_mark_retry.c \
+       test_meta_w_parse.c
 
 test: $(SRCS) test_util.h test_import_body_plan test_import_tmp_plan test_n42_time_plan test_glue_cache test_glue_monitor test_glue_cache_oom
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm

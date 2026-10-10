@@ -109,6 +109,7 @@ void ttl_plan_suite(void);                // 1.2.36 H5: срок жизни ме
 void seq_copy_suite(void);               // 1.2.36 H1: снимок кэша без SPEC_LOCK (seqlock, seq_copy.h)
 void spectrum_calib_meta_suite(void);      // 1.2.36 H12: поля хвоста снимка для /api/device
 void monitor_window_suite(void);           // 1.2.36 #MX-14: SMA из кольца платы (окно Σdur, хвост meta.json?w=)
+void meta_w_parse_suite(void);             // З-5 (gate 1.2.36 pass1): ?w= у meta.json
 void autosave_mark_retry_suite(void);      // C-1 (gate 1.2.36 pass1): skip of autosave retries reset.mark removal
 
 // Тестовая команда. CMD_HISTOGRAM (0x01) объявлена в main/atomspectra.h, но она
@@ -341,6 +342,7 @@ int main(void)
     seq_copy_suite();
     monitor_window_suite();
     autosave_mark_retry_suite();
+    meta_w_parse_suite();
 
     if (g_failures) {
         printf("\n%d CHECK(S) FAILED\n", g_failures);

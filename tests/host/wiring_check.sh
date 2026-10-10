@@ -364,7 +364,12 @@ need web_server.c 1 '"spec_seq_retry"'
 need web_server.c 1 '"spec_seq_fallback"'
 # 1.2.36 #MX-14 (G): SMA из кольца платы - meta.json?w=W: обход кольца под s_lock без копии, хвост sma/sma_w/sma_n, ответ чанками с терминатором
 need monitor.c 1 'k = mon_window_sum(s_ring, s_cap, s_head, s_count, w_sec, &sc, &sd);'
-need web_server.c 1 'monitor_window((uint32_t)(w > UINT32_MAX ? UINT32_MAX : w), &sc, &sd, &n);'
+need web_server.c 1 'monitor_window(w, &sc, &sd, &n);'
+# З-5 (gate 1.2.36 pass1): ?w= - буфер META_Q_MAX, длинный запрос 414, плохой w 400, разбор только meta_w_parse
+need web_server.c 1 'char q[META_Q_MAX];'
+need web_server.c 1 'if (ql >= sizeof(q)) { httpd_resp_send_err(req, HTTPD_414_URI_TOO_LONG, "query too long"); return ESP_FAIL; }'
+need web_server.c 1 '? meta_w_parse(q, &w) : META_W_NONE;'
+need web_server.c 1 'if (mw == META_W_BAD) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "w: decimal seconds"); return ESP_FAIL; }'
 need web_server.c 1 'return spectrum_http_send_meta_sma(req, sc, sd, n);'
 need spectrum_http_cache.c 1 'size_t tl = spec_meta_sma_tail('
 need spectrum_http_cache.c 1 'e = httpd_resp_send_chunk(req, NULL, 0);'
