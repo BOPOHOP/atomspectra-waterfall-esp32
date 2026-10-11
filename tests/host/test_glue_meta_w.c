@@ -44,7 +44,12 @@ static char g_q128_nw[129];    /* exactly 128 chars, no w: one more than the 127
 static char g_long_w[200];     /* w first, then a long tail: 180 chars */
 static char g_q127_w[128];     /* exactly 127 chars with w first: still fits */
 static char g_cut_w[200];      /* the digits of w cross the 127-char boundary */
-static char g_cut_key[200];    /* "&w" ends exactly at the 127-char boundary, "=600" is beyond */
+static char g_cut_key[200];    /* "&w" ends exactly at the 127-char boundary, "=600" is beyond: the key is not seen -> meta without SMA (gate pass3 S-1) */
+static char g_cut_width[134];  /* 133 chars, no w: "&w" ends at the boundary, the tail is "idth=1" (S-1) */
+static char g_cut_wait[135];   /* 134 chars, no w: "&wait=1&x", the cut is after "&w" (S-1) */
+static char g_cut_wq[129];     /* 128 chars, no w: the tail is "&wq" (S-1) */
+static char g_val_edge[140];   /* "&w=600&x=1": the digits of w end exactly at the 127-char boundary (Z-2: "600" cannot be told from "6001") */
+static char g_val_fit[140];    /* the same, one char earlier: "&" terminates the digits inside the buffer, w fits */
 
 static void fill(char *dst, size_t len, const char *head, const char *tail) {
     /* dst = head + 'A'... + tail, total length len (fbclid-like alnum filler) */
@@ -66,6 +71,16 @@ static void build_queries(void) {
     fill(g_cut_key, 140, "_=1760140800123&fbclid=", "");
     memcpy(g_cut_key + 125, "&w=600", 6);                    /* the 127-char prefix ends with "&w" */
     g_cut_key[131] = '&';
+    fill(g_cut_width, 133, "_=1760140800123&fbclid=", "");
+    memcpy(g_cut_width + 125, "&width=1", 8);
+    fill(g_cut_wait, 134, "_=1760140800123&fbclid=", "");
+    memcpy(g_cut_wait + 125, "&wait=1&x", 9);
+    fill(g_cut_wq, 128, "_=1760140800123&fbclid=", "");
+    memcpy(g_cut_wq + 125, "&wq", 3);
+    fill(g_val_edge, 131, "_=1760140800123&fbclid=", "");
+    memcpy(g_val_edge + 121, "&w=600&x=1", 10);               /* digits at 124..126: the last one is the last char the buffer holds */
+    fill(g_val_fit, 131, "_=1760140800123&fbclid=", "");
+    memcpy(g_val_fit + 120, "&w=600&x=1", 10);                /* digits at 123..125, "&" at 126: fits */
 }
 
 static void run_case(const mcase_t *c, const char *expect_sma) {
@@ -120,7 +135,14 @@ int main(void) {
         { g_long_w, W_SMA, 600 },
         /* CASES_BEHAVIOUR_END */
         { g_cut_w, W_414, 0 },
-        { g_cut_key, W_414, 0 },
+        /* gate pass3 S-1: "&w" at the cut is not yet the key w ("&width=", "&wait=", "&wq") - meta as in 3c73979 */
+        { g_cut_key, W_META, 0 },
+        { g_cut_width, W_META, 0 },
+        { g_cut_wait, W_META, 0 },
+        { g_cut_wq, W_META, 0 },
+        /* gate pass3 Z-2: "w=" is visible and its digits reach the cut: the value may go on - 414; one char earlier it fits */
+        { g_val_edge, W_414, 0 },
+        { g_val_fit, W_SMA, 600 },
     };
     int n = (int)(sizeof cases / sizeof cases[0]);
     for (int i = 0; i < n; i++) run_case(&cases[i], expect_sma);

@@ -73,13 +73,19 @@ static void test_cut(void) {
     /* обрезанная строка (trunc=1): значение w доходит до места обрезки или обрезка прошла по ключу - CUT (414) */
     res_case_t("meta_w_cut", "_=1760140800123&utm_source=telegram&fbclid=IwAR2xYz&w=1728", 1, META_W_CUT);
     res_case_t("meta_w_cut", "_=1760140800123&utm_source=telegram&w=", 1, META_W_CUT);
-    res_case_t("meta_w_cut", "_=1760140800123&utm_source=telegram&w", 1, META_W_CUT);
-    res_case_t("meta_w_cut", "w", 1, META_W_CUT);
+    res_case_t("meta_w_cut", "_=1&w=600", 1, META_W_CUT);        /* Z-2: digits reach the cut - the value may go on */
+    ok_case_t("meta_w_cut", "_=1&w=600&x=1", 1, 600);            /* Z-2: '&' ends the digits inside the buffer - fits */
     /* w уместился целиком (за ним '&') - обычный разбор; w в уместившейся части нет - NONE (как 3c73979) */
     ok_case_t("meta_w_cut", "w=600&_=1760140800123&utm_source=telegram&fbclid=IwAR2xYz", 1, 600);
     ok_case_t("meta_w_cut", "_=1760140800123&w=100&fbclid=IwAR2xYz", 1, 100);
     res_case_t("meta_w_cut", "_=1760140800123&utm_source=telegram&fbclid=IwAR2xYz", 1, META_W_NONE);
     res_case_t("meta_w_cut", "_=1760140800123&utm_source=telegram&aw", 1, META_W_NONE);
+    /* gate pass3 S-1: the cut after "&w" - the key is not seen (may be "&width=", "&wait=", "&wq"): NONE, meta without SMA as in 3c73979 */
+    res_case_t("meta_w_cut_key", "_=1760140800123&utm_source=telegram&w", 1, META_W_NONE);
+    res_case_t("meta_w_cut_key", "w", 1, META_W_NONE);
+    res_case_t("meta_w_cut_key", "_=1&wq", 1, META_W_NONE);
+    res_case_t("meta_w_cut_key", "_=1&wait=1&x", 1, META_W_NONE);
+    res_case_t("meta_w_cut_key", "_=1&width=1", 1, META_W_NONE);
     /* не целое уже в уместившейся части - BAD (meta без SMA), обрезка не важна */
     res_case_t("meta_w_cut", "_=1760140800123&w=1e+2", 1, META_W_BAD);
     /* те же строки без обрезки */
