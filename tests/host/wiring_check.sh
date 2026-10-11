@@ -378,9 +378,11 @@ need monitor.c 1 'k = mon_window_sum(s_ring, s_cap, s_head, s_count, w_sec, &sc,
 need meta_w_handler.h 1 'monitor_window(w, &sc, &sd, &n);'
 # З-5 (gate 1.2.36 pass1): ?w= - буфер META_Q_MAX, длинный запрос 414, плохой w 400, разбор только meta_w_parse
 need meta_w_handler.h 1 'char q[META_Q_MAX];'
-need meta_w_handler.h 1 'if (ql >= sizeof(q)) { httpd_resp_send_err(req, HTTPD_414_URI_TOO_LONG, "query too long"); return ESP_FAIL; }'
-need meta_w_handler.h 1 '? meta_w_parse(q, &w) : META_W_NONE;'
-need meta_w_handler.h 1 'if (mw == META_W_BAD) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "w: decimal seconds"); return ESP_FAIL; }'
+# pass2 З-1: 414 только когда буфер не вместил сам w (META_W_CUT); 400 нет (w не целое - прежний meta); обрезанная строка разбирается
+need meta_w_handler.h 1 'if (qe == ESP_OK || qe == ESP_ERR_HTTPD_RESULT_TRUNC) mw = meta_w_parse(q, qe != ESP_OK, &w);'
+need meta_w_handler.h 1 'if (mw == META_W_CUT) { httpd_resp_send_err(req, HTTPD_414_URI_TOO_LONG, "w: query too long"); return ESP_FAIL; }'
+need meta_w_handler.h 0 'HTTPD_400_BAD_REQUEST'
+need meta_w_handler.h 0 'if (ql >= sizeof(q))'
 need meta_w_handler.h 1 'return spectrum_http_send_meta_sma(req, sc, sd, n);'
 need web_server.c 1 'return meta_w_handle(req);'   # pass2 З-3: обработчик - в meta_w_handler.h (исполняет test_glue_meta_w)
 need spectrum_http_cache.c 1 'size_t tl = spec_meta_sma_tail('

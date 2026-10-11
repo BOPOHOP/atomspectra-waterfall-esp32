@@ -12,19 +12,23 @@ static esp_err_t meta_w_handle(httpd_req_t *req)
 {
     // #PERF-1: meta without 8192 bins (system/monitor tiles)
     // 1.2.36 #MX-14: ?w=<секунд наборного времени> - к meta добавляется SMA окна W из кольца платы (ответ идёт чанками);
-    // без w - прежняя отправка с Content-Length, байты те же. З-5 (gate pass1): разбор meta_w_parse.h - длинный запрос 414,
-    // w не из одних цифр 400 (раньше оба случая молча отдавали meta без SMA, а "-5"/"+5"/" 5" принимались).
+    // pass2 З-1 (совместимость с 3c73979): без w ЛЮБОЙ длины и с w не целым ("1e+21", "-5", "12.5") - прежний meta без SMA
+    // (200, байты те же); 414 - только когда буфер q не вместил сам w (meta_w_parse -> META_W_CUT). Строка длиннее буфера
+    // приходит обрезанной с ESP_ERR_HTTPD_RESULT_TRUNC (IDF v5.4 httpd_parse.c: strlcpy) и разбирается по уместившейся части.
     char q[META_Q_MAX];
     size_t ql = httpd_req_get_url_query_len(req);
-    if (ql >= sizeof(q)) { httpd_resp_send_err(req, HTTPD_414_URI_TOO_LONG, "query too long"); return ESP_FAIL; }
     uint32_t w = 0;
-    meta_w_t mw = (ql > 0 && httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK) ? meta_w_parse(q, &w) : META_W_NONE;
-    if (mw == META_W_BAD) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "w: decimal seconds"); return ESP_FAIL; }
+    meta_w_t mw = META_W_NONE;
+    if (ql > 0) {
+        esp_err_t qe = httpd_req_get_url_query_str(req, q, sizeof(q));
+        if (qe == ESP_OK || qe == ESP_ERR_HTTPD_RESULT_TRUNC) mw = meta_w_parse(q, qe != ESP_OK, &w);
+    }
+    if (mw == META_W_CUT) { httpd_resp_send_err(req, HTTPD_414_URI_TOO_LONG, "w: query too long"); return ESP_FAIL; }
     if (mw == META_W_OK) {
         uint64_t sc = 0;
         uint32_t sd = 0, n = 0;
         monitor_window(w, &sc, &sd, &n);   // вне s_mtx кэша
         return spectrum_http_send_meta_sma(req, sc, sd, n);
     }
-    return spectrum_http_send_meta(req);
+    return spectrum_http_send_meta(req);   // нет w / w не целое - прежний meta.json без SMA
 }

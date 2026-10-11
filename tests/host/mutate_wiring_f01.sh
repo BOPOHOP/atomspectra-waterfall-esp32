@@ -238,9 +238,12 @@ mut MG_chunk_noterm   spectrum_http_cache.c 's/e = httpd_resp_send_chunk(req, NU
 # З-5 (gate 1.2.36 pass1): буфер запроса снова 32 / длинный запрос молча / плохой w молча / прежний strtoul вместо meta_w_parse
 mut MSW_unlocked_write spectrum.c '$a void msw_bad(void) { s_spectrum.cps = 0; }' 'spec_writers'   # passA З-1: запись s_spectrum вне SPEC_LOCK
 mut MW_q32           meta_w_handler.h 's/char q\[META_Q_MAX\];/char q[32];/' 'char q[META_Q_MAX];'
-mut MW_no414          meta_w_handler.h '/HTTPD_414_URI_TOO_LONG, "query too long"/d' 'HTTPD_414_URI_TOO_LONG'
-mut MW_no400          meta_w_handler.h 's/if (mw == META_W_BAD) { httpd_resp_send_err/if (0) { httpd_resp_send_err/' 'META_W_BAD'
-mut MW_parse_lost     meta_w_handler.h 's/? meta_w_parse(q, \&w) : META_W_NONE;/? META_W_NONE : META_W_NONE;/' 'meta_w_parse'
+mut MW_no414          meta_w_handler.h '/HTTPD_414_URI_TOO_LONG, "w: query too long"/d' 'HTTPD_414_URI_TOO_LONG'
+# pass2 З-1: вернулись 400 на нецелое w / 414 на любой длинный запрос / обрезанная строка не разбирается
+mut MW_400_back       meta_w_handler.h '/if (mw == META_W_CUT) {/i\    if (mw == META_W_BAD) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "w"); return ESP_FAIL; }' 'HTTPD_400_BAD_REQUEST'
+mut MW_len414_back    meta_w_handler.h '/^    uint32_t w = 0;/i\    if (ql >= sizeof(q)) { httpd_resp_send_err(req, HTTPD_414_URI_TOO_LONG, "q"); return ESP_FAIL; }' 'if (ql >= sizeof(q))'
+mut MW_trunc_lost     meta_w_handler.h 's/if (qe == ESP_OK || qe == ESP_ERR_HTTPD_RESULT_TRUNC) mw/if (qe == ESP_OK) mw/' 'ESP_ERR_HTTPD_RESULT_TRUNC'
+mut MW_parse_lost     meta_w_handler.h 's/mw = meta_w_parse(q, qe != ESP_OK, \&w);/mw = META_W_NONE;/' 'meta_w_parse'
 mut MW_wrap_lost      web_server.c 's/return meta_w_handle(req);/return spectrum_http_send_meta(req);/' 'meta_w_handle(req)'   # pass2 З-3: обработчик из meta_w_handler.h не вызывается
 # pass2 С-2: проверяемого файла нет -> ровно одна строка WIRING FAIL (раньше нет spectrum_http_cache.c / index.html -> «wiring: OK»)
 mut MF_rm_cache      spectrum_http_cache.c RM 'spectrum_http_cache.c: файл отсутствует'

@@ -1,4 +1,4 @@
-// З-3 (release-gate-1.2.36-code-pass2): сам обработчик meta.json?w= (main/meta_w_handler.h) на хосте - код ответа, байты тела, окно SMA; meta - живой захват стенда 00000081 через сам spectrum_http_cache.c.
+// З-3 + З-1 (release-gate-1.2.36-code-pass2): сам обработчик meta.json?w= (main/meta_w_handler.h) на хосте - код ответа, байты тела, окно SMA; meta - живой захват стенда 00000081 через сам spectrum_http_cache.c.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -110,12 +110,14 @@ int main(void) {
         { "_=1760140800123&w=2000", W_SMA, 2000 },
         { g_q127_w, W_SMA, 600 },
         /* CASES_BEHAVIOUR_BEGIN */
-        { "w=abc&_=1760140800123", W_400, 0 },
-        { "w=1e+21&_=1760140800123", W_400, 0 },      /* JS w*iv for a huge interval */
-        { "w=12.5&_=1760140800123", W_400, 0 },
-        { g_q128_nw, W_414, 0 },
-        { g_long_nw, W_414, 0 },
-        { g_long_w, W_414, 0 },
+        /* pass2 З-1: как 3c73979 - w не целое и запрос без w любой длины -> прежний meta (200); w уместился в буфер -> SMA */
+        { "w=abc&_=1760140800123", W_META, 0 },
+        { "w=1e+21&_=1760140800123", W_META, 0 },     /* JS w*iv for a huge interval */
+        { "w=12.5&_=1760140800123", W_META, 0 },
+        { "w=-5&_=1760140800123", W_META, 0 },
+        { g_q128_nw, W_META, 0 },
+        { g_long_nw, W_META, 0 },
+        { g_long_w, W_SMA, 600 },
         /* CASES_BEHAVIOUR_END */
         { g_cut_w, W_414, 0 },
         { g_cut_key, W_414, 0 },
