@@ -11,7 +11,7 @@
 #include "spectrogram.h"    // #FIELD-5: spectrogram_time_synced() при установке времени
 #include "net_time.h"       // #FIELD-5: guard-логика источника времени
 #include "monitor.h"        // #MON-1: серия CPS-мониторинга (/api/monitor/series)
-#include "meta_w_parse.h"   // З-5 (gate 1.2.36 pass1): ?w= у meta.json
+#include "meta_w_handler.h" // З-5 (gate 1.2.36 pass1) / З-3 (pass2): обработчик meta.json?w= (разбор meta_w_parse.h)
 #include "spectrum_http_cache.h"  // #PERF-1: 2s snapshot cache + meta/binary
 #include "spectrum_calib_meta.h"  // 1.2.36 H12: /api/device без буфера 33 КБ
 #include "http_io_gate.h"         // #PERF-2: HEAVY lane gate
@@ -239,23 +239,8 @@ static esp_err_t handle_spectrum(httpd_req_t *req)
 
 static esp_err_t handle_spectrum_meta(httpd_req_t *req)
 {
-    // #PERF-1: meta without 8192 bins (system/monitor tiles)
-    // 1.2.36 #MX-14: ?w=<секунд наборного времени> - к meta добавляется SMA окна W из кольца платы (ответ идёт чанками);
-    // без w - прежняя отправка с Content-Length, байты те же. З-5 (gate pass1): разбор meta_w_parse.h - длинный запрос 414,
-    // w не из одних цифр 400 (раньше оба случая молча отдавали meta без SMA, а "-5"/"+5"/" 5" принимались).
-    char q[META_Q_MAX];
-    size_t ql = httpd_req_get_url_query_len(req);
-    if (ql >= sizeof(q)) { httpd_resp_send_err(req, HTTPD_414_URI_TOO_LONG, "query too long"); return ESP_FAIL; }
-    uint32_t w = 0;
-    meta_w_t mw = (ql > 0 && httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK) ? meta_w_parse(q, &w) : META_W_NONE;
-    if (mw == META_W_BAD) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "w: decimal seconds"); return ESP_FAIL; }
-    if (mw == META_W_OK) {
-        uint64_t sc = 0;
-        uint32_t sd = 0, n = 0;
-        monitor_window(w, &sc, &sd, &n);   // вне s_mtx кэша
-        return spectrum_http_send_meta_sma(req, sc, sd, n);
-    }
-    return spectrum_http_send_meta(req);
+    // #PERF-1: meta without 8192 bins; 1.2.36 #MX-14 ?w= - SMA окна W. Разбор и ответы - meta_w_handler.h (gate pass2 З-3: исполняется host-тестом склейки)
+    return meta_w_handle(req);
 }
 
 // #DT-4 / 1.2.36 OPT-1: живое время — метод BecqMoni (эталон Am6er, Utils/LiveTime.cs): мёртвое время на

@@ -128,6 +128,23 @@ esp_err_t httpd_resp_send_chunk(httpd_req_t *r, const char *buf, ssize_t len) {
     return ESP_OK;
 }
 
+/* pass2 З-3: IDF v5.4 httpd_parse.c:909-955 - length of the query field; strlcpy(buf, qry, MIN(buf_len, len + 1)), TRUNC if it did not fit */
+size_t httpd_req_get_url_query_len(httpd_req_t *r) {
+    return (r && r->query) ? strlen(r->query) : 0;
+}
+
+esp_err_t httpd_req_get_url_query_str(httpd_req_t *r, char *buf, size_t buf_len) {
+    if (!r || !buf) return ESP_ERR_INVALID_ARG;
+    if (!r->query) return ESP_ERR_NOT_FOUND;
+    size_t need = strlen(r->query) + 1;
+    size_t n = buf_len < need ? buf_len : need;
+    if (n > 0) {
+        memcpy(buf, r->query, n - 1);
+        buf[n - 1] = 0;
+    }
+    return buf_len < need ? ESP_ERR_HTTPD_RESULT_TRUNC : ESP_OK;
+}
+
 esp_err_t httpd_resp_send_err(httpd_req_t *r, httpd_err_code_t code, const char *msg) {
     r->status = (int)code;
     (void)msg;

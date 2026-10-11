@@ -13,7 +13,11 @@ typedef struct httpd_req {
     char *body; size_t body_len; size_t body_cap;
     int sends, chunks, terminated;
     char render_hdr[24];
+    const char *query;     /* pass2 З-3: query string without '?' (NULL - no query) */
 } httpd_req_t;
+#define ESP_ERR_HTTPD_RESULT_TRUNC 0xb004   /* IDF v5.4 esp_http_server.h:86 */
+size_t httpd_req_get_url_query_len(httpd_req_t *r);
+esp_err_t httpd_req_get_url_query_str(httpd_req_t *r, char *buf, size_t buf_len);
 /* pass2 С-1: when not NULL, called by httpd_resp_send() after the body is recorded (a second request during a send) */
 extern void (*glue_on_send)(httpd_req_t *r);
 void glue_req_init(httpd_req_t *r);

@@ -232,15 +232,16 @@ mut MG_idx_hist_back  ../web/index.html    '$a <!-- smaHist -->' 'smaHist'
 mut MG_mon_oldavg     ../web/monitor.html  's/var smaAll=smaRatioSeries(/var smaAll=smaMeanSeries(/' 'var smaAll=smaRatioSeries('
 mut MG_ct_def_lost    ../web/common-time.js 's/out.push(sd > 0 ? sc \/ sd : 0);/out.push(sc \/ (sd || 1));/' 'out.push(sd > 0'
 mut MG_ring_lost      monitor.c            's/k = mon_window_sum(s_ring, s_cap, s_head, s_count, w_sec, \&sc, \&sd);/k = 0;/' 'mon_window_sum('
-mut MG_site_lost      web_server.c         's/return spectrum_http_send_meta_sma(req, sc, sd, n);/return spectrum_http_send_meta(req);/' 'spectrum_http_send_meta_sma('
+mut MG_site_lost      meta_w_handler.h         's/return spectrum_http_send_meta_sma(req, sc, sd, n);/return spectrum_http_send_meta(req);/' 'spectrum_http_send_meta_sma('
 mut MG_tail_lost      spectrum_http_cache.c 's/size_t tl = spec_meta_sma_tail(/size_t tl = 0 * spec_meta_sma_tail(/' 'spec_meta_sma_tail('
 mut MG_chunk_noterm   spectrum_http_cache.c 's/e = httpd_resp_send_chunk(req, NULL, 0);/e = ESP_OK;/' 'httpd_resp_send_chunk(req, NULL, 0)'
 # З-5 (gate 1.2.36 pass1): буфер запроса снова 32 / длинный запрос молча / плохой w молча / прежний strtoul вместо meta_w_parse
 mut MSW_unlocked_write spectrum.c '$a void msw_bad(void) { s_spectrum.cps = 0; }' 'spec_writers'   # passA З-1: запись s_spectrum вне SPEC_LOCK
-mut MW_q32           web_server.c 's/char q\[META_Q_MAX\];/char q[32];/' 'char q[META_Q_MAX];'
-mut MW_no414          web_server.c '/HTTPD_414_URI_TOO_LONG, "query too long"/d' 'HTTPD_414_URI_TOO_LONG'
-mut MW_no400          web_server.c 's/if (mw == META_W_BAD) { httpd_resp_send_err/if (0) { httpd_resp_send_err/' 'META_W_BAD'
-mut MW_parse_lost     web_server.c 's/? meta_w_parse(q, \&w) : META_W_NONE;/? META_W_NONE : META_W_NONE;/' 'meta_w_parse'
+mut MW_q32           meta_w_handler.h 's/char q\[META_Q_MAX\];/char q[32];/' 'char q[META_Q_MAX];'
+mut MW_no414          meta_w_handler.h '/HTTPD_414_URI_TOO_LONG, "query too long"/d' 'HTTPD_414_URI_TOO_LONG'
+mut MW_no400          meta_w_handler.h 's/if (mw == META_W_BAD) { httpd_resp_send_err/if (0) { httpd_resp_send_err/' 'META_W_BAD'
+mut MW_parse_lost     meta_w_handler.h 's/? meta_w_parse(q, \&w) : META_W_NONE;/? META_W_NONE : META_W_NONE;/' 'meta_w_parse'
+mut MW_wrap_lost      web_server.c 's/return meta_w_handle(req);/return spectrum_http_send_meta(req);/' 'meta_w_handle(req)'   # pass2 З-3: обработчик из meta_w_handler.h не вызывается
 # pass2 С-2: проверяемого файла нет -> ровно одна строка WIRING FAIL (раньше нет spectrum_http_cache.c / index.html -> «wiring: OK»)
 mut MF_rm_cache      spectrum_http_cache.c RM 'spectrum_http_cache.c: файл отсутствует'
 mut MF_rm_web        web_server.c          RM 'web_server.c: файл отсутствует'
