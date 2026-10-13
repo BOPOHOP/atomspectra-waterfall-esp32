@@ -242,7 +242,12 @@ need ../web/index.html   1 'var sma=(typeof d.sma==="number")?d.sma:null;var es=
 need ../web/index.html   0 'smaHist'                                                      # #MX-14: своя история вкладки удалена
 need ../web/index.html   0 'smaCps('                                                      # #MX-14: расчёт в браузере удалён
 need ../web/index.html   1 'fetch("/api/spectrum/meta.json?w="+smaWinSec())'              # #MX-14: окно W уходит на плату тем же запросом meta
-need ../web/monitor.html 1 'var smaAll=smaRatioSeries('                                   # #MX-14: «Мониторинг» - то же определение (common-time.js)
+need ../web/index.html   1 'es.textContent=(sma===null)?"":" / "+sma.toFixed(2);'        # 1.2.36: после дроби только число (единица CPS - статический span)
+need ../web/index.html   0 '" / SMA "'                                                   # 1.2.36: подписи «SMA <окно> с» нет
+need ../web/index.html   0 'aswf-sma-win'                                                # 1.2.36: множитель «отсчётов» убран, окно = интервал усреднения
+need ../web/index.html   1 'if(st.iv>=1)iv=Math.min(Math.floor(st.iv),86400)}catch(e){}return iv}'   # 1.2.36: smaWinSec = iv из aswf-mon-sess
+need ../web/monitor.html 1 'id="interval" min="1" max="86400" step="1" value="10" oninput="saveState()"'   # 1.2.36: смена интервала сразу в localStorage (до Старта)
+need ../web/monitor.html 1 'var smaAll=smaRatioSeries('                                 # #MX-14: «Мониторинг» - то же определение (common-time.js)
 need ../web/monitor.html 0 'acc+=samples[i].cps'                                          # #MX-14: среднее отношений вёдер удалено
 need ../web/common-time.js 1 'out.push(sd > 0 ? sc / sd : 0);'                            # #MX-14: smaRatioSeries - отношение сумм
 need ../web/monitor.html 1 'aswf-sma-win"),e=document.getElementById("smaWin")'           # MX-8: окно SMA помнится

@@ -80,7 +80,7 @@ header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
 <section class="panel">
 <div class="ctl">
 <label><span data-i18n="ctl.interval">Интервал усреднения, с</span>
-<input type="number" id="interval" min="1" max="86400" step="1" value="10"></label>
+<input type="number" id="interval" min="1" max="86400" step="1" value="10" oninput="saveState()"></label>
 <button class="btn green" id="startBtn" onclick="toggleRun()" data-i18n="ctl.start">Старт</button>
 <button class="btn" id="clearBtn" onclick="clearData()" data-i18n="ctl.clear">Очистить</button>
 <button class="btn" id="csvBtn" onclick="exportCsv()" data-i18n="ctl.csv">Выгрузить CSV</button>
@@ -235,7 +235,7 @@ var anchorWall=0, anchorEnd=0;
 // --- Персист (#MON-1: localStorage — НЕ источник истории, только параметры
 // сессии; сама история восстанавливается с платы дотягиванием по seq) ---
 var LS_KEY="aswf-mon-sess";
-(function(){try{var v=localStorage.getItem("aswf-sma-win"),e=document.getElementById("smaWin");if(v&&e)e.value=v}catch(_){}})();   // #MX-8: окно SMA помнится и читается страницей спектра
+(function(){try{var v=localStorage.getItem("aswf-sma-win"),e=document.getElementById("smaWin");if(v&&e)e.value=v}catch(_){}})();   // #MX-8: окно SMA графика помнится (главная его больше не читает: её окно = интервал усреднения)
 function saveState(){
  try{
   localStorage.setItem(LS_KEY,JSON.stringify({r:running,iv:intervalSec(),ss:sessStart,sp:sessStopSeq,ep:boardEpoch,aw:anchorWall,ae:anchorEnd}));

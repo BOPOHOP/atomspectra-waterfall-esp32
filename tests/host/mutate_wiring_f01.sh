@@ -228,7 +228,9 @@ mut MA_fallback_cnt   spectrum.c 's/s_spec_seq_fallback++;/(void)0;/' 's_spec_se
 mut MA_retry_field    web_server.c '/"spec_seq_retry", /d' '"spec_seq_retry"'
 # 1.2.36 #MX-14 (G): окно W не уходит на плату / в браузер вернулась своя история / «Мониторинг» без общего определения / обход кольца и хвост потеряны / нет терминатора чанков
 mut MG_idx_nowin      ../web/index.html    's/meta.json?w="+smaWinSec())/meta.json")/' 'meta.json?w='
-mut MG_idx_hist_back  ../web/index.html    '$a <!-- smaHist -->' 'smaHist'
+mut MG_idx_label_back ../web/index.html    's/" \/ "+sma.toFixed(2)/" \/ SMA "+W+"s "+sma.toFixed(2)/' 'es.textContent=(sma===null)'
+mut MG_mon_iv_nosave  ../web/monitor.html  's/ oninput="saveState()"//' 'oninput="saveState()"'
+mut MG_idx_hist_back ../web/index.html    '$a <!-- smaHist -->' 'smaHist'
 mut MG_mon_oldavg     ../web/monitor.html  's/var smaAll=smaRatioSeries(/var smaAll=smaMeanSeries(/' 'var smaAll=smaRatioSeries('
 mut MG_ct_def_lost    ../web/common-time.js 's/out.push(sd > 0 ? sc \/ sd : 0);/out.push(sc \/ (sd || 1));/' 'out.push(sd > 0'
 mut MG_ring_lost      monitor.c            's/k = mon_window_sum(s_ring, s_cap, s_head, s_count, w_sec, \&sc, \&sd);/k = 0;/' 'mon_window_sum('
