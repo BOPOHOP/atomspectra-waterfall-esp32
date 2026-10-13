@@ -2941,7 +2941,7 @@ void web_server_init(void)
     //   grep -cE '^\s*reg\(server' main/web_waterfall.c   (+1 на /ws/waterfall)
     config.max_uri_handlers = 90;
     config.stack_size = 8192;
-    config.max_open_sockets = 11;        // из 16 LWIP-сокетов; запас для tcp_bridge + sntp
+    config.max_open_sockets = 19;        // из 24 LWIP-сокетов; запас для tcp_bridge + sntp
     config.lru_purge_enable = true;      // при исчерпании пула закрыть LRU-соединение, не отказывать (errno 23)
     config.uri_match_fn = httpd_uri_match_wildcard;
     // #UI-15 P0: чистим WS-реестр при ЛЮБОМ закрытии сокета (RST/FIN/LRU/F5);

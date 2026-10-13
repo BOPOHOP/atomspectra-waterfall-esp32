@@ -34,7 +34,9 @@ CONFIG_USB_HOST_ENABLE_ENUM_FILTER_CALLBACK=y
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
 
 # Network — больше сокетов для частого polling Web UI (иначе httpd accept errno 23)
-CONFIG_LWIP_MAX_SOCKETS=16
+CONFIG_LWIP_MAX_SOCKETS=24
+# MEMP_NUM_TCP_PCB жёстко ограничивает число TCP pcb (включая TIME_WAIT) при MEMP_MEM_MALLOC, lwip memp.c: должно расти вместе с сокетами
+CONFIG_LWIP_MAX_ACTIVE_TCP=24
 # #FW-46: имя платы в DHCP (косметика) — atomspectra-gw вместо дефолтного "espressif".
 CONFIG_LWIP_LOCAL_HOSTNAME="atomspectra-gw"
 
