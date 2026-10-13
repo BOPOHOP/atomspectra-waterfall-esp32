@@ -27,6 +27,19 @@ check run outside the web server thread (the web interface no longer freezes whi
   on the same network can occupy the single download slot for the duration of an export. The waterfall window, settings
   backup and update check do require it (`X-CSRF-Token`).
 
+### A one-off minute-long loss of HTTP replies on a live network - cause not established (seen on 1.2.36-rc2)
+
+In live run R2 (build rc2, 70 min) all 36 errors were 5 s timeouts within a window of about 72 s (09:06:30-09:07:42 UTC):
+neither the test rig nor an independent `curl` got an HTTP reply, while `ping` was answered 81 times out of 81, there was no reboot
+(`uptime` continuous), free heap was 729 KB and Wi-Fi was connected according to the snapshots. Build rc2 had no socket
+diagnostics, so the state of the sockets and the watchdog at that moment was not recorded.
+The event did not recur in the five following runs (R3-R6 on rc1-rc4, about 5 h in total) or in the diagnostic build (about 17 h).
+The cause is not established; no fix is promised and none is claimed in 1.2.36.
+- **[H]** A hypothesis, not an established fact: the event matches, by its signs, the "minute-long hang" of phase A2 of the
+  preliminary check (11 Oct); the 19-socket pool and poll jitter do not cause it (both were present in builds rc3, rc4 and in the
+  diagnostic build, where the event did not recur). Whether it was chance or depends on a build without diagnostics is not known.
+- **Workaround:** refresh the page (F5) or wait until replies return (in the observed case about a minute, no board reboot).
+
 ### Background import (Saved -> "Import background...") - limits in 1.2.31
 
 - Exactly 8192 channels are accepted (board JSON, BecqMoni XML, N42, board CSV); 1024/4096 channels are rejected. CSV carries no
