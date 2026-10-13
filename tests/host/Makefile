@@ -64,9 +64,10 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_autosave_mark_retry.c \
        test_meta_w_parse.c
 
-test: $(SRCS) test_util.h test_import_body_plan test_import_tmp_plan test_n42_time_plan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w
+test: $(SRCS) test_util.h socket_budget_check.sh ../../main/socket_budget.h test_import_body_plan test_import_tmp_plan test_n42_time_plan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm
 	./test_runner
+	bash ./socket_budget_check.sh
 	./test_import_body_plan
 	./test_import_tmp_plan
 	./test_n42_time_plan

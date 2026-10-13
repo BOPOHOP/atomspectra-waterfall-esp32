@@ -1,3 +1,4 @@
+#include "socket_budget.h"  // 1.2.36 P1: #error при устаревшем sdkconfig (LWIP_MAX_SOCKETS/ACTIVE_TCP < 24)
 #include "atomspectra.h"
 #include "calib_autoread.h"  // #AWF-12b R4: calib_is_missing — тот же снимок, что "calibration"
 #include "calib_export.h"    // R7 (sweep-A): признак «калибровка есть» в экспорте XML/N42/SPE
@@ -2941,7 +2942,7 @@ void web_server_init(void)
     //   grep -cE '^\s*reg\(server' main/web_waterfall.c   (+1 на /ws/waterfall)
     config.max_uri_handlers = 90;
     config.stack_size = 8192;
-    config.max_open_sockets = 19;        // из 24 LWIP-сокетов; запас для tcp_bridge + sntp
+    config.max_open_sockets = HTTPD_MAX_OPEN_SOCKETS;   // socket_budget.h: 19 + 3 внутр. + 2 tcp_bridge = 24 (проверка при сборке)
     config.lru_purge_enable = true;      // при исчерпании пула закрыть LRU-соединение, не отказывать (errno 23)
     config.uri_match_fn = httpd_uri_match_wildcard;
     // #UI-15 P0: чистим WS-реестр при ЛЮБОМ закрытии сокета (RST/FIN/LRU/F5);

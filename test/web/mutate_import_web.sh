@@ -33,7 +33,7 @@ mut baseline_undef   index.html undef_calls_test.mjs   -                        
 mut U1_calibsame     index.html undef_calls_test.mjs   's/!calSame(overlayCal,calib)/!calibSame(overlayCal,calib)/' 1
 mut W10_n42_z_flag   saved.html import_parse_test.mjs 's/m\[7\]==="Z"/m[7]==="z"/'  1
 mut baseline_poll    common-time.js poll_visible_test.mjs -                                                0
-mut P1_no_hidden_skip common-time.js poll_visible_test.mjs 's/return setInterval(function () { if (!document.hidden) run(); }, ms);/return setInterval(function () { run(); }, ms);/' 3
+mut P1_no_hidden_skip common-time.js poll_visible_test.mjs 's/0.12)); if (!document.hidden) run(); };/0.12)); run(); };/' 4
 mut P2_no_resume_call common-time.js poll_visible_test.mjs 's/function () { if (!document.hidden) run(); });$/function () {});/' 2
 mut P3_resume_if_hidden common-time.js poll_visible_test.mjs 's/function () { if (!document.hidden) run(); });$/function () { run(); });/' 1
 # S1-3 (1.2.36): защита от повторного входа в pollWhileVisible
