@@ -154,7 +154,7 @@ header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
 
 </div>
 
-<script src="/common-time.js"></script>
+<script src="/common-time.js" onerror="try{var t=+sessionStorage.ctRl||0;if(Date.now()-t>30000){sessionStorage.ctRl=Date.now();setTimeout(function(){location.reload()},800);return}}catch(e){}document.body.insertAdjacentHTML('afterbegin','<p style=&quot;margin:1em;color:#b00;font:16px sans-serif&quot;>Не удалось загрузить скрипт страницы, обновите (F5) / Page script failed to load, press F5</p>')"></script>
 <script>
 "use strict";
 var DICT={
