@@ -11,12 +11,12 @@
 #define TCP_BRIDGE_SOCKETS        2   // tcp_bridge.c: слушающий + один клиент (listen(fd, 1))
 #define SOCKETS_REQUIRED (HTTPD_MAX_OPEN_SOCKETS + HTTPD_INTERNAL_SOCKETS + TCP_BRIDGE_SOCKETS)   // 24
 #if !defined(CONFIG_LWIP_MAX_SOCKETS) || !defined(CONFIG_LWIP_MAX_ACTIVE_TCP)
-#  error "CONFIG_LWIP_MAX_SOCKETS/CONFIG_LWIP_MAX_ACTIVE_TCP не определены: нужен sdkconfig.h"
+#  error "CONFIG_LWIP_MAX_SOCKETS/CONFIG_LWIP_MAX_ACTIVE_TCP undefined: sdkconfig.h is required"
 #endif
 #if CONFIG_LWIP_MAX_SOCKETS < SOCKETS_REQUIRED
-#  error "CONFIG_LWIP_MAX_SOCKETS < 24: sdkconfig устарел. Удалите sdkconfig и build/sdkconfig, затем idf.py reconfigure"
+#  error "CONFIG_LWIP_MAX_SOCKETS < 24: stale sdkconfig. Delete sdkconfig and build/sdkconfig, then run idf.py reconfigure"
 #endif
 #if CONFIG_LWIP_MAX_ACTIVE_TCP < SOCKETS_REQUIRED
-#  error "CONFIG_LWIP_MAX_ACTIVE_TCP < 24: sdkconfig устарел. Удалите sdkconfig и build/sdkconfig, затем idf.py reconfigure"
+#  error "CONFIG_LWIP_MAX_ACTIVE_TCP < 24: stale sdkconfig. Delete sdkconfig and build/sdkconfig, then run idf.py reconfigure"
 #endif
 #endif
