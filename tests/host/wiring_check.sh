@@ -243,7 +243,6 @@ need ../web/index.html   0 'smaHist'                                            
 need ../web/index.html   0 'smaCps('                                                      # #MX-14: расчёт в браузере удалён
 need ../web/index.html   1 'fetch("/api/spectrum/meta.json?w="+smaWinSec())'              # #MX-14: окно W уходит на плату тем же запросом meta
 need ../web/index.html   1 'es.textContent=(sma===null)?"":" / "+sma.toFixed(2);'        # 1.2.36: после дроби только число (единица CPS - статический span)
-need ../web/index.html   0 '" / SMA "'                                                   # 1.2.36: подписи «SMA <окно> с» нет
 need ../web/index.html   0 'aswf-sma-win'                                                # 1.2.36: множитель «отсчётов» убран, окно = интервал усреднения
 need ../web/index.html   1 'if(st.iv>=1)iv=Math.min(Math.floor(st.iv),86400)}catch(e){}return iv}'   # 1.2.36: smaWinSec = iv из aswf-mon-sess
 need ../web/monitor.html 1 'id="interval" min="1" max="86400" step="1" value="10" oninput="saveState()"'   # 1.2.36: смена интервала сразу в localStorage (до Старта)
