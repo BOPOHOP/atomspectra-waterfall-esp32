@@ -84,8 +84,8 @@ canvas{ width:100%; height:auto; display:block; }
 </div>
 <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:#8a9686">
  <span>Префикс файлов:</span>
- <input type="text" id="fx-prefix" maxlength="23" spellcheck="false" autocomplete="off" placeholder="MY1" title="Добавляется в начало имени всех выгрузок этой платы. Латиница, цифры, _ и -." style="width:110px;background:#11150f;color:#cfd6cd;border:1px solid #444;padding:4px 7px;border-radius:4px;font-family:inherit;font-size:12px">
- <button type="button" onclick="savePrefix()" style="cursor:pointer;background:rgba(52,211,192,.12);border:1px solid rgba(52,211,192,.4);color:#34d3c0;border-radius:6px;padding:5px 12px;font-family:inherit;font-size:12px;font-weight:600">Сохранить</button>
+ <input type="text" id="fx-prefix" maxlength="23" spellcheck="false" autocomplete="off" placeholder="MY1" title="Добавляется в начало имени всех выгрузок этой платы. Латиница, цифры, _ и -." style="width:200px;background:#11150f;color:#cfd6cd;border:1px solid #444;padding:4px 7px;border-radius:4px;font-family:inherit;font-size:12px">
+ <button type="button" onclick="savePrefix()" style="cursor:pointer;background:rgba(52,211,192,.12);border:1px solid rgba(52,211,192,.4);color:#34d3c0;border-radius:6px;padding:5px 12px;font-family:inherit;font-size:12px;font-weight:600">Задать</button>
  <span id="fx-prefix-st" style="min-width:16px;font-size:14px"></span>
 </div>
 </section>
@@ -97,6 +97,7 @@ canvas{ width:100%; height:auto; display:block; }
 <div class="mut" style="font-size:11px;margin-top:6px" data-i18n="live.hint">мгновенное значение с прибора</div>
 <div class="kv" style="margin-top:8px"><span data-i18n="live.total">Всего импульсов</span><span id="live-total">—</span></div>
 <div class="kv"><span data-i18n="live.devtime">Время набора, с</span><span id="live-time">—</span></div>
+<div class="kv"><span data-i18n="live.avg">Средний CPS за набор (живое время)</span><span id="live-avg">—</span></div>
 </section>
 <section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#8721;</span> <span data-i18n="avg.title">Средний CPS (сессия)</span></div>
@@ -126,7 +127,7 @@ canvas{ width:100%; height:auto; display:block; }
 <button class="xu" id="xu-h" onclick="setXUnit('h')" data-i18n="chart.xu.h">ч</button>
 </span>
 <label class="mut" style="font-size:11px;margin-left:auto;display:flex;align-items:center;gap:8px"><span data-i18n="chart.smaWin">Окно SMA, отсчётов</span>
-<input type="number" id="smaWin" min="2" max="200" step="1" value="10" oninput="drawChart()" style="width:64px;background:#0d110c;color:var(--txt);border:1px solid #2a322a;padding:4px 8px;border-radius:6px;font-family:inherit;font-size:12px"></label>
+<input type="number" id="smaWin" min="2" max="200" step="1" value="10" oninput="try{localStorage.setItem('aswf-sma-win',this.value)}catch(e){};drawChart()" style="width:64px;background:#0d110c;color:var(--txt);border:1px solid #2a322a;padding:4px 8px;border-radius:6px;font-family:inherit;font-size:12px"></label>
 </div>
 <canvas id="chart" width="1400" height="300"></canvas>
 </section>
@@ -141,6 +142,7 @@ canvas{ width:100%; height:auto; display:block; }
 <th data-i18n="tbl.counts">Импульсы</th>
 <th data-i18n="tbl.cps">CPS</th>
 <th data-i18n="tbl.rel">δ, %</th>
+<th>t, &deg;C</th>
 </tr></thead>
 <tbody id="tbody"></tbody>
 </table>
@@ -158,7 +160,8 @@ var DICT={
   "dev.chipOk":"Прибор подключён","dev.chipOff":"Нет прибора",
   "ctl.interval":"Интервал усреднения, с","ctl.start":"Старт","ctl.stop":"Стоп","ctl.clear":"Очистить","ctl.csv":"Выгрузить CSV",
   "run.idle":"остановлено","run.rec":"идёт запись · собрано %1","run.wait":"ожидание набора прибором…","run.paused":"прибор не набирает (время не идёт)","run.cleared":"спектр очищен на приборе — якорь сброшен",
-  "live.title":"Текущий CPS","live.hint":"мгновенное значение с прибора","live.total":"Всего импульсов","live.devtime":"Время набора, с",
+  "run.ring":"история платы (сбор идёт автономно) · показано %1",
+  "live.title":"Текущий CPS","live.hint":"мгновенное значение с прибора","live.total":"Всего импульсов","live.devtime":"Время набора, с","live.avg":"Средний CPS за набор (живое время)",
   "avg.title":"Средний CPS (сессия)","avg.rel":"отн. погрешность","avg.samples":"Отсчётов","avg.counts":"Импульсов в сессии","avg.dur":"Длит. сессии, с",
   "last.title":"Последний интервал","last.counts":"Импульсов","last.dur":"Длит., с",
   "chart.title":"CPS по интервалам","chart.raw":"сырые","chart.smaWin":"Окно SMA, отсчётов",
@@ -174,7 +177,8 @@ var DICT={
   "dev.chipOk":"Device connected","dev.chipOff":"No device",
   "ctl.interval":"Averaging interval, s","ctl.start":"Start","ctl.stop":"Stop","ctl.clear":"Clear","ctl.csv":"Export CSV",
   "run.idle":"stopped","run.rec":"recording · %1 collected","run.wait":"waiting for device acquisition…","run.paused":"device not acquiring (time frozen)","run.cleared":"spectrum cleared on device — anchor reset",
-  "live.title":"Current CPS","live.hint":"instantaneous value from device","live.total":"Total counts","live.devtime":"Acquisition time, s",
+  "run.ring":"board history (acquired autonomously) · %1 shown",
+  "live.title":"Current CPS","live.hint":"instantaneous value from device","live.total":"Total counts","live.devtime":"Acquisition time, s","live.avg":"Mean CPS over acquisition (live time)",
   "avg.title":"Mean CPS (session)","avg.rel":"relative error","avg.samples":"Samples","avg.counts":"Counts in session","avg.dur":"Session duration, s",
   "last.title":"Last interval","last.counts":"Counts","last.dur":"Duration, s",
   "chart.title":"CPS per interval","chart.raw":"raw","chart.smaWin":"SMA window, samples",
@@ -234,6 +238,13 @@ var lastNextSeq=1;           // next_seq платы из последнего о
 var sessStart=0;             // seq первого сэмпла сессии (0 = сессии нет)
 var sessStopSeq=0;           // seq, на котором сессия заморожена Стопом (0 = не заморожена)
 var rebuildStop=0;           // >0: после F5 восстановить замороженную сессию до этого seq
+// #MON-2: сессии нет → показываем ВСЮ историю, уже лежащую в кольце платы (плата
+// копит автономно). Отдельный флаг: running задаёт вид кнопки/персист/семантику
+// «идёт моя сессия», просмотр кольца не должен их трогать. sessStart в этом режиме
+// остаётся 0 — иначе после F5 loadState примет просмотр за сохранённую сессию.
+var viewRing=false;          // режим просмотра кольца платы
+var ringPrimed=false;        // стартовый seq просмотра уже взят из first_seq платы
+var syncGen=0;               // Старт/Стоп/Очистить обрывают догон, висящий в полёте
 // Привязка наборного времени прибора к стене: сэмпл с end_sec=anchorEnd пришёл в anchorWall (мс).
 // ts ведра = anchorWall - (anchorEnd - devEnd)*1000 — при живом сборе это «сейчас»,
 // при догоне после F5/фона — честная ретро-дата.
@@ -242,6 +253,7 @@ var anchorWall=0, anchorEnd=0;
 // --- Персист (#MON-1: localStorage — НЕ источник истории, только параметры
 // сессии; сама история восстанавливается с платы дотягиванием по seq) ---
 var LS_KEY="aswf-mon-sess";
+(function(){try{var v=localStorage.getItem("aswf-sma-win"),e=document.getElementById("smaWin");if(v&&e)e.value=v}catch(_){}})();   // #MX-8: окно SMA помнится и читается страницей спектра
 function saveState(){
  try{
   localStorage.setItem(LS_KEY,JSON.stringify({r:running,iv:intervalSec(),ss:sessStart,sp:sessStopSeq,ep:boardEpoch,aw:anchorWall,ae:anchorEnd}));
@@ -272,10 +284,11 @@ function wipeView(){
 }
 
 function toggleRun(){
+ syncGen++;                  // #MON-2: догон в полёте больше не наш — его сэмплы отбросить
  if(!running){
   // Старт: сессия = сэмплы платы начиная с текущего next_seq. Локальный вид
   // очищается — после F5 сессия восстановится с платы ровно в этом же объёме.
-  running=true;
+  running=true; viewRing=false; ringPrimed=false;   // #MON-2: явная сессия отменяет просмотр кольца
   sessStart=Math.max(lastNextSeq,lastSeq+1); sessStopSeq=0; rebuildStop=0;
   lastSeq=sessStart-1;
   wipeView(); noteCleared=false;
@@ -290,6 +303,7 @@ function toggleRun(){
 }
 function clearData(){
  if(samples.length && !confirm(t("confirm.clear")))return;
+ syncGen++; viewRing=false; ringPrimed=false;   // #MON-2: очистка гасит просмотр кольца
  wipeView(); noteCleared=false;
  if(running){ sessStart=Math.max(lastNextSeq,lastSeq+1); lastSeq=sessStart-1; sessStopSeq=0; }
  else{ sessStart=0; sessStopSeq=0; rebuildStop=0; }
@@ -305,7 +319,7 @@ function renderStartBtn(){
 function renderStatus(){
  var s=document.getElementById("run-stat");
  var dot='<span class="live-dot'+(running?' rec':'')+'"></span>';
- if(!running){ s.innerHTML=dot+t("run.idle"); return; }
+ if(!running){ s.innerHTML=dot+(viewRing?(noteCleared?t("run.cleared"):tfmt("run.ring",samples.length)):t("run.idle")); return; }
  if(noteCleared){ s.innerHTML=dot+t("run.cleared"); return; }
  s.innerHTML=dot+tfmt("run.rec",samples.length);
 }
@@ -332,6 +346,8 @@ async function livePoll(){
  if(cps!==null)  document.getElementById("live-cps").textContent=fmtCps(cps);
  if(total!==null)document.getElementById("live-total").textContent=total.toLocaleString("ru-RU");
  if(time!==null) document.getElementById("live-time").textContent=time.toLocaleString("ru-RU");
+ /* #MX-13 (1.2.34, #62): средний CPS за набор = total / live (живое время, с, из meta.json); формула avgCps — common-time.js; нет live — «—» */
+ var avg=(typeof avgCps==="function")?avgCps(total,r.live):null;  /* common-time.js подключён ниже (:659) — первый опрос может прийти раньше его загрузки */ document.getElementById("live-avg").textContent=(avg===null)?"—":avg.toFixed(2);
 }
 
 // --- Сбор серии с платы (#MON-1) ---
@@ -348,6 +364,7 @@ function handleEpoch(r){
   lastSeq=sessStart-1; sessStopSeq=0;
  }else{
   sessStart=0; sessStopSeq=0; rebuildStop=0; lastSeq=r.next_seq-1;
+  ringPrimed=false;   // #MON-2: кольцо потеряно — просмотр начинаем заново с нового first_seq
  }
  renderAggregates(); drawChart(); renderStatus(); saveState();
  return true;
@@ -357,9 +374,10 @@ function handleEpoch(r){
 // (dead-time-корректно): копим подряд идущие сэмплы, пока Σdur < интервала
 // усреднения, затем закрываем. Формулы прежние: cps=ΣN/Σt, σ=√ΣN/Σt (Poisson),
 // δ%=100/√ΣN.
-function pushBase(end,dur,cnt){
- if(!bucket)bucket={devStart:end-dur,devEnd:end,dur:0,counts:0};
+function pushBase(end,dur,cnt,tc){
+ if(!bucket)bucket={devStart:end-dur,devEnd:end,dur:0,counts:0,tS:0,tD:0};
  bucket.dur+=dur; bucket.counts+=cnt; bucket.devEnd=end;
+ if(typeof tc==="number"&&isFinite(tc)){bucket.tS+=tc*dur;bucket.tD+=dur;}   // #MX-12: средняя T1 за ведро (взвешенно по времени)
  if(bucket.dur>=intervalSec())closeBucket();
 }
 function closeBucket(){
@@ -369,7 +387,7 @@ function closeBucket(){
  var sig=Math.sqrt(Math.max(b.counts,0))/b.dur;
  var rel=(b.counts>0)?(100/Math.sqrt(b.counts)):NaN;
  var ts=new Date(anchorWall>0?(anchorWall-(anchorEnd-b.devEnd)*1000):Date.now());
- var smp={ts:ts,devStart:b.devStart,devEnd:b.devEnd,dur:b.dur,counts:b.counts,cps:cps,sig:sig,rel:rel};
+ var smp={ts:ts,devStart:b.devStart,devEnd:b.devEnd,dur:b.dur,counts:b.counts,cps:cps,sig:sig,rel:rel,temp:(b.tD>0?b.tS/b.tD:NaN)};
  samples.push(smp);
  sessCounts+=b.counts; sessDur+=b.dur;
  noteCleared=false;
@@ -380,7 +398,8 @@ var syncBusy=false;
 async function syncSeries(){
  if(syncBusy)return; syncBusy=true;
  var frozen=(!running&&rebuildStop>0);   // восстановление замороженной Стопом сессии после F5
- var collecting=running||frozen;
+ var collecting=running||frozen||viewRing;   // #MON-2: просмотр кольца тоже тянет сэмплы
+ var gen=syncGen;                        // смена режима на лету обесценивает этот догон
  var pend=[];                            // базовые сэмплы [end,dur,counts] до постановки в вёдра
  try{
   for(var hop=0;hop<400;hop++){          // догоняем плату циклом: чанк платы <= 2000 сэмплов
@@ -389,8 +408,11 @@ async function syncSeries(){
    var since=collecting?lastSeq:4294967294;
    var r=await(await fetch("/api/monitor/series?since="+since,{cache:"no-store"})).json();
    if(!r||typeof r.next_seq!=="number")break;
-   if(handleEpoch(r)){ pend=[]; frozen=false; collecting=running; if(!collecting)break; }
+   if(gen!==syncGen){ pend=[]; break; }   // #MON-2: пока ждали — сменился режим, сэмплы не наши
+   if(handleEpoch(r)){ pend=[]; frozen=false; collecting=running||viewRing; if(!collecting)break; }
    lastNextSeq=r.next_seq;
+   // #MON-2: первый ответ в режиме просмотра — стартуем с начала кольца платы
+   if(viewRing&&!ringPrimed&&typeof r.first_seq==="number"){ ringPrimed=true; lastSeq=r.first_seq-1; }
    var arr=r.samples||[], f=r.first_seq;
    if(collecting){
     for(var i=0;i<arr.length;i++){
@@ -414,7 +436,7 @@ async function syncSeries(){
    // сессии якорь сохранён на Стопе (aw/ae в localStorage) — не трогаем.
    anchorEnd=pend[pend.length-1][0]; anchorWall=Date.now();
   }
-  for(var k=0;k<pend.length;k++)pushBase(pend[k][0],pend[k][1],pend[k][2]);
+  for(var k=0;k<pend.length;k++)pushBase(pend[k][0],pend[k][1],pend[k][2],pend[k][3]);
   if(frozen)bucket=null;   // как Стоп: недобранное ведро отбрасываем
   renderAggregates(); drawChart(); renderStatus(); saveState();
  }
@@ -424,7 +446,7 @@ async function syncSeries(){
 function appendRow(s){
  var tb=document.getElementById("tbody");
  var tr=document.createElement("tr");
- tr.innerHTML="<td>"+hms(s.ts)+"</td><td>"+s.dur+"</td><td>"+s.counts.toLocaleString("ru-RU")+"</td><td>"+fmtCps(s.cps)+"</td><td>"+(isFinite(s.rel)?s.rel.toFixed(2):"—")+"</td>";
+ tr.innerHTML="<td>"+hms(s.ts)+"</td><td>"+s.dur+"</td><td>"+s.counts.toLocaleString("ru-RU")+"</td><td>"+fmtCps(s.cps)+"</td><td>"+(isFinite(s.rel)?s.rel.toFixed(2):"—")+"</td><td>"+(isFinite(s.temp)?s.temp.toFixed(1):"—")+"</td>";
  tb.insertBefore(tr,tb.firstChild); // новые сверху
  while(tb.children.length>500) tb.removeChild(tb.lastChild);
 }
@@ -502,7 +524,8 @@ function drawChart(){
  for(i=0;i<data.length;i++){ var v=data[i].cps; if(v<mn)mn=v; if(v>mx)mx=v; }
  for(i=0;i<sma.length;i++){ if(sma[i]<mn)mn=sma[i]; if(sma[i]>mx)mx=sma[i]; }
  if(mx-mn<1e-9)mx=mn+1;
- var padY=(mx-mn)*0.08; mn-=padY; mx+=padY;
+ // Отступ полей; cps=counts/dur ≥ 0 — отступ вниз не заводит ось в минус (ложный масштаб)
+ var padY=(mx-mn)*0.08, mn0=mn; mn-=padY; mx+=padY; if(mn<0&&mn0>=0)mn=0;
  var col=ac();
  // #UI-38: ось X — реальное время; позиция точки пропорциональна её timestamp
  var t0=data[0].ts.getTime(), tN=data[data.length-1].ts.getTime(), span=tN-t0;
@@ -596,12 +619,13 @@ function exportCsv(){
  var lines=[];
  lines.push("# AtomSpectra Gateway — CPS monitoring");
  lines.push("# exported "+isoLocal(new Date())+"  tz "+tzLabel()+"  host "+location.hostname);
- lines.push(["timestamp","dev_time_start_s","dev_time_end_s","duration_s","counts","mean_cps","sigma_cps","rel_err_pct"].join(sep));
+ lines.push(["timestamp","dev_time_start_s","dev_time_end_s","duration_s","counts","mean_cps","sigma_cps","rel_err_pct","temp_c"].join(sep));
  for(var i=0;i<samples.length;i++){ var s=samples[i];
   lines.push([isoLocal(s.ts),s.devStart,s.devEnd,s.dur,s.counts,
    (isFinite(s.cps)?s.cps.toFixed(6):""),
    (isFinite(s.sig)?s.sig.toFixed(6):""),
-   (isFinite(s.rel)?s.rel.toFixed(4):"")].join(sep)); }
+   (isFinite(s.rel)?s.rel.toFixed(4):""),
+   (isFinite(s.temp)?s.temp.toFixed(1):"")].join(sep)); }
  // сводка сессии
  if(sessDur>0){ var g=sessCounts/sessDur, gs=Math.sqrt(Math.max(sessCounts,0))/sessDur, gr=sessCounts>0?100/Math.sqrt(sessCounts):NaN;
   lines.push("# session_mean_cps"+sep+g.toFixed(6)+sep+"sigma"+sep+gs.toFixed(6)+sep+"rel_pct"+sep+(isFinite(gr)?gr.toFixed(4):"")); }
@@ -620,6 +644,8 @@ async function savePrefix(){var e=document.getElementById("fx-prefix"),st=docume
 (function(){
  applyI18n();
  loadState();
+ // #MON-2: ни активной, ни замороженной сессии — показываем историю кольца платы
+ if(!running&&sessStart===0&&rebuildStop===0)viewRing=true;
  loadPrefix();
  renderStartBtn(); renderStatus(); renderAggregates(); renderXUnit(); drawChart();
  document.getElementById("langBtn").onclick=function(){setLang(LANG==="ru"?"en":"ru");};
