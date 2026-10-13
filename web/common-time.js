@@ -94,9 +94,11 @@ window.avgCps = function avgCps(n, l) {
    слушатель visibilitychange остаётся - у вызывающих страниц опросы не отменяются.
    Защита от повторного входа (риск аудита S1-3, 1.2.36): если fn вернула Promise (async-функция), следующий вызов пропускается, пока он не
    завершится (resolve ИЛИ reject - ошибка сети флаг не оставляет); возврат вкладки на тике иначе давал два параллельных цикла запросов.
-   Страховка от навсегда зависшего запроса: занятость старше max(30 с, 10 интервалов) снимается. fn без Promise - как раньше. Имя у функции - для test/web/undef_calls_test.mjs */
-window.pollWhileVisible = function pollWhileVisible(fn, ms) {
+   Страховка от навсегда зависшего запроса: занятость старше max(30 с, 10 интервалов) снимается. fn без Promise - как раньше.
+   1.2.36: разброс опросов - каждый период = ms*(1+u), u равномерно в [-0,12; +0,12], первый вызов через [0; 0,3*ms] (третий аргумент rnd - источник случайности, по умолчанию Math.random; для тестов). Вместо setInterval цепочка setTimeout (иначе период не меняется на каждый тик); возвращается id первого таймера, отменять опрос нечем - вызывающие страницы его и не отменяют. Имя у функции - для test/web/undef_calls_test.mjs */
+window.pollWhileVisible = function pollWhileVisible(fn, ms, rnd) {
   var since = 0;
+  rnd = rnd || Math.random;
   var run = function () {
     if (since && Date.now() - since < Math.max(30000, ms * 10)) return;
     var r = fn();
@@ -107,7 +109,9 @@ window.pollWhileVisible = function pollWhileVisible(fn, ms) {
     }
   };
   document.addEventListener("visibilitychange", function () { if (!document.hidden) run(); });
-  return setInterval(function () { if (!document.hidden) run(); }, ms);
+  var tick = function () { next(ms * (1 + (rnd() * 2 - 1) * 0.12)); if (!document.hidden) run(); };
+  var next = function (d) { return setTimeout(tick, d); };
+  return next(rnd() * 0.3 * ms);
 };
 
 /* #OPT-12 (OPT, этап 1): единственная реализация CSRF-обёрток (раньше loadCsrf/post - 4 копии, gget - 2). Скрипт подключается ДО inline-скрипта
