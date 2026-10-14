@@ -38,6 +38,16 @@ The cause is not established; no fix is promised and none is claimed in 1.2.36.
 - **[H]** A hypothesis, not an established fact: the event matches, by its signs, the "minute-long hang" of phase A2 of the
   preliminary check (11 Oct); the 19-socket pool and poll jitter do not cause it (both were present in builds rc3, rc4 and in the
   diagnostic build, where the event did not recur). Whether it was chance or depends on a build without diagnostics is not known.
+
+### A short dip in free memory while browsing the board's pages - cause not established (seen on 1.2.36)
+
+In live run R8 (final build 1.2.36, 60 min), about 6 minutes after the start, the board's free memory dropped for ~25 s:
+total free heap from 729 KB to 456 KB (minimum for the run 326 KB, about 605 KB in R3-R7), free internal memory down to 1.6 KB
+(minimum about 11 KB in R3-R7). The test rig's requests ran without errors at that time (maximum 143 ms), memory returned to normal
+by itself, there were no 503 replies and no reboots. The operator was browsing the board's pages in a browser at that moment; which
+request caused the dip is not established. No fix is claimed.
+- **[H]** A hypothesis: the dip is caused by one of the heavy page requests (for example the waterfall window or the full spectrum)
+  that the test rig does not make. Not verified.
 - **Workaround:** refresh the page (F5) or wait until replies return (in the observed case about a minute, no board reboot).
 
 ### Background import (Saved -> "Import background...") - limits in 1.2.31
