@@ -16,5 +16,7 @@ jobs:
         run: cd tests/host && make asan
       - name: Mutation acceptance (issue #58 gate, release-gate 1.2.29)
         run: bash tests/host/mutate_issue58.sh
-      - name: Wiring check (call sites not compiled by host tests)
+      - name: Wiring check (call sites not compiled by host tests; s_spectrum writers via spec_writers.py)
         run: bash tests/host/wiring_check.sh
+      - name: Seqlock stress (pthread, release-gate 1.2.36 passA)
+        run: cd tests/host && make stress

@@ -2,13 +2,24 @@
 # release-gate 1.2.29 (разбор дельты, мутанты MA–MF): host-тесты не компилируют
 # spectrum.c/usb_host_cdc.c/tcp_bridge.c/..., поэтому удаление вызова чистой функции
 # проходило незамеченным. Проверка: каждая строка-вызов есть в файле ровно N раз.
+HERE=$(cd "$(dirname "$0")" && pwd)   # каталог скрипта (spec_writers.py) - до cd в main/
 cd "${1:-$(dirname "$0")/../../main}" || exit 2   # $1 — другой каталог (проверка на копии)
 RC=0
+# release-gate 1.2.36 pass2 С-2: отсутствующий проверяемый файл = WIRING FAIL. Раньше grep -c на нём давал пустое n, [ -ne ]
+# падал с ошибкой, и проверка молча проходила (нет spectrum_http_cache.c -> «wiring: OK»). Перечень - первые аргументы need/line
+# этого скрипта; одна строка на отсутствующий файл, и гейт кончается сразу (awk-проверки без файла тоже молчали бы).
+miss=0
+for f in $(sed -nE 's/^ *(need|line) +([^ $]+) .*/\2/p' "$HERE/wiring_check.sh" | sort -u); do
+    [ -f "$f" ] || { echo "WIRING FAIL $f: файл отсутствует"; miss=1; }
+done
+[ "$miss" -eq 0 ] || exit 1
 need() {   # need <file> <count> <fixed string>
+    [ -f "$1" ] || { echo "WIRING FAIL $1: файл отсутствует"; RC=1; return; }
     local n; n=$(grep -cF -- "$3" "$1")
     if [ "$n" -ne "$2" ]; then echo "WIRING FAIL $1: '$3' x$n (need $2)"; RC=1; fi
 }
 line() {   # line <file> <count> <строка кода целиком, без отступа> — не подстрока и не в комментарии (разбор pass4 P3-1)
+    [ -f "$1" ] || { echo "WIRING FAIL $1: файл отсутствует"; RC=1; return; }
     local n; n=$(awk -v s="$3" '{c=$0; sub(/\r$/,"",c); sub(/^[ \t]+/,"",c)} c == s {n++} END{print n+0}' "$1")
     if [ "$n" -ne "$2" ]; then echo "WIRING FAIL $1: line '$3' x$n (need $2)"; RC=1; fi
 }
@@ -225,8 +236,19 @@ need ../web/system.html  1 "spark(\"cpuc\",cpu,'#f0c45a',{mn:0,mx:100});"       
 need ../web/index.html   1 'acqSince=(acqHint===false)?now-6000:now;'                     # MX-4: начальное состояние из acq_intent
 need ../web/index.html   0 '<span class="ac">CPS <span>'                                   # MX-5: CPS не дублируется в строке статуса
 need ../web/index.html   1 '<div class="status" id="status" data-i18n="status.connecting" style="font-size:11.5px;'   # MX-6
-need ../web/index.html   2 '(dd>0?dd+tr("t.d")+" ":"")'                                   # MX-7: дни в обоих форматах времени
-need ../web/index.html   1 'var sma=smaCps(d.time,d.total);'                               # MX-8
+need ../web/common-time.js 1 'if (d > 0) p.push(d + u.d);'                       # MX-7: дни в длительности словами (fmtDur, OPT-11: перенесено с главной)
+need ../web/common-time.js 1 'var prefix = d > 0 ? d + u.d + " " : "";'          # MX-7: дни в часах ЧЧ:ММ:СС (fmtClock)
+need ../web/index.html   1 'var sma=(typeof d.sma==="number")?d.sma:null;var es=document.getElementById("big-sma"),W=(sma===null)?0:Math.round(d.sma_w);'   # MX-8 / #MX-14 (1.2.36): SMA и охват sma_w - с платы (кольцо monitor.c), вместо smaCps()
+need ../web/index.html   0 'smaHist'                                                      # #MX-14: своя история вкладки удалена
+need ../web/index.html   0 'smaCps('                                                      # #MX-14: расчёт в браузере удалён
+need ../web/index.html   1 'fetch("/api/spectrum/meta.json?w="+smaWinSec())'              # #MX-14: окно W уходит на плату тем же запросом meta
+need ../web/index.html   1 'es.textContent=(sma===null)?"":" / "+sma.toFixed(2);'        # 1.2.36: после дроби только число (единица CPS - статический span)
+need ../web/index.html   0 'aswf-sma-win'                                                # 1.2.36: множитель «отсчётов» убран, окно = интервал усреднения
+need ../web/index.html   1 'if(st.iv>=1)iv=Math.min(Math.floor(st.iv),86400)}catch(e){}return iv}'   # 1.2.36: smaWinSec = iv из aswf-mon-sess
+need ../web/monitor.html 1 'id="interval" min="1" max="86400" step="1" value="10" oninput="saveState()"'   # 1.2.36: смена интервала сразу в localStorage (до Старта)
+need ../web/monitor.html 1 'var smaAll=smaRatioSeries('                                 # #MX-14: «Мониторинг» - то же определение (common-time.js)
+need ../web/monitor.html 0 'acc+=samples[i].cps'                                          # #MX-14: среднее отношений вёдер удалено
+need ../web/common-time.js 1 'out.push(sd > 0 ? sc / sd : 0);'                            # #MX-14: smaRatioSeries - отношение сумм
 need ../web/monitor.html 1 'aswf-sma-win"),e=document.getElementById("smaWin")'           # MX-8: окно SMA помнится
 need ../web/index.html   1 'function visN(N){if(!xRange||!isKev||!calib)return N;'          # MX-9
 need ../web/index.html   1 'var bw=PW/visN(N);'                                            # MX-9: курсор в том же масштабе
@@ -311,5 +333,70 @@ line wifi_manager.c 1 's_unverified = false;'
 line wifi_manager.c 1 'if (s_got_ip_this_boot) return;   // #AWF-WIFI-1 (W-4): IP уже была — таймер опоздал к GOT_IP'
 c=$(lnum wifi_manager.c 'if (s_fallback_timer) esp_timer_stop(s_fallback_timer);'); d=$(lnum wifi_manager.c 's_unverified = false;')
 { [ "$c" -gt 0 ] && [ "$d" -gt 0 ] && [ "$c" -lt "$d" ]; } || { echo "WIRING FAIL wifi_manager.c: остановка fallback-таймера (:$c) должна быть раньше сброса s_unverified (:$d)"; RC=1; }
+# 1.2.36 OPT-1 (F): одна формула живого времени (live_time.h); две static-копии удалены, 4 вызова в web_server.c + 2 в кэше
+need web_server.c 0 'static float compute_live_time('
+need spectrum_http_cache.c 0 'static float compute_live_time('
+need web_server.c 4 'spectrum_compute_live_time(sp)'
+need spectrum_http_cache.c 1 'spectrum_compute_live_time(sp)'   # после B один вызов — в build_meta (раньше два: full+meta)
+need spectrum.c 1 'return live_time_calc(sp->total_time_sec, sp->total_counts, sp->lost_impulses,'
+# 1.2.36 H12 (D): /api/device — поля хвоста снимка в локальной структуре (spectrum_calib_meta.h), без буфера sizeof(spectrum_data_t)
+need web_server.c 1 'bool have_sp = spectrum_get_calib_meta(&m);'
+need web_server.c 0 'spectrum_get_meta('
+need spectrum.c 1 'spectrum_calib_meta_from(&s_spectrum, m);'
+# 1.2.36 Commit 0: счётчики замера «до/после» в /api/system (наблюдаемость; спека §3 Commit 0)
+need web_server.c 1 '"spectrum_build_us"'
+# 1.2.36 P1 (E): пропуск записи неизменного current.bin — проверка критерия в одноразовом пути + сброс признака в 4 местах (Сброс, consume_abort, отказ записи, порционный путь)
+# С-1 (gate 1.2.36 pass1): шаг пропуска повторяет снятие reset.mark тем же reset_mark_clear_if_current
+need spectrum.c 1 'if (autosave_skip_step(&s_as_last, snap_crc, snap_gen, reset_mark_clear_if_current)) {'
+need spectrum.c 1 's_as_last = (as_last_t){ true, snap_crc, snap_gen };'
+need spectrum.c 4 's_as_last.have = false;'
+need web_server.c 1 '"autosave_skips"'
+# 1.2.36 H5 (C): медленная часть /api/system (обходы кучи, стеки) и кэш esp_littlefs_info — одна проверка срока ttl_plan.h
+need web_server.c 2 'ttl_expired('
+need web_server.c 1 'if (ttl_expired(s_slow_at, slow_now, SYS_SLOW_PERIOD_US)) {'
+need web_server.c 1 '"heap_walk_age_ms"'
+# 1.2.36 H2/H3/H4 (B): поля meta — один раз за пересборку (spec_meta_fmt.h, ОДИН build_meta), полный JSON — лениво из send_json, старые build_json_* и per-build free() удалены
+need spectrum_http_cache.c 1 'spec_meta_in_fill(&in, sp, &lv);'
+need spectrum_http_cache.c 2 'spec_meta_fmt('
+need spectrum_http_cache.c 1 'build_meta(s_sp_build, &s_meta_build, &s_meta_build_cap, &nml, &na, &nb);'
+need spectrum_http_cache.c 1 'if (!spec_json_need_build(s_json_have, s_json_render, rc)) {'
+need spectrum_http_cache.c 2 'spec_json_full_fmt('
+need spectrum_http_cache.c 0 'build_json_full('
+need spectrum_http_cache.c 0 'build_json_meta('
+need spectrum_http_cache.c 0 'free(s_meta);'
+need spectrum_http_cache.c 0 'free(s_json);'
+need web_server.c 1 '"spectrum_json_builds"'
+# 1.2.36 H1 (A): seqlock — КАЖДАЯ секция SPEC_LOCK двигает seq (нечётный внутри) с барьерами в макросах; кэш снимает
+# снимок seq_copy() без мьютекса, не вышло — прежний путь под замком (счётчики в /api/system). Барьеры на x86 host-тест не видит.
+line spectrum.c 1 '#define SPEC_LOCK()   do { if (s_spec_lock) xSemaphoreTake(s_spec_lock, portMAX_DELAY); s_spec_seq++; __sync_synchronize(); } while (0)'
+line spectrum.c 1 '#define SPEC_UNLOCK() do { __sync_synchronize(); s_spec_seq++; if (s_spec_lock) xSemaphoreGive(s_spec_lock); } while (0)'
+need seq_copy.h 2 '__sync_synchronize();'
+need spectrum.c 1 'if (seq_copy(&s_spec_seq, out, &s_spectrum, sizeof(*out), SPEC_SEQ_TRIES,'
+need spectrum.c 1 's_spec_seq_fallback++;'
+need spectrum_http_cache.c 1 'spectrum_get_snapshot_seq(s_sp_build)'
+need spectrum_http_cache.c 0 'spectrum_get_snapshot(s_sp_build)'
+need web_server.c 1 '"spec_seq_retry"'
+need web_server.c 1 '"spec_seq_fallback"'
+# 1.2.36 #MX-14 (G): SMA из кольца платы - meta.json?w=W: обход кольца под s_lock без копии, хвост sma/sma_w/sma_n, ответ чанками с терминатором
+need monitor.c 1 'k = mon_window_sum(s_ring, s_cap, s_head, s_count, w_sec, &sc, &sd);'
+need meta_w_handler.h 1 'monitor_window(w, &sc, &sd, &n);'
+# З-5 (gate 1.2.36 pass1): ?w= - буфер META_Q_MAX, длинный запрос 414, плохой w 400, разбор только meta_w_parse
+need meta_w_handler.h 1 'char q[META_Q_MAX];'
+# pass2 З-1: 414 только когда буфер не вместил сам w (META_W_CUT); 400 нет (w не целое - прежний meta); обрезанная строка разбирается
+need meta_w_handler.h 1 'if (qe == ESP_OK || qe == ESP_ERR_HTTPD_RESULT_TRUNC) mw = meta_w_parse(q, qe != ESP_OK, &w);'
+need meta_w_handler.h 1 'if (mw == META_W_CUT) { httpd_resp_send_err(req, HTTPD_414_URI_TOO_LONG, "w: query too long"); return ESP_FAIL; }'
+need meta_w_handler.h 0 'HTTPD_400_BAD_REQUEST'
+need meta_w_handler.h 0 'if (ql >= sizeof(q))'
+need meta_w_handler.h 1 'return spectrum_http_send_meta_sma(req, sc, sd, n);'
+need web_server.c 1 'return meta_w_handle(req);'   # pass2 З-3: обработчик - в meta_w_handler.h (исполняет test_glue_meta_w)
+need spectrum_http_cache.c 1 'size_t tl = spec_meta_sma_tail('
+need spectrum_http_cache.c 1 'e = httpd_resp_send_chunk(req, NULL, 0);'
+# release-gate 1.2.36 passA З-1: КАЖДАЯ запись s_spectrum - под SPEC_LOCK (или из мест вызова под ним): spec_writers.py с
+# фиксированными флагами. Законные исключения ровно два: memset в spectrum_init (до запуска httpd, одна задача) и const-геттер
+# spectrum_get_current (--scan-dir: приведений без const - 0). Отказ - одна строка WIRING FAIL с перечнем UNLOCKED.
+sw=$(python3 "$HERE/spec_writers.py" spectrum.c --scan-dir . --allow-fn spectrum_init --const-getter spectrum_get_current 2>&1); swrc=$?
+if [ "$swrc" -ne 0 ]; then
+    echo "WIRING FAIL spec_writers rc=$swrc: $(grep '^# summary' <<<"$sw") $(grep -P '\tUNLOCKED\t' <<<"$sw" | cut -f1,2 | tr '\t\n' ': ')"; RC=1
+fi
 [ "$RC" -eq 0 ] && echo "wiring: OK"
 exit $RC

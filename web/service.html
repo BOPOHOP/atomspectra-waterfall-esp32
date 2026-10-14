@@ -50,6 +50,11 @@ pre.preview{ margin-top:12px; font-size:11px; line-height:1.5; color:#9aa496; ba
 .grp{ display:flex; gap:8px; }
 .inp{ background:#0c0f0b; border:1px solid #283024; color:#e8efe2; padding:9px 12px; border-radius:8px; font-size:12px; outline:none; }
 #cmd-log{ font-size:11.5px; line-height:1.6; color:#7c887c; background:#0b0e0a; border:1px solid #1b211a; border-radius:8px; padding:10px 12px; max-height:200px; overflow:auto; white-space:pre; margin-top:12px; }
+@media (max-width:480px){  /* #UI-MOB: 375px - шапка переносится (как на главной), чипы не шире экрана */
+header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
+.brand{ min-width:0; flex-wrap:wrap; gap:10px; }
+.chips{ min-width:0; justify-content:flex-start; }
+}
 </style>
 </head>
 <body>
@@ -149,6 +154,7 @@ pre.preview{ margin-top:12px; font-size:11px; line-height:1.5; color:#9aa496; ba
 
 </div>
 
+<script src="/common-time.js" onerror="try{var t=+sessionStorage.ctRl||0;if(Date.now()-t>30000){sessionStorage.ctRl=Date.now();setTimeout(function(){location.reload()},800);return}}catch(e){}document.body.insertAdjacentHTML('afterbegin','<p style=&quot;margin:1em;color:#b00;font:16px sans-serif&quot;>Не удалось загрузить скрипт страницы, обновите (F5) / Page script failed to load, press F5</p>')"></script>
 <script>
 "use strict";
 var DICT={
@@ -311,32 +317,10 @@ var DICT={
   "dbglog.err":"Save error"
  }
 };
-var LANG=(function(){try{return localStorage.getItem("aswf-lang")||"ru";}catch(e){return"ru";}})();
-function t(k){var d=DICT[LANG]||DICT.ru;return(d[k]!==undefined)?d[k]:(DICT.ru[k]||k);}
-function tfmt(k){var s=t(k); for(var i=1;i<arguments.length;i++){s=s.replace("%"+i,arguments[i]);} return s;}
-function applyI18n(){
- document.querySelectorAll("[data-i18n]").forEach(function(el){
-  var k=el.getAttribute("data-i18n"); el.textContent=t(k);
- });
- document.querySelectorAll("[data-i18n-placeholder]").forEach(function(el){
-  var k=el.getAttribute("data-i18n-placeholder"); el.placeholder=t(k);
- });
- document.documentElement.lang=LANG;
- var b=document.getElementById("langBtn"); if(b)b.textContent=(LANG==="ru")?"EN":"RU";
-}
-function setLang(l){
- if(l!=="ru"&&l!=="en")l="ru";
- LANG=l; try{localStorage.setItem("aswf-lang",l);}catch(e){}
- applyI18n();
-}
+/* #OPT-13: LANG/t/tfmt/applyI18n/setLang - общий каркас в common-time.js; страничных хвостов нет */
+i18nInit(DICT);
 
-var csrfToken="";
 var devConnected=false;
-async function loadCsrf(){try{var r=await(await fetch("/api/csrf-token")).json();csrfToken=r.token||""}catch(e){}}
-/* S-01 (1.2.30): тяжёлые GET требуют CSRF-токен; токен меняется при каждом старте платы — на 403 берём новый и повторяем один раз. */
-async function gget(url,opts){opts=opts||{};if(!csrfToken)await loadCsrf();var f=function(){return fetch(url,Object.assign({},opts,{headers:{"X-CSRF-Token":csrfToken}}))};var r=await f();if(r.status===403){await loadCsrf();r=await f();}return r;}
-/* CSRF-1: токен меняется при каждом старте платы — вкладка, открытая до перезагрузки, получала 403 молча. На 403 берём новый токен и повторяем один раз. */
-async function post(url,opts){opts=opts||{};opts.method="POST";var h=opts.headers||{};opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});var r=await fetch(url,opts);if(r.status===403){await loadCsrf();opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});r=await fetch(url,opts)}return r}
 
 var logEl=document.getElementById("cmd-log");
 var devSeq=0;
@@ -376,16 +360,16 @@ async function refreshUsbDiag(){
   var d=await(await fetch("/api/usb-diag")).json();
   var good=(d.pkt_hist||0)+(d.pkt_text||0)+(d.pkt_stat||0)+(d.pkt_osc||0)+(d.pkt_unknown||0);
   var bad=d.pkt_bad||0, tot=good+bad;
-  document.getElementById("usbd-good").textContent=good.toLocaleString();
-  document.getElementById("usbd-bad").textContent=bad.toLocaleString();
+  document.getElementById("usbd-good").textContent=good.toLocaleString(lcl());
+  document.getElementById("usbd-bad").textContent=bad.toLocaleString(lcl());
   var rt=document.getElementById("usbd-rate");
   rt.textContent = tot ? (bad*100/tot).toFixed(3)+" %" : "—";
   rt.style.color = (tot && bad*100/tot > 1) ? "var(--red,#e05)" : "";
   // свипы — это НЕ pkt_hist: тот считает чанки (~128 на спектр)
   var sw=d.sweep_commits||0, sd=d.sweep_drops||0;
-  document.getElementById("usbd-sweeps").textContent=sw.toLocaleString();
+  document.getElementById("usbd-sweeps").textContent=sw.toLocaleString(lcl());
   var sdEl=document.getElementById("usbd-sweepdrop");
-  sdEl.textContent=sd.toLocaleString();
+  sdEl.textContent=sd.toLocaleString(lcl());
   sdEl.style.color = (sw+sd && sd*100/(sw+sd) > 5) ? "var(--red,#e05)" : "";
  }catch(e){}
 }
@@ -623,11 +607,10 @@ async function doRestore(){
  await refreshSystem();
  await loadDbglog();
  await refreshUsbDiag();
- setInterval(refreshSystem,3000);
+ (window.pollWhileVisible||setInterval)(refreshSystem,3000);
  // #FW-53: реже, чем system — счётчики меняются плавно, лишний вызов не нужен
- setInterval(refreshUsbDiag,10000);
+ (window.pollWhileVisible||setInterval)(refreshUsbDiag,10000);
 })();
 </script>
-<script src="/common-time.js"></script>
 </body>
 </html>

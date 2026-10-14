@@ -5,7 +5,7 @@ set -u; cd "$(dirname "$0")"; T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; RC=0
 mut() {   # mut <name> <file> <sed-expr> ; "baseline" — без правки
     rm -rf "$T/main" "$T/web" "$T/scripts"; cp -r ../../main "$T/main"; cp -r ../../web "$T/web"; mkdir "$T/scripts"; cp ../../scripts/waterfall_n42.py ../../scripts/wf_pull_client.py "$T/scripts/"   # web/ — для need ../web/index.html
     sed -i 's/\r$//' "$T"/main/*.c "$T"/main/*.h "$T"/web/*.html 2>/dev/null   # рабочая копия на Windows в CRLF — мутанты с якорем $ не применялись
-    if [ "$1" != baseline ]; then cp "$T/main/$2" "$T/o"; sed -i "$3" "$T/main/$2"
+    if [ "$1" != baseline ]; then cp "$T/main/$2" "$T/o"; if [ "$3" = RM ]; then rm -f "$T/main/$2"; else sed -i "$3" "$T/main/$2"; fi   # RM - файла нет (pass2 С-2)
         cmp -s "$T/o" "$T/main/$2" && { echo "== $1: SED DID NOT APPLY"; RC=1; return; }; fi
     local out n; out=$(bash wiring_check.sh "$T/main"); n=$(grep -c 'WIRING FAIL' <<<"$out")
     local want=1; [ "$1" = baseline ] && want=0
@@ -136,7 +136,7 @@ mut M102_mx3_cpuauto     ../web/system.html    's/,{mn:0,mx:100});/);/' '{mn:0,m
 mut M103_mx4_nohint      ../web/index.html     's/acqSince=(acqHint===false)?now-6000:now;/acqSince=now;/' 'acqSince=(acqHint===false)'
 mut M104_mx6_bigstatus   ../web/index.html     's/data-i18n="status.connecting" style="font-size:11.5px;/data-i18n="status.connecting" style="/' 'style="font-size:11.5px;'
 mut M105_mx7_nodays      ../web/index.html     's/(dd>0?dd+tr("t.d")+" ":"")//' 'dd+tr("t.d")'
-mut M106_mx8_nosma       ../web/index.html     's/var sma=smaCps(d.time,d.total);/var sma=null;/' 'var sma=smaCps('
+mut M106_mx8_nosma       ../web/index.html     's/var sma=(typeof d.sma==="number")?d.sma:null;/var sma=null;/' 'var sma=(typeof d.sma'
 mut M107_mx9_cursor      ../web/index.html     's/var bw=PW\/visN(N);/var bw=PW\/N;/' 'var bw=PW/visN(N);'
 mut M108_mx10_nopow      ../web/index.html     's/Math.pow(v\/mx,1\/Math.E)/(v\/mx)/' 'Math.pow(v/mx,1/Math.E)'
 mut M109_mx11_lastch     ../web/index.html     's/var NM=(NV>=N)?N-1:NV;/var NM=NV;/' 'var NM=(NV>=N)?N-1:NV;'
@@ -190,4 +190,66 @@ mut MU4_f1_check  wifi_manager.c 's/wifi_setup_should_return(s_unverified, s_got
 mut MU5_f1_flag   wifi_manager.c 's/nvs_set_u8(nvs, "unver", 1);/nvs_set_u8(nvs, "unvx", 1);/' 'nvs_set_u8(nvs, "unver", 1);'
 mut MU6_f1_clear  wifi_manager.c 's/nvs_erase_key(uv, "unver");/nvs_erase_key(uv, "unvx");/' 'nvs_erase_key(uv, "unver");'
 mut MU7_f1_timer  wifi_manager.c 's/if (s_unverified) return_to_setup_and_reboot();/if (0) return_to_setup_and_reboot();/' 'if (s_unverified) return_to_setup_and_reboot();'
+# 1.2.36 OPT-1 (F): возврат второй копии / потеря вызова общей функции / обёртка не зовёт формулу
+mut MF_old_copy_web    web_server.c         '$a static float compute_live_time(const spectrum_data_t *sp) { return (float)sp->total_time_sec; }' 'static float compute_live_time('
+mut MF_old_copy_cache  spectrum_http_cache.c '$a static float compute_live_time(const spectrum_data_t *sp) { return (float)sp->total_time_sec; }' 'static float compute_live_time('
+mut MF_call_web        web_server.c         '0,/spectrum_compute_live_time(sp)/s//(float)sp->total_time_sec/' 'spectrum_compute_live_time(sp)'
+mut MF_call_cache      spectrum_http_cache.c '0,/spectrum_compute_live_time(sp)/s//(float)sp->total_time_sec/' 'spectrum_compute_live_time(sp)'
+mut MF_wrapper         spectrum.c           's/return live_time_calc(sp->total_time_sec/return 0.0f; live_time_calc(sp->total_time_sec/' 'live_time_calc(sp->total_time_sec'
+# 1.2.36 H12 (D): handle_device вернулся на полный снимок / потерял вызов / снимок без копии полей
+mut MD_site_lost      web_server.c         's/bool have_sp = spectrum_get_calib_meta(&m);/bool have_sp = false;/' 'spectrum_get_calib_meta(&m)'
+mut MD_old_getter     web_server.c         '$a static void md_mut(spectrum_data_t *p) { spectrum_get_meta(p); }' 'spectrum_get_meta('
+mut MD_from_lost      spectrum.c           's/spectrum_calib_meta_from(&s_spectrum, m);/memset(m, 0, sizeof(*m));/' 'spectrum_calib_meta_from(&s_spectrum, m)'
+# 1.2.36 Commit 0: поле замера в /api/system
+mut MC0_build_us_field web_server.c '/"spectrum_build_us", /d' '"spectrum_build_us"'
+# 1.2.36 P1 (E): критерий пропуска потерян / запись не фиксирует CRC / один из четырёх сбросов признака удалён / поле счётчика
+mut ME_check_lost     spectrum.c '0,/if (autosave_skip_step(&s_as_last, snap_crc, snap_gen, reset_mark_clear_if_current)) {/s//if (0) {/' 'autosave_skip_step(&s_as_last,'
+mut ME_retry_lost     spectrum.c 's/snap_gen, reset_mark_clear_if_current)) {/snap_gen, as_mark_noop)) {/' 'autosave_skip_step(&s_as_last,'   # С-1: пропуск без повтора снятия reset.mark
+mut ME_record_lost    spectrum.c 's/s_as_last = (as_last_t){ true, snap_crc, snap_gen };/(void)snap_crc;/' 's_as_last = (as_last_t){ true,'
+mut ME_reset_lost     spectrum.c '0,/s_as_last.have = false;/{/s_as_last.have = false;/d}' 's_as_last.have = false;'
+mut ME_skips_field    web_server.c '/"autosave_skips", /d' '"autosave_skips"'
+# 1.2.36 H5 (C): обход кучи снова на каждый запрос / кэш esp_littlefs_info без общей проверки / поле возраста потеряно
+mut MC_heap_always    web_server.c '0,/if (ttl_expired(s_slow_at, slow_now, SYS_SLOW_PERIOD_US)) {/s//if (1 || ttl_expired(s_slow_at, slow_now, SYS_SLOW_PERIOD_US)) {/' 'ttl_expired(s_slow_at,'
+mut MC_fs_own_cond    web_server.c 's/if (ttl_expired(s_fs_at, now_us, 30LL \* 1000000LL)) {/if (s_fs_at == 0 || now_us - s_fs_at > 30LL * 1000000LL) {/' 'ttl_expired('
+mut MC_age_field      web_server.c '/"heap_walk_age_ms", /d' '"heap_walk_age_ms"'
+# 1.2.36 B: поля meta снова собираются мимо spec_meta_fmt / полный JSON строится без решения need_build / вернулись build_json_full и free() на каждой пересборке
+mut MB_fill_lost      spectrum_http_cache.c '/spec_meta_in_fill(&in, sp, &lv);/d' 'spec_meta_in_fill(&in, sp, &lv);'
+mut MB_site_lost      spectrum_http_cache.c 's/if (!spec_json_need_build(s_json_have, s_json_render, rc)) {/if (!s_json_have) {/' 'spec_json_need_build(s_json_have'
+mut MB_old_full       spectrum_http_cache.c '$a static bool mb_old(void) { return build_json_full(0, 0, 0); }' 'build_json_full('
+mut MB_free_back      spectrum_http_cache.c '$a static void mb_free(void) { free(s_json); }' 'free(s_json);'
+mut MB_json_field     web_server.c '/"spectrum_json_builds", /d' '"spectrum_json_builds"'
+# 1.2.36 H1 (A): seq не двигается на входе / нет барьера на выходе / барьеры seq_copy убраны (MA0 host не ловит) / кэш без seqlock / старый вызов вернулся / запасной путь без счётчика / поля
+mut MA_lock_noseq     spectrum.c '/#define SPEC_LOCK()/s/ s_spec_seq++;//' '#define SPEC_LOCK()'
+mut MA_unlock_nobar   spectrum.c '/#define SPEC_UNLOCK()/s/ __sync_synchronize();//' '#define SPEC_UNLOCK()'
+mut MA0_copy_nobar    seq_copy.h 's/__sync_synchronize();//' '__sync_synchronize();'
+mut MA_cache_lost     spectrum_http_cache.c 's/spectrum_get_snapshot_seq(s_sp_build)/false/' 'spectrum_get_snapshot_seq(s_sp_build)'
+mut MA_cache_old      spectrum_http_cache.c '$a static bool ma_old(void) { return spectrum_get_snapshot(s_sp_build); }' 'spectrum_get_snapshot(s_sp_build)'
+mut MA_fallback_cnt   spectrum.c 's/s_spec_seq_fallback++;/(void)0;/' 's_spec_seq_fallback++;'
+mut MA_retry_field    web_server.c '/"spec_seq_retry", /d' '"spec_seq_retry"'
+# 1.2.36 #MX-14 (G): окно W не уходит на плату / в браузер вернулась своя история / «Мониторинг» без общего определения / обход кольца и хвост потеряны / нет терминатора чанков
+mut MG_idx_nowin      ../web/index.html    's/meta.json?w="+smaWinSec())/meta.json")/' 'meta.json?w='
+mut MG_idx_label_back ../web/index.html    's/" \/ "+sma.toFixed(2)/" \/ SMA "+W+"s "+sma.toFixed(2)/' 'es.textContent=(sma===null)'
+mut MG_mon_iv_nosave  ../web/monitor.html  's/ oninput="saveState()"//' 'oninput="saveState()"'
+mut MG_idx_hist_back ../web/index.html    '$a <!-- smaHist -->' 'smaHist'
+mut MG_mon_oldavg     ../web/monitor.html  's/var smaAll=smaRatioSeries(/var smaAll=smaMeanSeries(/' 'var smaAll=smaRatioSeries('
+mut MG_ct_def_lost    ../web/common-time.js 's/out.push(sd > 0 ? sc \/ sd : 0);/out.push(sc \/ (sd || 1));/' 'out.push(sd > 0'
+mut MG_ring_lost      monitor.c            's/k = mon_window_sum(s_ring, s_cap, s_head, s_count, w_sec, \&sc, \&sd);/k = 0;/' 'mon_window_sum('
+mut MG_site_lost      meta_w_handler.h         's/return spectrum_http_send_meta_sma(req, sc, sd, n);/return spectrum_http_send_meta(req);/' 'spectrum_http_send_meta_sma('
+mut MG_tail_lost      spectrum_http_cache.c 's/size_t tl = spec_meta_sma_tail(/size_t tl = 0 * spec_meta_sma_tail(/' 'spec_meta_sma_tail('
+mut MG_chunk_noterm   spectrum_http_cache.c 's/e = httpd_resp_send_chunk(req, NULL, 0);/e = ESP_OK;/' 'httpd_resp_send_chunk(req, NULL, 0)'
+# З-5 (gate 1.2.36 pass1): буфер запроса снова 32 / длинный запрос молча / плохой w молча / прежний strtoul вместо meta_w_parse
+mut MSW_unlocked_write spectrum.c '$a void msw_bad(void) { s_spectrum.cps = 0; }' 'spec_writers'   # passA З-1: запись s_spectrum вне SPEC_LOCK
+mut MW_q32           meta_w_handler.h 's/char q\[META_Q_MAX\];/char q[32];/' 'char q[META_Q_MAX];'
+mut MW_no414          meta_w_handler.h '/HTTPD_414_URI_TOO_LONG, "w: query too long"/d' 'HTTPD_414_URI_TOO_LONG'
+# pass2 З-1: вернулись 400 на нецелое w / 414 на любой длинный запрос / обрезанная строка не разбирается
+mut MW_400_back       meta_w_handler.h '/if (mw == META_W_CUT) {/i\    if (mw == META_W_BAD) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "w"); return ESP_FAIL; }' 'HTTPD_400_BAD_REQUEST'
+mut MW_len414_back    meta_w_handler.h '/^    uint32_t w = 0;/i\    if (ql >= sizeof(q)) { httpd_resp_send_err(req, HTTPD_414_URI_TOO_LONG, "q"); return ESP_FAIL; }' 'if (ql >= sizeof(q))'
+mut MW_trunc_lost     meta_w_handler.h 's/if (qe == ESP_OK || qe == ESP_ERR_HTTPD_RESULT_TRUNC) mw/if (qe == ESP_OK) mw/' 'ESP_ERR_HTTPD_RESULT_TRUNC'
+mut MW_parse_lost     meta_w_handler.h 's/mw = meta_w_parse(q, qe != ESP_OK, \&w);/mw = META_W_NONE;/' 'meta_w_parse'
+mut MW_wrap_lost      web_server.c 's/return meta_w_handle(req);/return spectrum_http_send_meta(req);/' 'meta_w_handle(req)'   # pass2 З-3: обработчик из meta_w_handler.h не вызывается
+# pass2 С-2: проверяемого файла нет -> ровно одна строка WIRING FAIL (раньше нет spectrum_http_cache.c / index.html -> «wiring: OK»)
+mut MF_rm_cache      spectrum_http_cache.c RM 'spectrum_http_cache.c: файл отсутствует'
+mut MF_rm_web        web_server.c          RM 'web_server.c: файл отсутствует'
+mut MF_rm_index      ../web/index.html     RM '../web/index.html: файл отсутствует'
+mut MF_rm_wifi       wifi_manager.c        RM 'wifi_manager.c: файл отсутствует'
 exit $RC

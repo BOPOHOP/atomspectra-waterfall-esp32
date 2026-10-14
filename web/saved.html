@@ -101,7 +101,7 @@ canvas{ display:block; width:100%; height:auto; background:#0c0f0b; border-radiu
 </div>
 <div style="padding:14px 16px;border-top:1px solid #1b211a">
 <div class="meta" id="meta-grid">
-<span class="k" data-i18n="meta.counts">Counts</span><span class="v" id="m-counts">—</span>
+<span class="k" data-i18n="meta.counts">Импульсы</span><span class="v" id="m-counts">—</span>
 <span class="k" data-i18n="meta.time">Время измерения</span><span class="v" id="m-time">—</span>
 <span class="k" data-i18n="meta.cps">CPS (среднее)</span><span class="v" id="m-cps">—</span>
 <span class="k" data-i18n="meta.saved">Сохранено</span><span class="v" id="m-saved">—</span>
@@ -123,6 +123,7 @@ canvas{ display:block; width:100%; height:auto; background:#0c0f0b; border-radiu
 
 </div>
 
+<script src="/common-time.js" onerror="try{var t=+sessionStorage.ctRl||0;if(Date.now()-t>30000){sessionStorage.ctRl=Date.now();setTimeout(function(){location.reload()},800);return}}catch(e){}document.body.insertAdjacentHTML('afterbegin','<p style=&quot;margin:1em;color:#b00;font:16px sans-serif&quot;>Не удалось загрузить скрипт страницы, обновите (F5) / Page script failed to load, press F5</p>')"></script>
 <script>
 "use strict";
 var DICT={
@@ -133,7 +134,7 @@ var DICT={
   "view":"Просмотр","view.placeholder":"— выберите спектр —",
   "exp.xml":"Экспорт XML","exp.csv":"Экспорт CSV",
   "btn.overlay":"➡ Overlay на «Спектр»","btn.delete":"Удалить",
-  "meta.counts":"Counts","meta.time":"Время измерения","meta.cps":"CPS (среднее)",
+  "meta.counts":"Импульсы","meta.time":"Время измерения","meta.cps":"CPS (среднее)",
   "meta.saved":"Сохранено","meta.ch":"Каналы","meta.cal":"Калибровка",
   "list.title":"Список","list.loading":"Загрузка...",
   "btn.import":"Импорт фона…","list.impTag":"фон, импорт",
@@ -148,12 +149,11 @@ var DICT={
   "cnt.saved":"Сохранено: %1",
   "cnt.items":"%1 шт.",
   "no_data":"Нет данных",
-  "ax.ch":"Channel","ax.kev":"keV",
+  "ax.ch":"Channel","ax.kev":"кэВ",
   "confirm.del":"Удалить спектр #%1?",
   "err.load":"Ошибка загрузки спектра #%1: %2",
-  "cal.set":"задана (%1 коэфф.)","cal.unset":"не задана",
-  "flash.fmt":"%1 / %2 КБ (%3%) · свободно %4 КБ",
-  "time.h":"ч","time.m":"м","time.s":"с"
+  "cal.set":"Задана (%1 коэфф.)","cal.unset":"Не задана",
+  "flash.fmt":"%1 / %2 КБ (%3%) · свободно %4 КБ"
  },
  en:{
   "page.title":"AtomSpectra · Saved",
@@ -180,33 +180,19 @@ var DICT={
   "ax.ch":"Channel","ax.kev":"keV",
   "confirm.del":"Delete spectrum #%1?",
   "err.load":"Error loading spectrum #%1: %2",
-  "cal.set":"set (%1 coef.)","cal.unset":"not set",
-  "flash.fmt":"%1 / %2 KB (%3%) · free %4 KB",
-  "time.h":"h","time.m":"m","time.s":"s"
+  "cal.set":"Set (%1 coef.)","cal.unset":"Not set",
+  "flash.fmt":"%1 / %2 KB (%3%) · free %4 KB"
  }
 };
-var LANG=(function(){try{return localStorage.getItem("aswf-lang")||"ru";}catch(e){return"ru";}})();
-function t(k){var d=DICT[LANG]||DICT.ru;return(d[k]!==undefined)?d[k]:(DICT.ru[k]||k);}
-function tfmt(k){var s=t(k);for(var i=1;i<arguments.length;i++)s=s.replace("%"+i,arguments[i]);return s;}
-function lcl(){return LANG==="ru"?"ru-RU":"en-US";}
-function applyI18n(){
- document.querySelectorAll("[data-i18n]").forEach(function(el){
-  var k=el.getAttribute("data-i18n"); el.textContent=t(k);
- });
- document.documentElement.lang=LANG;
- var b=document.getElementById("langBtn"); if(b)b.textContent=(LANG==="ru")?"EN":"RU";
-}
-function setLang(l){
- if(l!=="ru"&&l!=="en")l="ru";
- LANG=l; try{localStorage.setItem("aswf-lang",l);}catch(e){}
- applyI18n();
+/* #OPT-13: LANG/t/tfmt/applyI18n/setLang - общий каркас в common-time.js; здесь только перерисовка при смене языка */
+i18nInit(DICT,{onLang:function(){
  // re-render dependent UI
  try{loadFlashInfo();}catch(e){}
  try{loadList();}catch(e){}
  if(currentIdx>=0&&currentData)try{drawChart(currentData);refreshMeta();}catch(e){}
-}
+}});
 
-var csrfToken="", spectra=[], currentIdx=-1, currentData=null, calib=null, currentMeta=null;
+var spectra=[], currentIdx=-1, currentData=null, calib=null, currentMeta=null;
 /* #AWF-12b F2 (release-gate-1.2.28-code.md): здесь калибровка — СОХРАНЁННОГО
    файла (d.calib на спектре), а не платы — по файлу прошивка признак
    calib_set не хранит (снят на момент сохранения, история назад не
@@ -220,13 +206,8 @@ function calibIsSet(dev){if(!dev)return false;if(typeof dev.calib_set==="boolean
 var backups=[], curKind="spec", curName="";
 function apiBase(){return curKind==="bk"?("/api/backup/"+curName):("/api/saved/"+currentIdx);}
 
-function fmtTime(s){var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),x=s%60;return(h>0?h+t("time.h")+" ":"")+(m>0?m+t("time.m")+" ":"")+x+t("time.s")}
-function fmtDate(ts){return ts>0?new Date(ts*1000).toLocaleString(lcl()):'—'}
-function fmtNum(n){return Math.round(n).toLocaleString(lcl())}
-function ch2kev(c){if(!calib)return c;var e=0;for(var i=0;i<calib.length;i++)e+=calib[i]*Math.pow(c,i);return e}
-async function loadCsrf(){try{var r=await(await fetch("/api/csrf-token")).json();csrfToken=r.token||""}catch(e){}}
-/* CSRF-1: токен меняется при каждом старте платы — вкладка, открытая до перезагрузки, получала 403 молча. На 403 берём новый токен и повторяем один раз. */
-async function post(url,opts){opts=opts||{};opts.method="POST";var h=opts.headers||{};opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});var r=await fetch(url,opts);if(r.status===403){await loadCsrf();opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});r=await fetch(url,opts)}return r}
+function fmtDate(ts){return ts>0?fmtDateTime(ts*1000):'—'}
+function ch2kev(c){return calKev(calib,c)}
 
 async function loadFlashInfo(){
  try{
@@ -268,7 +249,7 @@ async function loadList(){
    var on=(curKind==="spec"&&s.index===currentIdx)?' on':'';
    html+='<div class="item'+on+'" data-idx="'+s.index+'" onclick="selectIdx('+s.index+')">'+
     '<div class="hd"><b>#'+s.index+'</b>'+(s.imp?'<span class="lbl" style="color:#f0c45a">'+t("list.impTag")+'</span>':'')+'<span class="lbl">'+fmtDate(s.saved_at)+'</span></div>'+
-    '<div class="sub"><span>'+fmtNum(s.counts)+' counts</span><span>'+fmtTime(s.time)+'</span></div>'+
+    '<div class="sub"><span>'+fmtNum(s.counts)+' counts</span><span>'+fmtDur(s.time)+'</span></div>'+
     '</div>';
   }
   if(backups.length){
@@ -278,7 +259,7 @@ async function loadList(){
     var onb=(curKind==="bk"&&b.name===curName)?' on':'';
     html+='<div class="item'+onb+'" data-bk="'+b.name+'" onclick="selectBackup(&quot;'+b.name+'&quot;)">'+
      '<div class="hd"><b>S'+b.session+'/'+b.seq+'</b><span class="lbl">'+fmtDate(b.saved_at)+'</span></div>'+
-     '<div class="sub"><span>'+fmtNum(b.counts)+' counts</span><span>'+fmtTime(b.time)+'</span></div>'+
+     '<div class="sub"><span>'+fmtNum(b.counts)+' counts</span><span>'+fmtDur(b.time)+'</span></div>'+
      '</div>';
    }
   }
@@ -293,8 +274,9 @@ function refreshMeta(){
  if(!total&&d&&d.bins){total=0;for(var k=0;k<d.bins.length;k++)total+=d.bins[k];}
  var ti=meta?meta.time:(d&&d.time||0);
  document.getElementById("m-counts").textContent=fmtNum(total);
- document.getElementById("m-time").textContent=fmtTime(ti);
- document.getElementById("m-cps").textContent=ti>0?(total/ti).toFixed(2):"—";
+ document.getElementById("m-time").textContent=fmtDur(ti);
+ var avg=(typeof avgCps==="function")?avgCps(total,ti):null;  /* #OPT-18: формула avgCps - common-time.js (подключён перед inline-скриптом, OPT-12); нет её - «—» */
+ document.getElementById("m-cps").textContent=avg!==null?avg.toFixed(2):"—";
  document.getElementById("m-saved").textContent=meta?fmtDate(meta.saved_at):"—";
  document.getElementById("m-ch").textContent=d&&d.bins?d.bins.length:"—";
  // #AWF-12b R7 (release-gate-1.2.28-code-rc2.md): откат к калибровке платы
@@ -386,7 +368,7 @@ function drawChart(d){
  for(var i=0;i<=nTicks;i++){
   var px=PL+i/nTicks*PW;
   var ch=Math.round(i/nTicks*N);
-  var lbl=hasKev?(function(){var e=0;for(var j=0;j<cal.length;j++)e+=cal[j]*Math.pow(ch,j);return e.toFixed(0);})():String(ch);
+  var lbl=hasKev?calKev(cal,ch).toFixed(0):String(ch);
   X.strokeStyle="#283024";X.beginPath();X.moveTo(px,PB);X.lineTo(px,PB+4);X.stroke();
   X.fillText(lbl,px,PB+15);
  }
@@ -429,14 +411,12 @@ function impSer(s){return String(s||"").replace(/^IMP:/,"").replace(/[^\x20-\x7E
 function impNum(x){var n=Number(x);return isFinite(n)?n:NaN;}
 function impUnxml(s){return s.replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&amp;/g,"&");}
 function impTag(s,re){var m=re.exec(s);return m?m[1]:null;}
-/* Калибровка: 1..5 конечных коэффициентов, не все нули, E(ch) строго возрастает на 0..8191 (64 точки) — иначе отбрасывается. */
+/* Калибровка: 1..5 конечных коэффициентов, не все нули, E(ch) строго возрастает на 0..8191 (64 целых канала, calMonoCh, common-time.js, OPT-9; сетка прежняя, не calMono) — иначе отбрасывается. */
 function impCalibOk(c){
  if(!Array.isArray(c)||c.length<1||c.length>5)return false;
  var nz=false,i;for(i=0;i<c.length;i++){if(typeof c[i]!=="number"||!isFinite(c[i]))return false;if(c[i]!==0)nz=true;}
  if(!nz)return false;
- var prev=-Infinity;
- for(var j=0;j<64;j++){var ch=Math.round(j*(IMP_CH-1)/63),e=0;for(i=0;i<c.length;i++)e+=c[i]*Math.pow(ch,i);if(!(e>prev))return false;prev=e;}
- return true;
+ return calMonoCh(c,IMP_CH);
 }
 /* Общая проверка результата разбора (все форматы): каналы ровно 8192, счёты u32, сумма 1..2^32-1, время 1..10 лет. */
 function impFinish(p){
@@ -585,9 +565,8 @@ function overlayOnMain(){
  await loadCalib();
  await loadFlashInfo();
  await loadList();
- setInterval(loadFlashInfo,10000);
+ (window.pollWhileVisible||setInterval)(loadFlashInfo,10000);
 })();
 </script>
-<script src="/common-time.js"></script>
 </body>
 </html>

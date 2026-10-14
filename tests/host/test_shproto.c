@@ -102,6 +102,15 @@ void round3_flash_lock_suite(void);      // У3 раунда 3
 void round3_snapshot_file_suite(void);   // У4 раунда 3
 void round3_ota_reopen_suite(void);      // У5 раунда 3
 void round3_seg_rebuild_entry_suite(void); // У6/О5 раунда 3
+void live_time_suite(void);                // 1.2.36 OPT-1: одна формула живого времени
+void autosave_skip_plan_suite(void);       // 1.2.36 P1: пропуск записи неизменного current.bin
+void spectrum_meta_fmt_suite(void);          // 1.2.36 B: meta один раз, полный JSON лениво (побайтовое равенство со старым)
+void ttl_plan_suite(void);                // 1.2.36 H5: срок жизни медленной части /api/system
+void seq_copy_suite(void);               // 1.2.36 H1: снимок кэша без SPEC_LOCK (seqlock, seq_copy.h)
+void spectrum_calib_meta_suite(void);      // 1.2.36 H12: поля хвоста снимка для /api/device
+void monitor_window_suite(void);           // 1.2.36 #MX-14: SMA из кольца платы (окно Σdur, хвост meta.json?w=)
+void meta_w_parse_suite(void);             // З-5 (gate 1.2.36 pass1): ?w= у meta.json
+void autosave_mark_retry_suite(void);      // C-1 (gate 1.2.36 pass1): skip of autosave retries reset.mark removal
 
 // Тестовая команда. CMD_HISTOGRAM (0x01) объявлена в main/atomspectra.h, но она
 // вне include-path host-сборки; shproto трактует cmd как обычный uint8_t.
@@ -325,6 +334,15 @@ int main(void)
     round3_snapshot_file_suite();
     round3_ota_reopen_suite();
     round3_seg_rebuild_entry_suite();
+    live_time_suite();
+    spectrum_calib_meta_suite();
+    autosave_skip_plan_suite();
+    ttl_plan_suite();
+    spectrum_meta_fmt_suite();
+    seq_copy_suite();
+    monitor_window_suite();
+    autosave_mark_retry_suite();
+    meta_w_parse_suite();
 
     if (g_failures) {
         printf("\n%d CHECK(S) FAILED\n", g_failures);

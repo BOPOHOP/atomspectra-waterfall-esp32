@@ -2,6 +2,12 @@
 #include "calib_autoread.h"  // #AWF-12: calib_is_missing/calib_read_is_success
 #include "spectrum_http_cache.h"  // #AWF-12b R5: spectrum_http_cache_invalidate
 #include "spectrum_t1.h"
+#include "live_time.h"      // 1.2.36 OPT-1: одна формула живого времени
+#include "spectrum_calib_meta.h"  // 1.2.36 H12: снимок хвоста для /api/device
+#include "autosave_skip_plan.h"   // 1.2.36 P1: пропуск записи неизменного current.bin
+#include "spectrum_import_plan.h" // imp_crc32() (host-pure, поточная CRC без массивов)
+#include "seq_copy.h"             // 1.2.36 H1: снимок кэша без SPEC_LOCK (seqlock)
+#include "esp_rom_sys.h"          // esp_rom_delay_us — ожидание чётного seq
 #include "hist_drop_diag.h"
 #include "flash_quiet.h"
 #include "spectrum_hist_stage.h"
@@ -80,8 +86,16 @@ static uint32_t s_tcpot_raw_seq = 0;
 
 // Защищает s_spectrum от гонки между CDC-таском (писатель) и httpd-таском (читатель).
 static SemaphoreHandle_t s_spec_lock;
-#define SPEC_LOCK()   do { if (s_spec_lock) xSemaphoreTake(s_spec_lock, portMAX_DELAY); } while (0)
-#define SPEC_UNLOCK() do { if (s_spec_lock) xSemaphoreGive(s_spec_lock); } while (0)
+// 1.2.36 H1 (A): seqlock поверх мьютекса — КАЖДАЯ секция SPEC_LOCK считается пишущей: seq нечётный
+// внутри секции, чётный вне. Читатель кэша (spectrum_get_snapshot_seq, seq_copy.h) копирует s_spectrum
+// БЕЗ мьютекса и принимает копию, только если seq чётный и не изменился. Барьеры: после seq++ на входе
+// (seq стал видим раньше записей данных) и перед seq++ на выходе (записи данных видимы раньше seq).
+// seq++ вне if — чётность не зависит от того, создан ли мьютекс (до spectrum_init задача одна).
+static volatile uint32_t s_spec_seq;
+static uint32_t s_spec_seq_retry;      // повторы копии (seq изменился во время копии), только задача httpd
+static uint32_t s_spec_seq_fallback;   // снимков запасным путём под мьютексом (seq_copy вернул false)
+#define SPEC_LOCK()   do { if (s_spec_lock) xSemaphoreTake(s_spec_lock, portMAX_DELAY); s_spec_seq++; __sync_synchronize(); } while (0)
+#define SPEC_UNLOCK() do { __sync_synchronize(); s_spec_seq++; if (s_spec_lock) xSemaphoreGive(s_spec_lock); } while (0)
 // Н-5 (release-gate 1.2.29): файловые операции метки reset.mark — под своим
 // мьютексом, НЕ под SPEC_LOCK (#WF-1). Порядок: MARK_LOCK → SPEC_LOCK.
 static SemaphoreHandle_t s_mark_lock;
@@ -134,6 +148,14 @@ static uint32_t  s_base_total_counts;
 static uint32_t  s_dev_resets;                    // #7: счётчик сворачиваний с боота шлюза
 static spectrum_hist_stage_t s_hist_stage;        // непрерывность свипа (idle = UINT32_MAX)
 static uint32_t  s_reset_gen;                     // AUD-ASW126 #1/#12: httpd Reset
+// 1.2.36 P1: CRC+gen последней успешной одноразовой записи current.bin. З-4 (gate pass1): писателей ДВА - spectrum_autosave()
+// (задача автосейва, вся структура после записи и снятия метки) и reset_impl (Сброс, have=false под MARK_LOCK перед unlink
+// current.bin); синхронизации между ними нет. Обычную гонку закрывает gen (s_reset_gen++ до снимка). Остаточное окно: снимок
+// ПОСЛЕ reset_state_zero, его rename до unlink(AUTOSAVE_FILE) в reset_impl, затем автосейв ждёт MARK_LOCK -> файл удалён, метка
+// снята, s_as_last={true,crc,G+1}, и без прибора следующие автосейвы пропускаются до изменения спектра (на старте поднимется bk_*).
+// Нужно вытеснение reset_impl между созданием метки и unlink на всё время записи (~100 мс).
+static as_last_t s_as_last;
+static uint32_t  s_as_skips;   // 1.2.36 P1: пропущенные (неизменные) одноразовые записи, /api/system autosave_skips
 static uint32_t  s_sess_req;   // 1.2.31: запросы новой сессии (Сброс непустого спектра), под SPEC_LOCK
 static uint32_t  s_stage_reset_gen;               // снимок gen на offset==0 (CDC)
 // AWF-4: момент spectrum_reset() (esp_timer, мкс) — гейт правдоподобности STAT
@@ -853,6 +875,7 @@ static void reset_impl(char mark_state)
     // "ok":true immediately) followed by a reboot/power cut inside the deferred
     // window left current.bin on flash; spectrum_restore_autosave() at boot then
     // silently resurrected the pre-reset spectrum — the Reset undid itself.
+    s_as_last.have = false;   // 1.2.36 P1: current.bin удаляется — следующая запись обязательна
     if (unlink(AUTOSAVE_FILE) != 0 && errno != ENOENT)
         ESP_LOGW(TAG, "Reset: current.bin unlink failed (errno=%d)", errno);
     // F2 (итоговое ревью 25.09): restore_resolve() читает current.bin.tmp как
@@ -888,6 +911,15 @@ static void reset_impl(char mark_state)
 const spectrum_data_t *spectrum_get_current(void) { return &s_spectrum; }
 const device_info_t   *spectrum_get_device_info(void) { return &s_device_info; }
 
+// 1.2.36 OPT-1: живое время по снимку sp и device_info (одна формула — live_time.h). device_info
+// читается без замка, как и раньше в обеих прежних копиях (спека §3 F «не чинить в этом коммите»).
+float spectrum_compute_live_time(const spectrum_data_t *sp)
+{
+    const device_info_t *di = &s_device_info;
+    return live_time_calc(sp->total_time_sec, sp->total_counts, sp->lost_impulses,
+                          di->valid, di->rise, di->fall, di->freq);
+}
+
 // Атомарный снимок спектра под локом — для сетевых читателей (export/spectrum).
 // Лок держится только на время memcpy; httpd_resp_send идёт уже по копии.
 bool spectrum_get_snapshot(spectrum_data_t *out)
@@ -897,6 +929,22 @@ bool spectrum_get_snapshot(spectrum_data_t *out)
     SPEC_UNLOCK();
     return out->valid;
 }
+
+// 1.2.36 H1 (A): снимок для кэша /api/spectrum* без мьютекса (seqlock, seq_copy.h) — приём USB
+// (usb_rxw) не ждёт копию 32 КБ. Не вышло за SPEC_SEQ_TRIES — прежний путь под замком.
+#define SPEC_SEQ_TRIES 3
+static void spec_seq_memcpy(void *d, const void *s, size_t n) { memcpy(d, s, n); }
+static void spec_seq_wait(void) { esp_rom_delay_us(200); }   // не vTaskDelay: тик 10 мс
+bool spectrum_get_snapshot_seq(spectrum_data_t *out)
+{
+    if (seq_copy(&s_spec_seq, out, &s_spectrum, sizeof(*out), SPEC_SEQ_TRIES,
+                 spec_seq_memcpy, spec_seq_wait, &s_spec_seq_retry))
+        return out->valid;
+    s_spec_seq_fallback++;
+    return spectrum_get_snapshot(out);
+}
+uint32_t spectrum_spec_seq_retry(void) { return s_spec_seq_retry; }
+uint32_t spectrum_spec_seq_fallback(void) { return s_spec_seq_fallback; }
 
 // У-3: снимок + счётчик переноса опоры под одним локом — иначе водопад может
 // увидеть новые данные со старым счётчиком и выдать строку-скачок.
@@ -1463,6 +1511,7 @@ static int s_as_slices;
 static int64_t s_as_t0;
 static int s_as_fail_streak;
 static int64_t s_as_last_ok_us;
+static uint32_t s_as_writes;   // 1.2.36 Commit 0: успешные one-shot записи current.bin (наблюдаемость, /api/system autosave_writes)
 static volatile bool s_as_abort;
 static volatile bool s_as_abort_unlink;   // П-6: abort от Сброса — удалить и current.bin
 
@@ -1506,6 +1555,16 @@ void spectrum_autosave_note_ok(void)
 {
     s_as_fail_streak = 0;
     s_as_last_ok_us = esp_timer_get_time();
+}
+
+uint32_t spectrum_autosave_writes(void)
+{
+    return s_as_writes;
+}
+
+uint32_t spectrum_autosave_skips(void)
+{
+    return s_as_skips;
 }
 
 int spectrum_autosave_fail_streak(void)
@@ -1558,6 +1617,7 @@ void spectrum_autosave_consume_abort(void)
     // it must be visible, not silently claimed as done.
     if (!unlink_main)
         return;
+    s_as_last.have = false;   // 1.2.36 P1: current.bin удаляется
     if (unlink(AUTOSAVE_FILE) == 0)
         ESP_LOGI(TAG, "autosave consume: current.bin unlinked");
     else if (errno != ENOENT)
@@ -1699,6 +1759,7 @@ void spectrum_autosave_pump(void)
         }
         flash_quiet_writer_unlock();
         http_io_gate_leave();
+        s_as_last.have = false;   // 1.2.36 P1: current.bin записан порционным путём — CRC последней одноразовой записи устарел
         reset_mark_clear_if_current(s_as_snap_gen);
         int64_t total_us = esp_timer_get_time() - s_as_t0;
         ESP_LOGI(TAG, "autosave complete slices=%d total_us=%lld",
@@ -1776,6 +1837,16 @@ void spectrum_autosave(void)
     uint32_t snap_gen = s_reset_gen;
     SPEC_UNLOCK();
 
+    // 1.2.36 P1: байты снимка те же, что в последней успешной записи этим путём, и Сброса не было -> файл равен RAM.
+    // С-1 (gate pass1): пропуск сам повторяет снятие reset.mark (неудачный unlink иначе не повторялся бы никогда).
+    uint32_t snap_crc = imp_crc32((const uint8_t *)snap, sizeof(*snap), 0);
+    if (autosave_skip_step(&s_as_last, snap_crc, snap_gen, reset_mark_clear_if_current)) {
+        free(snap);
+        spectrum_autosave_note_ok();
+        s_as_skips++;
+        ESP_LOGI(TAG, "autosave skipped: unchanged");
+        return;
+    }
     if (!http_io_gate_try_enter()) {
         free(snap);
         spectrum_autosave_note_fail();
@@ -1790,11 +1861,14 @@ void spectrum_autosave(void)
     // снаружи atomic_write_snapshot() (esp_timer_get_time() вокруг вызова).
     if (!atomic_write_snapshot(AUTOSAVE_TMP_FILE, AUTOSAVE_FILE, snap)) {
         ESP_LOGE(TAG, "Autosave write failed (errno=%d)", errno);
+        s_as_last.have = false;   // 1.2.36 P1: отказ записи — состояние файла неизвестно
         http_io_gate_leave();
     } else {
         http_io_gate_leave();
         reset_mark_clear_if_current(snap_gen);
         spectrum_autosave_note_ok();
+        s_as_writes++;
+        s_as_last = (as_last_t){ true, snap_crc, snap_gen };
     }
     free(snap);
 }
@@ -2087,4 +2161,14 @@ bool spectrum_get_meta(spectrum_data_t *out)
            sizeof(spectrum_data_t) - off);
     SPEC_UNLOCK();
     return out->valid;
+}
+
+// 1.2.36 H12: то же для /api/device без буфера sizeof(spectrum_data_t) (~33 КБ) на каждый запрос —
+// только поля хвоста, нужные ответу (spectrum_calib_meta.h, ~110 Б на стеке httpd).
+bool spectrum_get_calib_meta(spectrum_calib_meta_t *m)
+{
+    SPEC_LOCK();
+    spectrum_calib_meta_from(&s_spectrum, m);
+    SPEC_UNLOCK();
+    return m->valid;
 }

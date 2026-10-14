@@ -1,3 +1,4 @@
+#include "socket_budget.h"  // 1.2.36 P1: #error при устаревшем sdkconfig (LWIP_MAX_SOCKETS/ACTIVE_TCP < 24)
 #include "atomspectra.h"
 #include "calib_autoread.h"  // #AWF-12b R4: calib_is_missing — тот же снимок, что "calibration"
 #include "calib_export.h"    // R7 (sweep-A): признак «калибровка есть» в экспорте XML/N42/SPE
@@ -11,7 +12,9 @@
 #include "spectrogram.h"    // #FIELD-5: spectrogram_time_synced() при установке времени
 #include "net_time.h"       // #FIELD-5: guard-логика источника времени
 #include "monitor.h"        // #MON-1: серия CPS-мониторинга (/api/monitor/series)
+#include "meta_w_handler.h" // З-5 (gate 1.2.36 pass1) / З-3 (pass2): обработчик meta.json?w= (разбор meta_w_parse.h)
 #include "spectrum_http_cache.h"  // #PERF-1: 2s snapshot cache + meta/binary
+#include "spectrum_calib_meta.h"  // 1.2.36 H12: /api/device без буфера 33 КБ
 #include "http_io_gate.h"         // #PERF-2: HEAVY lane gate
 #include "flash_quiet.h"          // М7: координация записи слепка DSP с autosave (#FW-8)
 #include "backup_plan.h"          // issue #52: разбор имени снимка в /api/backup/*
@@ -47,6 +50,8 @@
 #include "ota_timeout_budget.h"    // D4 (sweep-B задача 1): host-тест границы
 #include "spectrum_import_plan.h"  // 1.2.31: импорт фона (разбор тела ASI1) + путь удаления записи (host-тест)
 #include "n42_time_plan.h"           // #AWF-F2: StartDateTime N42 в UTC с Z (host-тест)
+#include "ttl_plan.h"            // 1.2.36 H5: срок жизни медленной части /api/system (host-тест)
+#define SYS_SLOW_PERIOD_US (10LL * 1000000LL)   // 1.2.36 H5: период обхода кучи/стеков (решение оператора 2026-10-10)
 #include "import_body_plan.h"      // 1.2.32: D-1131-1/#AWF-F3 — план приёма тела /api/import (host-тест)
 _Static_assert(IMPORT_BODY_SIZE == SPEC_IMPORT_SIZE, "import_body_plan.h: IMPORT_BODY_SIZE != SPEC_IMPORT_SIZE");
 #include "snapshot_file.h"         // У4 (раунд 3): слепок DSP — tmp + rename (host-тест)
@@ -235,29 +240,15 @@ static esp_err_t handle_spectrum(httpd_req_t *req)
 
 static esp_err_t handle_spectrum_meta(httpd_req_t *req)
 {
-    // #PERF-1: meta without 8192 bins (system/monitor tiles)
-    return spectrum_http_send_meta(req);
+    // #PERF-1: meta without 8192 bins; 1.2.36 #MX-14 ?w= - SMA окна W. Разбор и ответы - meta_w_handler.h (gate pass2 З-3: исполняется host-тестом склейки)
+    return meta_w_handle(req);
 }
 
-// #DT-4: мёртвое время берём ИЗ ДЕТЕКТОРА. STAT-кадр (cmd 0x04) несёт pulse_width
-// [offset 14, u32] = суммарная ширина импульсов (отсчёты АЦП) — реально измеренное прибором
-// занятое время (учитывает наложения). dead = pulse_width/F; live = total - dead.
-// Фоллбэк (#DT-1, модель total_counts*(RISE+FALL+Srise+Sfall)/F) — для прошивок без pulse_width
-// (kADR<18 байт → pulse_width==0) или пока -inf не прочитан / F<=0.
-static float compute_live_time(const spectrum_data_t *sp)
-{
-    const device_info_t *di = spectrum_get_device_info();
-    float total = (float)sp->total_time_sec;
-    if (!di->valid || di->freq <= 0.0f) return total;
-    // #DT-4: метод BecqMoni (эталон Am6er, Utils/LiveTime.cs + AtomSpectraVCPDeviceForm.cs).
-    // Мёртвое время на импульс τ = (RISE+FALL+1)/F (RISE/FALL/F из -inf, т.е. из прибора).
-    // Мёртвое время за набор = (valid+invalid импульсы)·τ; TotalPulseCount = sum + InvalidPulses.
-    float tau = ((float)di->rise + (float)di->fall + 1.0f) / di->freq;
-    float dead = (float)(sp->total_counts + sp->lost_impulses) * tau;
-    if (dead < 0.0f) dead = 0.0f;
-    if (dead > total) dead = total;
-    return total - dead;
-}
+// #DT-4 / 1.2.36 OPT-1: живое время — метод BecqMoni (эталон Am6er, Utils/LiveTime.cs): мёртвое время на
+// импульс tau = (RISE+FALL+1)/F (RISE/FALL/F из -inf прибора), dead = (counts+lost)·tau, live = total - dead.
+// Формула одна на всё (main/live_time.h; обёртка spectrum_compute_live_time() в spectrum.c): раньше здесь и в
+// spectrum_http_cache.c лежали две копии, а этот комментарий описывал pulse_width (STAT offset 14),
+// которого в расчёте нет (поле pulse_width — диагностика, atomspectra.h).
 
 static esp_err_t render_spectrum_json(httpd_req_t *req, const spectrum_data_t *sp)
 {
@@ -293,7 +284,7 @@ static esp_err_t render_spectrum_json(httpd_req_t *req, const spectrum_data_t *s
         "\"autosave_age_sec\":%d,\"autosave_fail_streak\":%d,"
         "\"t1\":%s,\"t2\":%s,\"t3\":%s,\"serial\":\"%s\",\"dead\":%d",
         sp->total_counts, sp->cpu_load, sp->cps, sp->lost_impulses,
-        sp->total_time_sec, compute_live_time(sp),
+        sp->total_time_sec, spectrum_compute_live_time(sp),
         tcp_bridge_dropped_bytes(), usb_host_cdc_rx_errors(), usb_host_cdc_rx_ring_drops(),
         hist_ok, hist_drop, as_age, as_streak,
         jt1, jt2, jt3,
@@ -1229,6 +1220,29 @@ static esp_err_t handle_common_time_js(httpd_req_t *req)
     extern const uint8_t common_time_js_start[] asm("_binary_common_time_js_start");
     extern const uint8_t common_time_js_end[]   asm("_binary_common_time_js_end");
     httpd_resp_set_type(req, "application/javascript");
+    // 1.2.36 (риск аудита S1-1): скрипт вырос до ~17 КБ и уходил целиком на каждый показ страницы. ETag = первые 8 байт SHA-256 ELF
+    // (app_elf_sha256: меняется с любой пересборкой, а не только с version.txt -> после OTA старый кеш не подходит) + no-cache:
+    // браузер всегда ревалидирует, при совпадении получает 304 без тела. Версия в URL не нужна (страницы не меняются).
+    char etag[20];
+    const esp_app_desc_t *ad = esp_app_get_description();
+    if (ad) {
+        static const char hx[] = "0123456789abcdef";
+        etag[0] = '"';
+        for (int i = 0; i < 8; i++) {
+            etag[1 + 2 * i] = hx[ad->app_elf_sha256[i] >> 4];
+            etag[2 + 2 * i] = hx[ad->app_elf_sha256[i] & 15];
+        }
+        etag[17] = '"';
+        etag[18] = 0;
+        httpd_resp_set_hdr(req, "ETag", etag);
+        char inm[24];
+        if (httpd_req_get_hdr_value_str(req, "If-None-Match", inm, sizeof(inm)) == ESP_OK && strcmp(inm, etag) == 0) {
+            httpd_resp_set_status(req, "304 Not Modified");
+            httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+            return httpd_resp_send(req, NULL, 0);
+        }
+    }
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
     httpd_resp_send(req, (const char *)common_time_js_start, common_time_js_end - common_time_js_start);
     return ESP_OK;
 }
@@ -1315,7 +1329,7 @@ static esp_err_t render_spectrum_xml(httpd_req_t *req, const spectrum_data_t *sp
             "        </EnergyCalibration>\r\n");
     }
 
-    float live_time = compute_live_time(sp);
+    float live_time = spectrum_compute_live_time(sp);
 
     n = snprintf(buf, 4096,
         "        <ValidPulseCount>%" PRIu32 "</ValidPulseCount>\r\n"
@@ -1485,7 +1499,7 @@ static esp_err_t render_spectrum_n42(httpd_req_t *req, const spectrum_data_t *sp
     n = snprintf(buf, 4096,
         "      <LiveTimeDuration>PT%.1fS</LiveTimeDuration>\r\n"
         "      <ChannelData compressionCode=\"None\">",
-        compute_live_time(sp));
+        spectrum_compute_live_time(sp));
     httpd_resp_send_chunk(req, buf, n);
     for (int i = 0; i < SPECTRUM_CHANNELS; ) {
         int pos = 0;
@@ -1538,7 +1552,7 @@ static esp_err_t render_spectrum_spe(httpd_req_t *req, const spectrum_data_t *sp
         sp->serial_number[0] ? sp->serial_number : "AtomSpectra",
         ts.tm_mday, ts.tm_mon + 1, (ts.tm_year + 1900) % 100,
         ts.tm_hour, ts.tm_min, ts.tm_sec,
-        compute_live_time(sp), (double)sp->total_time_sec);
+        spectrum_compute_live_time(sp), (double)sp->total_time_sec);
     // #FIELD-9 (A11): near-epoch → строка COMMENT (SPE игнорирует неизвестные ключи); только при рассинхроне
     if (!time_is_synced(end_time))
         pos += snprintf(buf + pos, 4096 - pos, "COMMENT=TIME NOT SYNCHRONIZED (board clock near-epoch)\r\n");
@@ -1882,11 +1896,12 @@ static esp_err_t handle_device(httpd_req_t *req)
     // #PERF-4: только метаданные — bins[] здесь не нужны (используются
     // serial_number/calibration/calib_order/calib_valid). Полный снимок держал
     // SPEC_LOCK на 32 КБ и отнимал 8,5 % свипов у приёма USB.
-    spectrum_data_t *sp = malloc(sizeof(*sp));
-    bool have_sp = sp && spectrum_get_meta(sp);
+    // 1.2.36 H12: и буфер на ~33 КБ под этот снимок не выделяется — пять нужных полей
+    // (~110 Б) лежат в локальной структуре на стеке httpd.
+    spectrum_calib_meta_t m;
+    bool have_sp = spectrum_get_calib_meta(&m);
     cJSON *root = cJSON_CreateObject();
     if (!root) {  // P2-7: при OOM cJSON_Add* разыменует NULL
-        free(sp);
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
         return ESP_FAIL;
     }
@@ -1910,14 +1925,14 @@ static esp_err_t handle_device(httpd_req_t *req)
         cJSON_AddBoolToObject(root, "tc_on", di->tc_on);
         cJSON_AddNumberToObject(root, "tp", di->tp);
     }
-    if (have_sp && sp->serial_number[0])
-        cJSON_AddStringToObject(root, "serial", sp->serial_number);
-    if (have_sp && sp->calib_valid) {
+    if (have_sp && m.serial_number[0])
+        cJSON_AddStringToObject(root, "serial", m.serial_number);
+    if (have_sp && m.calib_valid) {
         cJSON *cal = cJSON_CreateArray();
-        for (int i = 0; i <= sp->calib_order; i++)
-            cJSON_AddItemToArray(cal, cJSON_CreateNumber(sp->calibration[i]));
+        for (int i = 0; i <= m.calib_order; i++)
+            cJSON_AddItemToArray(cal, cJSON_CreateNumber(m.calibration[i]));
         cJSON_AddItemToObject(root, "calibration", cal);
-        cJSON_AddNumberToObject(root, "calib_order", sp->calib_order);
+        cJSON_AddNumberToObject(root, "calib_order", m.calib_order);
     }
     // #AWF-12b F2 (release-gate-1.2.28-code.md): ОДИН признак "калибровка
     // задана" для прошивки и всех страниц — тот же предикат, что гейт
@@ -1935,7 +1950,7 @@ static esp_err_t handle_device(httpd_req_t *req)
     // локами, куда мог встать разбор дампа usb_rxw, давало "calib_set":true
     // без "calibration"). have_sp==false — тоже "не задана".
     cJSON_AddBoolToObject(root, "calib_set",
-        have_sp && !calib_is_missing(sp->calibration, CALIB_COEFFS, sp->calib_valid));
+        have_sp && !calib_is_missing(m.calibration, CALIB_COEFFS, m.calib_valid));
     // F12/RO1 (release-gate-1.2.28-code-fixes.md:128): счётчик отвергнутых
     // -cal (CRC ok, нули/NaN) — web/service.html "Считать" сверяет "до"/"после".
     cJSON_AddNumberToObject(root, "calib_reject_seq", spectrum_get_calib_reject_seq());
@@ -1945,7 +1960,6 @@ static esp_err_t handle_device(httpd_req_t *req)
     httpd_resp_sendstr(req, json ? json : "{\"ok\":false,\"err\":\"oom\"}");
     free(json);
     cJSON_Delete(root);
-    free(sp);
     return ESP_OK;
 }
 
@@ -1983,11 +1997,32 @@ static esp_err_t handle_system(httpd_req_t *req)
     // историю мониторинга» до сих пор принималось по косвенной цифре. *_free и
     // *_min — счётчики аллокатора; *_largest — ОБХОД блоков кучи в критической
     // секции (У-4): его цена публикуется в heap_walk_us.
-    int64_t walk_t0 = esp_timer_get_time();
-    size_t psram_largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
-    size_t int_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
-    size_t dflt_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DEFAULT);
-    cJSON_AddNumberToObject(root, "heap_walk_us", (double)(esp_timer_get_time() - walk_t0));
+    // 1.2.36 H5 (C): обходы кучи (*_largest, heap_walk_us) и опрос стеков задач — МЕДЛЕННАЯ часть: значение живёт
+    // SYS_SLOW_PERIOD_US (10 с), возраст — heap_walk_age_ms. Счётчики аллокатора (*_free, *_min) читаются на каждый запрос.
+    static const char *const stk_names[] = { "usb_conn", "tcp_rx", "esp_timer", "sys_evt",
+                                             "httpd", "wf_fs", "wf", "usb_rxw", "tcp_tx" };
+    enum { STK_N = sizeof(stk_names) / sizeof(stk_names[0]) };
+    static uint32_t s_heap_walk_n;   // число ОБХОДОВ кучи с загрузки (наблюдаемость, Commit 0)
+    static int64_t  s_slow_at = 0;   // 0 = ещё не читали
+    static size_t   s_psram_largest, s_int_largest, s_dflt_largest;
+    static int64_t  s_walk_us;
+    static int32_t  s_stk_min[STK_N];   // -1 = такой задачи нет
+    int64_t slow_now = esp_timer_get_time();
+    if (ttl_expired(s_slow_at, slow_now, SYS_SLOW_PERIOD_US)) {
+        s_heap_walk_n++;
+        s_psram_largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+        s_int_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+        s_dflt_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DEFAULT);
+        s_walk_us = esp_timer_get_time() - slow_now;
+        for (size_t i = 0; i < STK_N; i++) {
+            TaskHandle_t th = xTaskGetHandle(stk_names[i]);
+            s_stk_min[i] = th ? (int32_t)uxTaskGetStackHighWaterMark(th) : -1;
+        }
+        s_slow_at = slow_now;
+    }
+    size_t psram_largest = s_psram_largest, int_largest = s_int_largest, dflt_largest = s_dflt_largest;
+    cJSON_AddNumberToObject(root, "heap_walk_us", (double)s_walk_us);
+    cJSON_AddNumberToObject(root, "heap_walk_age_ms", (double)((slow_now - s_slow_at) / 1000));
     cJSON_AddNumberToObject(root, "psram_total", heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
     cJSON_AddNumberToObject(root, "psram_free", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     cJSON_AddNumberToObject(root, "psram_largest", psram_largest);
@@ -2009,11 +2044,8 @@ static esp_err_t handle_system(httpd_req_t *req)
     // #AUD-DIAG-1 R5 (часть; F-12/C-38/#RB-STK-1): минимум свободного стека за время работы, байт
     // (ESP-IDF: uxTaskGetStackHighWaterMark — в байтах). Нет задачи — поле не пишется.
     cJSON *stk = cJSON_AddObjectToObject(root, "stack_min_free");
-    static const char *const stk_names[] = { "usb_conn", "tcp_rx", "esp_timer", "sys_evt",
-                                             "httpd", "wf_fs", "wf", "usb_rxw", "tcp_tx" };
-    for (size_t i = 0; stk && i < sizeof(stk_names) / sizeof(stk_names[0]); i++) {
-        TaskHandle_t th = xTaskGetHandle(stk_names[i]);
-        if (th) cJSON_AddNumberToObject(stk, stk_names[i], (double)uxTaskGetStackHighWaterMark(th));
+    for (size_t i = 0; stk && i < STK_N; i++) {
+        if (s_stk_min[i] >= 0) cJSON_AddNumberToObject(stk, stk_names[i], (double)s_stk_min[i]);
     }
     cJSON_AddNumberToObject(root, "uptime_sec", (double)(esp_timer_get_time() / 1000000));
     cJSON_AddBoolToObject(root, "usb_connected", usb_host_cdc_is_connected());
@@ -2030,7 +2062,7 @@ static esp_err_t handle_system(httpd_req_t *req)
     static size_t s_fs_total = 0, s_fs_used = 0;
     static int64_t s_fs_at = 0;                 // 0 = ещё не читали
     int64_t now_us = esp_timer_get_time();
-    if (s_fs_at == 0 || now_us - s_fs_at > 30LL * 1000000LL) {
+    if (ttl_expired(s_fs_at, now_us, 30LL * 1000000LL)) {
         size_t t = 0, u = 0;
         if (esp_littlefs_info("storage", &t, &u) == ESP_OK) {
             s_fs_total = t; s_fs_used = u; s_fs_at = now_us;
@@ -2063,6 +2095,15 @@ static esp_err_t handle_system(httpd_req_t *req)
     cJSON_AddBoolToObject(root,   "sntp_synced",    net_time_sntp_synced());
     // #PERF-1/#PERF-2: observability for multi-tab spectrum cache + HEAVY gate
     cJSON_AddNumberToObject(root, "spectrum_render_count", (double)spectrum_http_cache_render_count());
+    // 1.2.36 Commit 0: счётчики для замера «до/после» (цена пересборки кэша, обходы кучи, записи автосейва)
+    cJSON_AddNumberToObject(root, "spectrum_build_us", (double)spectrum_http_cache_build_us_last());
+    cJSON_AddNumberToObject(root, "spectrum_build_us_max", (double)spectrum_http_cache_build_us_max());
+    cJSON_AddNumberToObject(root, "spectrum_json_builds", (double)spectrum_http_cache_json_builds());
+    cJSON_AddNumberToObject(root, "heap_walk_n", (double)s_heap_walk_n);
+    cJSON_AddNumberToObject(root, "autosave_writes", (double)spectrum_autosave_writes());
+    cJSON_AddNumberToObject(root, "autosave_skips", (double)spectrum_autosave_skips());
+    cJSON_AddNumberToObject(root, "spec_seq_retry", (double)spectrum_spec_seq_retry());       // 1.2.36 H1: повторы seqlock-копии
+    cJSON_AddNumberToObject(root, "spec_seq_fallback", (double)spectrum_spec_seq_fallback()); // снимков под SPEC_LOCK (запасной путь)
     cJSON_AddBoolToObject(root,   "http_heavy_busy", http_io_gate_busy());
     cJSON_AddNumberToObject(root, "http_heavy_rejects", (double)http_io_gate_reject_count());
     char *json = cJSON_PrintUnformatted(root);
@@ -2901,7 +2942,7 @@ void web_server_init(void)
     //   grep -cE '^\s*reg\(server' main/web_waterfall.c   (+1 на /ws/waterfall)
     config.max_uri_handlers = 90;
     config.stack_size = 8192;
-    config.max_open_sockets = 11;        // из 16 LWIP-сокетов; запас для tcp_bridge + sntp
+    config.max_open_sockets = HTTPD_MAX_OPEN_SOCKETS;   // socket_budget.h: 19 + 3 внутр. + 2 tcp_bridge = 24 (проверка при сборке)
     config.lru_purge_enable = true;      // при исчерпании пула закрыть LRU-соединение, не отказывать (errno 23)
     config.uri_match_fn = httpd_uri_match_wildcard;
     // #UI-15 P0: чистим WS-реестр при ЛЮБОМ закрытии сокета (RST/FIN/LRU/F5);

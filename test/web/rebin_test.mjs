@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 const page = readFileSync(process.argv[2] || "web/index.html", "utf8");
 const a = page.indexOf("/*REBIN-BEGIN*/"), b = page.indexOf("/*REBIN-END*/");
 if (a < 0 || b < a) throw new Error("REBIN-BEGIN/END not found");
-const L = new Function(page.substring(a, b) + "; return {rebinByEnergy,calSame,calE};")();
+const cs = readFileSync(process.argv[3] || "web/common-time.js", "utf8"), c1 = cs.indexOf("/*CAL-BEGIN*/"), c2 = cs.indexOf("/*CAL-END*/");   // OPT-9: полином/обратная функция - общий блок CAL в common-time.js
+if (c1 < 0 || c2 < c1) throw new Error("CAL-BEGIN/END not found");
+const L = new Function(cs.substring(c1, c2) + page.substring(a, b) + "; return {rebinByEnergy,calSame,calE};")();
 const fx = readFileSync("tests/host/fixtures/imp_real_bins.h", "utf8");
 const real = fx.substring(fx.indexOf("IMP_REAL_BINS[8192]")).match(/\d+/g).slice(1).map(Number);
 const calReal = fx.match(/IMP_REAL_CALIB\[5\] = \{([^}]*)\}/)[1].split(",").map(Number);

@@ -54,6 +54,11 @@ table.mon th{ color:var(--accent); font-weight:600; font-size:11px; position:sti
 table.mon td:first-child,table.mon th:first-child{ text-align:left; color:#8a9686; }
 .twrap{ max-height:340px; overflow:auto; border:1px solid var(--bd); border-radius:8px; }
 canvas{ width:100%; height:auto; display:block; }
+@media (max-width:480px){  /* #UI-MOB: 375px - шапка переносится (как на главной), чипы не шире экрана */
+header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
+.brand{ min-width:0; flex-wrap:wrap; gap:10px; }
+.chips{ min-width:0; justify-content:flex-start; }
+}
 </style>
 </head>
 <body>
@@ -75,7 +80,7 @@ canvas{ width:100%; height:auto; display:block; }
 <section class="panel">
 <div class="ctl">
 <label><span data-i18n="ctl.interval">Интервал усреднения, с</span>
-<input type="number" id="interval" min="1" max="86400" step="1" value="10"></label>
+<input type="number" id="interval" min="1" max="86400" step="1" value="10" oninput="saveState()"></label>
 <button class="btn green" id="startBtn" onclick="toggleRun()" data-i18n="ctl.start">Старт</button>
 <button class="btn" id="clearBtn" onclick="clearData()" data-i18n="ctl.clear">Очистить</button>
 <button class="btn" id="csvBtn" onclick="exportCsv()" data-i18n="ctl.csv">Выгрузить CSV</button>
@@ -150,6 +155,7 @@ canvas{ width:100%; height:auto; display:block; }
 
 </div>
 
+<script src="/common-time.js" onerror="try{var t=+sessionStorage.ctRl||0;if(Date.now()-t>30000){sessionStorage.ctRl=Date.now();setTimeout(function(){location.reload()},800);return}}catch(e){}document.body.insertAdjacentHTML('afterbegin','<p style=&quot;margin:1em;color:#b00;font:16px sans-serif&quot;>Не удалось загрузить скрипт страницы, обновите (F5) / Page script failed to load, press F5</p>')"></script>
 <script>
 "use strict";
 var DICT={
@@ -188,36 +194,13 @@ var DICT={
   "confirm.clear":"Clear all accumulated monitoring samples?"
  }
 };
-var LANG=(function(){try{return localStorage.getItem("aswf-lang")||"ru";}catch(e){return"ru";}})();
-function t(k){var d=DICT[LANG]||DICT.ru;return(d[k]!==undefined)?d[k]:(DICT.ru[k]||k);}
-function tfmt(k){var s=t(k);for(var i=1;i<arguments.length;i++)s=s.replace("%"+i,arguments[i]);return s;}
-function applyI18n(){
- document.querySelectorAll("[data-i18n]").forEach(function(el){ el.textContent=t(el.getAttribute("data-i18n")); });
- document.documentElement.lang=LANG;
- var b=document.getElementById("langBtn"); if(b)b.textContent=(LANG==="ru")?"EN":"RU";
-}
-function setLang(l){ if(l!=="ru"&&l!=="en")l="ru"; LANG=l; try{localStorage.setItem("aswf-lang",l);}catch(e){} applyI18n(); renderStartBtn(); renderStatus(); try{drawChart();}catch(e){} }
+/* #OPT-13: LANG/t/tfmt/applyI18n/setLang - общий каркас в common-time.js; здесь только перерисовка при смене языка */
+i18nInit(DICT,{onLang:function(){renderStartBtn(); renderStatus(); try{drawChart();}catch(e){}}});
 
 function ac(){return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#34d3c0';}
 
 // --- Форматирование чисел ---
 function fmtCps(v){ if(!isFinite(v))return "—"; if(v>=100)return v.toFixed(1); if(v>=1)return v.toFixed(3); return v.toFixed(4); }
-function pad2(n){return (n<10?"0":"")+n;}
-// #UI-38: часовой пояс — настройка «Система → Часовой пояс» (localStorage aswf-tz):
-// "auto" = пояс браузера, иначе смещение от UTC в минутах (напр. "180" = UTC+03:00).
-function tzMode(){try{return localStorage.getItem("aswf-tz")||"auto";}catch(e){return"auto";}}
-function tzShift(d){ // Date, локальные getters которого дают время в выбранном поясе
- var m=tzMode(); if(m==="auto")return d;
- var off=parseInt(m,10); if(!isFinite(off))return d;
- return new Date(d.getTime()+(off+d.getTimezoneOffset())*60000);
-}
-function tzOffMin(){ var m=tzMode(); if(m!=="auto"){var o=parseInt(m,10); if(isFinite(o))return o;} return -new Date().getTimezoneOffset(); }
-function tzLabel(){ var o=tzOffMin(), s=o<0?"-":"+", a=Math.abs(o); return "UTC"+s+pad2(Math.floor(a/60))+":"+pad2(a%60); }
-function hms(d){d=tzShift(d);return pad2(d.getHours())+":"+pad2(d.getMinutes())+":"+pad2(d.getSeconds());}
-function isoLocal(d){ // время в выбранном поясе, ISO без TZ-суффикса (для CSV/Excel)
- d=tzShift(d);
- return d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate())+" "+pad2(d.getHours())+":"+pad2(d.getMinutes())+":"+pad2(d.getSeconds());
-}
 
 // --- Состояние мониторинга ---
 // #MON-1: сбор серии перенесён на плату. Плата копит базовые 1с-сэмплы
@@ -252,7 +235,7 @@ var anchorWall=0, anchorEnd=0;
 // --- Персист (#MON-1: localStorage — НЕ источник истории, только параметры
 // сессии; сама история восстанавливается с платы дотягиванием по seq) ---
 var LS_KEY="aswf-mon-sess";
-(function(){try{var v=localStorage.getItem("aswf-sma-win"),e=document.getElementById("smaWin");if(v&&e)e.value=v}catch(_){}})();   // #MX-8: окно SMA помнится и читается страницей спектра
+(function(){try{var v=localStorage.getItem("aswf-sma-win"),e=document.getElementById("smaWin");if(v&&e)e.value=v}catch(_){}})();   // #MX-8: окно SMA графика помнится (главная его больше не читает: её окно = интервал усреднения)
 function saveState(){
  try{
   localStorage.setItem(LS_KEY,JSON.stringify({r:running,iv:intervalSec(),ss:sessStart,sp:sessStopSeq,ep:boardEpoch,aw:anchorWall,ae:anchorEnd}));
@@ -343,10 +326,10 @@ async function livePoll(){
  if(total!==null){ devDot.classList.remove("off"); devStat.textContent=t("dev.chipOk"); }
  else{ devDot.classList.add("off"); devStat.textContent=t("dev.chipOff"); }
  if(cps!==null)  document.getElementById("live-cps").textContent=fmtCps(cps);
- if(total!==null)document.getElementById("live-total").textContent=total.toLocaleString("ru-RU");
- if(time!==null) document.getElementById("live-time").textContent=time.toLocaleString("ru-RU");
+ if(total!==null)document.getElementById("live-total").textContent=total.toLocaleString(lcl());
+ if(time!==null) document.getElementById("live-time").textContent=time.toLocaleString(lcl());
  /* #MX-13 (1.2.34, #62): средний CPS за набор = total / live (живое время, с, из meta.json); формула avgCps — common-time.js; нет live — «—» */
- var avg=(typeof avgCps==="function")?avgCps(total,r.live):null;  /* common-time.js подключён ниже (:659) — первый опрос может прийти раньше его загрузки */ document.getElementById("live-avg").textContent=(avg===null)?"—":avg.toFixed(2);
+ var avg=(typeof avgCps==="function")?avgCps(total,r.live):null;  /* common-time.js подключён перед inline-скриптом (OPT-12); проверка typeof — на случай сбоя загрузки файла */ document.getElementById("live-avg").textContent=(avg===null)?"—":avg.toFixed(2);
 }
 
 // --- Сбор серии с платы (#MON-1) ---
@@ -445,14 +428,14 @@ async function syncSeries(){
 function appendRow(s){
  var tb=document.getElementById("tbody");
  var tr=document.createElement("tr");
- tr.innerHTML="<td>"+hms(s.ts)+"</td><td>"+s.dur+"</td><td>"+s.counts.toLocaleString("ru-RU")+"</td><td>"+fmtCps(s.cps)+"</td><td>"+(isFinite(s.rel)?s.rel.toFixed(2):"—")+"</td><td>"+(isFinite(s.temp)?s.temp.toFixed(1):"—")+"</td>";
+ tr.innerHTML="<td>"+hms(s.ts)+"</td><td>"+s.dur+"</td><td>"+s.counts.toLocaleString(lcl())+"</td><td>"+fmtCps(s.cps)+"</td><td>"+(isFinite(s.rel)?s.rel.toFixed(2):"—")+"</td><td>"+(isFinite(s.temp)?s.temp.toFixed(1):"—")+"</td>";
  tb.insertBefore(tr,tb.firstChild); // новые сверху
  while(tb.children.length>500) tb.removeChild(tb.lastChild);
 }
 function renderAggregates(){
  document.getElementById("n-samples").textContent=samples.length;
- document.getElementById("sess-counts").textContent=sessCounts.toLocaleString("ru-RU");
- document.getElementById("sess-dur").textContent=sessDur.toLocaleString("ru-RU");
+ document.getElementById("sess-counts").textContent=sessCounts.toLocaleString(lcl());
+ document.getElementById("sess-dur").textContent=sessDur.toLocaleString(lcl());
  if(sessDur>0){
   var g=sessCounts/sessDur, gr=(sessCounts>0)?100/Math.sqrt(sessCounts):NaN;
   document.getElementById("grand-cps").textContent=fmtCps(g);
@@ -465,7 +448,7 @@ function renderAggregates(){
   var l=samples[samples.length-1];
   document.getElementById("last-cps").textContent=fmtCps(l.cps);
   document.getElementById("last-rel").textContent=isFinite(l.rel)?l.rel.toFixed(2)+" %":"—";
-  document.getElementById("last-counts").textContent=l.counts.toLocaleString("ru-RU");
+  document.getElementById("last-counts").textContent=l.counts.toLocaleString(lcl());
   document.getElementById("last-dur").textContent=l.dur;
  }
 }
@@ -510,8 +493,8 @@ function drawChart(){
  // SMA по всему массиву (trailing, окно = win интервалов) — считаем до вырезки окна, чтобы край окна был корректным
  var win=parseInt(document.getElementById("smaWin")?document.getElementById("smaWin").value:10,10);
  if(!(win>=2))win=2; if(win>200)win=200;
- var smaAll=[],acc=0;
- for(i=0;i<N;i++){ acc+=samples[i].cps; if(i>=win)acc-=samples[i-win].cps; smaAll.push(acc/Math.min(i+1,win)); }
+ /* #MX-14 (1.2.36): SMA - отношение сумм за окно в вёдрах (smaRatioSeries, common-time.js), как у главной (та берёт то же определение с платы) */
+ var smaAll=smaRatioSeries(samples.map(function(s){return s.counts}),samples.map(function(s){return s.dur}),win);
  // Окно просмотра
  var cnt=chartView.cnt==null ? Math.min(DEF_VIEW,N) : clampNum(chartView.cnt,2,N);
  var endIdx=chartView.end==null ? N : clampNum(chartView.end,cnt,N); // exclusive
@@ -652,10 +635,9 @@ async function savePrefix(){var e=document.getElementById("fx-prefix"),st=docume
  // #MON-1: живая панель + синк серии с платы раз в 2 с; серия дотягивается
  // циклом внутри syncSeries — пропуски фона/F5/закрытой вкладки закрываются сами.
  livePoll(); syncSeries();
- setInterval(function(){ livePoll(); syncSeries(); },2000);
+ (window.pollWhileVisible||setInterval)(function(){ return Promise.all([livePoll(), syncSeries()]); },2000);
  window.addEventListener("resize",drawChart);
 })();
 </script>
-<script src="/common-time.js"></script>
 </body>
 </html>
