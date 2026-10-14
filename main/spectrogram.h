@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <time.h>
+#include "dose_api.h"       // #DOSE-A: spec_dose_t + прототипы живой МД
 
 // Водопад (спектрограмма): каждая строка — дельта накопительного спектра за
 // интервал, uint16 на канал. Источник спектра — модуль spectrum (cmd 0x01).

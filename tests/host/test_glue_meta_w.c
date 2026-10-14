@@ -31,6 +31,14 @@ void monitor_window(uint32_t w_sec, uint64_t *sum_counts, uint32_t *sum_dur, uin
     *n = 400u;
 }
 
+/* #DOSE-A: monitor_dose_live() - заглушка: режим none (в ответ уходит хвост ,"dose_rate":null,"dose_mode":"none","dose_w":0) */
+void monitor_dose_live(uint32_t w_sec, spec_dose_t *out) {
+    (void)w_sec;
+    out->have = false;
+    out->rate = 0.0f;
+    out->mode = "none";
+    out->w = 0;
+}
 #include "../../main/meta_w_handler.h"
 
 static int g_failures;
@@ -116,7 +124,11 @@ int main(void) {
     static char expect_sma[1024];
     NCHECK("glue_meta_w_sma", tl > 0 && ml > 1 && ml - 1 + tl < sizeof expect_sma);
     memcpy(expect_sma, STAND_META_JSON, ml - 1);
-    memcpy(expect_sma + ml - 1, tail, tl + 1);
+    /* #DOSE-A: тело окна = meta без '}' + SMA-хвост без '}' + дозовый хвост (заглушка: none) + '}' */
+    static const char dz_tail[] = ",\"dose_rate\":null,\"dose_mode\":\"none\",\"dose_w\":0}";
+    NCHECK("glue_meta_w_sma", tl > 1 && tail[tl - 1] == '}' && ml - 1 + (tl - 1) + sizeof dz_tail < sizeof expect_sma);
+    memcpy(expect_sma + ml - 1, tail, tl - 1);
+    memcpy(expect_sma + ml - 1 + (tl - 1), dz_tail, sizeof dz_tail);
     const mcase_t cases[] = {
         /* main page: w = win * iv, cache buster _=<ms> */
         { NULL, W_META, 0 },

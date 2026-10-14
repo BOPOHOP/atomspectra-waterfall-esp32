@@ -15,6 +15,7 @@
 
 #include "monitor.h"
 #include "monitor_window.h"
+#include "dose_api.h"       // #DOSE-A: spec_dose_t, spectrogram_dose_*
 #include "atomspectra.h"
 
 #include <stdlib.h>
@@ -51,19 +52,36 @@ static uint32_t s_epoch;     // эпоха серии; растёт при от�
 static SemaphoreHandle_t s_lock;
 static SemaphoreHandle_t s_commit_sig;   // отдаёт spectrum.c на каждом коммите свипа
 
-static void ring_push(uint32_t end_sec, uint32_t dcounts, uint16_t dur, int16_t t_dc)
+// #DOSE-A: живая мощность дозы по кривой. Кольцо доз параллельно кольцу сэмплов (тот же индекс, тот же s_lock):
+// s_dose_ring[i] = Σ(Δbins[k]·lut[k]) за сэмпл i, µSv/h·с; NAN — доза неизвестна (нет кривой, разрыв, гонка снимка).
+// Выделяется лениво в PSRAM при первой загруженной кривой; нет памяти — s_dose_alloc_failed, клиентам режим "none".
+static float            *s_dose_ring;
+static volatile bool     s_dose_alloc_failed;
+static uint32_t         *s_dose_prev_bins;   // 32 КБ PSRAM, только monitor_task
+static spectrum_data_t  *s_dose_snap;        // ~33 КБ PSRAM, только monitor_task
+static bool              s_dose_prev_ok;     // s_dose_prev_bins относится к s_dose_prev_t
+static uint32_t          s_dose_prev_t;      // total_time_sec снимка, лежащего в s_dose_prev_bins
+static uint32_t          s_dose_gen_seen;    // последнее увиденное поколение кривой
+
+static void ring_push_dose(uint32_t end_sec, uint32_t dcounts, uint16_t dur, int16_t t_dc, float dose_ws)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s_ring[s_head].end_sec = end_sec;
     s_ring[s_head].counts  = dcounts;
     s_ring[s_head].dur     = dur;
     s_ring[s_head].t_dc    = t_dc;
+    if (s_dose_ring) s_dose_ring[s_head] = dose_ws;   // #DOSE-A: тот же индекс и тот же лок, что у сэмпла
     s_head = (s_head + 1) % s_cap;
     if (s_count < s_cap) s_count++;   // при переполнении старые вытесняются, seq растёт дальше
     s_last_seq++;
     xSemaphoreGive(s_lock);
 }
 
+// #DOSE-A: прежняя сигнатура (4 аргумента) — сэмпл без дозы (NAN); используют host-тесты (test_glue_monitor.c).
+__attribute__((unused)) static void ring_push(uint32_t end_sec, uint32_t dcounts, uint16_t dur, int16_t t_dc)
+{
+    ring_push_dose(end_sec, dcounts, dur, t_dc, NAN);
+}
 // Откат счётчиков (сброс спектра -rst / рестарт прибора): новая эпоха, кольцо
 // очищается. seq НЕ обнуляется — монотонен через эпохи, клиенту так проще.
 static void ring_new_epoch(void)
@@ -131,6 +149,118 @@ void monitor_window(uint32_t w_sec, uint64_t *sum_counts, uint32_t *sum_dur, uin
     *n = k;
 }
 
+// ---- #DOSE-A: живая мощность дозы по кривой -------------------------------------------------------------------
+
+// Залить кольцо доз NAN под s_lock (смена кривой/коэффициента: дозы прежней кривой в окно не попадают).
+static void dose_ring_fill_nan(void)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_dose_ring) {
+        for (uint32_t i = 0; i < s_cap; i++) s_dose_ring[i] = NAN;
+    }
+    xSemaphoreGive(s_lock);
+}
+
+// Ленивое выделение буферов (PSRAM) при первой загруженной кривой. false — нет памяти: один раз WARN, дальше режим "none".
+static bool dose_buffers_ready(void)
+{
+    if (s_dose_ring && s_dose_snap && s_dose_prev_bins) return true;
+    if (s_dose_alloc_failed) return false;
+    float *r = heap_caps_malloc((size_t)s_cap * sizeof(float), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    spectrum_data_t *sn = heap_caps_malloc(sizeof(spectrum_data_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    uint32_t *pb = heap_caps_malloc((size_t)SPECTRUM_CHANNELS * sizeof(uint32_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!r || !sn || !pb) {
+        free(r); free(sn); free(pb);
+        s_dose_alloc_failed = true;
+        ESP_LOGW(TAG, "dose ring alloc failed - live dose disabled (dose_mode=none)");
+        return false;
+    }
+    for (uint32_t i = 0; i < s_cap; i++) r[i] = NAN;
+    s_dose_snap = sn;
+    s_dose_prev_bins = pb;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_dose_ring = r;                      // публикация под локом: ring_push_dose видит указатель только полностью залитым NAN
+    xSemaphoreGive(s_lock);
+    ESP_LOGI(TAG, "dose ring %" PRIu32 " samples (%" PRIu32 " KB PSRAM)", s_cap, (uint32_t)(s_cap * sizeof(float) / 1024));
+    return true;
+}
+
+// Доза сэмпла = Σ(Δbins·lut) между снимком прошлого сэмпла и снимком этого коммита, µSv/h·с; NAN — дозы нет.
+// Сэмпл годен, только если: кривая загружена и не пересобирается; снимок того же коммита, что пара totals
+// (total_time_sec == tsec, тот же resync); прошлый снимок взят на предыдущем сэмпле (s_dose_prev_t == prev_time);
+// ни одного канала с откатом; поколение кривой не менялось за время расчёта.
+static float dose_sample(uint32_t tsec, uint32_t prev_time, uint32_t resync)
+{
+    uint32_t g0 = spectrogram_dose_gen();
+    if (g0 != s_dose_gen_seen) {          // кривую/коэффициент загрузили, удалили или сменили на лету
+        dose_ring_fill_nan();
+        s_dose_gen_seen = g0;
+        s_dose_prev_ok = false;
+    }
+    if ((g0 & 1u) || spectrogram_dose_mode() != 2) { s_dose_prev_ok = false; return NAN; }
+    if (!dose_buffers_ready()) return NAN;
+    uint32_t r2 = 0;
+    if (!spectrum_get_snapshot_wf(s_dose_snap, &r2)) { s_dose_prev_ok = false; return NAN; }
+    bool same = (r2 == resync) && (s_dose_snap->total_time_sec == tsec);
+    float v = NAN;
+    if (same && s_dose_prev_ok && s_dose_prev_t == prev_time) {
+        float ws = 0.0f;
+        if (spectrogram_dose_delta_sum(s_dose_prev_bins, s_dose_snap->bins, &ws) && spectrogram_dose_gen() == g0) v = ws;
+    }
+    if (same) {
+        memcpy(s_dose_prev_bins, s_dose_snap->bins, (size_t)SPECTRUM_CHANNELS * sizeof(uint32_t));
+        s_dose_prev_t = tsec;
+        s_dose_prev_ok = true;
+    } else {
+        s_dose_prev_ok = false;
+    }
+    return v;
+}
+
+// Окно дозы: те же сэмплы, что monitor_window(); *sum_dur_dose — Σdur сэмплов с конечной дозой, *sum_ws — Σ их доз
+// (µSv/h·с), *n_dose — их число. Нет кольца доз / монитор отключён — нули.
+void monitor_window_dose(uint32_t w_sec, float *sum_ws, uint32_t *sum_dur_dose, uint32_t *n_dose)
+{
+    float s = 0.0f;
+    uint32_t sdd = 0, nd = 0;
+    if (s_lock && s_ring) {
+        if (w_sec < 1) w_sec = 1;
+        if (w_sec > s_cap) w_sec = s_cap;
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        if (s_dose_ring) mon_window_dose_sum(s_ring, s_dose_ring, s_cap, s_head, s_count, w_sec, &s, &sdd, &nd);
+        xSemaphoreGive(s_lock);
+    }
+    *sum_ws = s;
+    *sum_dur_dose = sdd;
+    *n_dose = nd;
+}
+
+// Живая МД за окно W (см. dose_api.h): curve — по кольцу доз, scalar — (Σcounts/Σdur)·dose_k, иначе none.
+// dose_rate валиден (have) только при Σdur_dose > 0 и конечном значении; окно — то же, что у SMA.
+void monitor_dose_live(uint32_t w_sec, spec_dose_t *out)
+{
+    out->have = false;
+    out->rate = 0.0f;
+    out->mode = "none";
+    out->w = 0;
+    int m = spectrogram_dose_mode();
+    if (m == 2) {
+        if (s_dose_alloc_failed) return;   // нет памяти под кольцо — клиентам "none"
+        float ws = 0.0f;
+        uint32_t sdd = 0, nd = 0;
+        monitor_window_dose(w_sec, &ws, &sdd, &nd);
+        out->mode = "curve";
+        out->w = sdd;
+        if (sdd > 0 && isfinite(ws)) { out->have = true; out->rate = ws / (float)sdd; }
+    } else if (m == 1) {
+        uint64_t sc = 0;
+        uint32_t sd = 0, n = 0;
+        monitor_window(w_sec, &sc, &sd, &n);
+        out->mode = "scalar";
+        out->w = sd;
+        if (sd > 0) { out->have = true; out->rate = ((float)sc / (float)sd) * spectrogram_get_dose_k(); }
+    }
+}
 static void monitor_task(void *arg)
 {
     (void)arg;
@@ -169,7 +299,8 @@ static void monitor_task(void *arg)
         }
         float t1 = spectrum_get_t1();
         int16_t t_dc = (isfinite(t1) && t1 > -100.0f && t1 < 200.0f) ? (int16_t)lroundf(t1 * 10.0f) : MON_T_NONE;
-        ring_push(tsec, counts - prev_counts, (uint16_t)dur, t_dc);
+        float dose_ws = dose_sample(tsec, prev_time, resync);   // #DOSE-A: NAN, если кривой нет/разрыв/рассинхрон снимка
+        ring_push_dose(tsec, counts - prev_counts, (uint16_t)dur, t_dc, dose_ws);
         prev_counts = counts; prev_time = tsec;
     }
 }

@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "dose_api.h"       // #DOSE-A: spec_dose_t
 
 // Базовый сэмпл серии: дельта одного (или нескольких слитых) коммитов свипа.
 // 12 Б в упаковке (с 1.2.31 — с температурой); кольцо — см. MON_RING_PSRAM в monitor.c.
@@ -37,3 +38,9 @@ size_t monitor_copy_since(uint32_t since, monitor_sample_t *out, size_t max,
 // w_sec клампится к [1, ёмкость кольца]. *sum_counts / *sum_dur — Σcounts / Σdur последних сэмплов, пока Σdur < W
 // (сэмпл, на котором Σdur достигает W, включается); *n — число сэмплов. Пустое кольцо / монитор отключён — нули.
 void monitor_window(uint32_t w_sec, uint64_t *sum_counts, uint32_t *sum_dur, uint32_t *n);
+
+// #DOSE-A: окно дозы — те же сэмплы, что monitor_window(): последние, пока Σdur < W, сэмпл достижения W включается.
+// *sum_ws — Σ доз сэмплов с конечной дозой (µSv/h·с), *sum_dur_dose — Σdur этих сэмплов, *n_dose — их число. Нет кольца — нули.
+void monitor_window_dose(uint32_t w_sec, float *sum_ws, uint32_t *sum_dur_dose, uint32_t *n_dose);
+// Живая МД за окно W: curve — по кольцу доз, scalar — (Σcounts/Σdur)·dose_k, иначе none (dose_api.h).
+void monitor_dose_live(uint32_t w_sec, spec_dose_t *out);

@@ -254,7 +254,7 @@ need ../web/index.html   1 'function visN(N){if(!xRange||!isKev||!calib)return N
 need ../web/index.html   1 'var bw=PW/visN(N);'                                            # MX-9: курсор в том же масштабе
 need ../web/index.html   1 'Math.pow(v/mx,1/Math.E)'                                       # MX-10
 need ../web/index.html   1 'var NM=(NV>=N)?N-1:NV;'                                         # MX-11: канал переполнения вне масштаба
-need monitor.c           1 'ring_push(tsec, counts - prev_counts, (uint16_t)dur, t_dc);'   # MX-12
+need monitor.c           1 'ring_push_dose(tsec, counts - prev_counts, (uint16_t)dur, t_dc, dose_ws);'   # MX-12
 need web_server.c        1 'smp[i].t_dc < 0 ? "-" : ""'                                     # MX-12: знак при -0.x
 need ../web/monitor.html 1 'pushBase(pend[k][0],pend[k][1],pend[k][2],pend[k][3]);'         # MX-12
 need ../web/monitor.html 1 '"rel_err_pct","temp_c"]'                                       # MX-12: колонка в CSV
@@ -387,7 +387,10 @@ need meta_w_handler.h 1 'if (qe == ESP_OK || qe == ESP_ERR_HTTPD_RESULT_TRUNC) m
 need meta_w_handler.h 1 'if (mw == META_W_CUT) { httpd_resp_send_err(req, HTTPD_414_URI_TOO_LONG, "w: query too long"); return ESP_FAIL; }'
 need meta_w_handler.h 0 'HTTPD_400_BAD_REQUEST'
 need meta_w_handler.h 0 'if (ql >= sizeof(q))'
-need meta_w_handler.h 1 'return spectrum_http_send_meta_sma(req, sc, sd, n);'
+need meta_w_handler.h 1 'return spectrum_http_send_meta_sma_dose(req, sc, sd, n, &dz);'
+need meta_w_handler.h 1 'monitor_dose_live(w, &dz);'
+need monitor.c 1 'float dose_ws = dose_sample(tsec, prev_time, resync);'
+need spectrum_http_cache.c 1 'sl = spec_meta_sma_tail(tail, 128, sum_counts, sum_dur, n);'
 need web_server.c 1 'return meta_w_handle(req);'   # pass2 З-3: обработчик - в meta_w_handler.h (исполняет test_glue_meta_w)
 need spectrum_http_cache.c 1 'size_t tl = spec_meta_sma_tail('
 need spectrum_http_cache.c 1 'e = httpd_resp_send_chunk(req, NULL, 0);'

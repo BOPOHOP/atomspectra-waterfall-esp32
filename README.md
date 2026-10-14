@@ -365,9 +365,10 @@ Outdoor → взяли плату + телефон (+ повербанк) в п�
 |---|---|---|
 | `/` | GET | Web UI |
 | `/api/csrf-token` | GET | Выдать CSRF-токен (нужен в заголовке `X-CSRF-Token` на всех POST) |
-| `/api/status` | GET | Статус устройства (JSON) |
+| `/api/status` | GET | Статус устройства (JSON); `dose_mode` / `dose_rate` / `dose_w` — живая мощность дозы за окно 10 с (µSv/h; `null` — нет данных или режим `none`) |
 | `/api/spectrum.json` | GET | Живой спектр + статистика + калибровка |
 | `/api/spectrum` | GET | Сырой бинарный спектр (32768 байт) |
+| `/api/spectrum/meta.json?w=N` | GET | Метаданные спектра без bins; при целом `w` — SMA окна N с (`sma`, `sma_w`, `sma_n`) и живая мощность дозы того же окна: `dose_rate` (µSv/h или `null`), `dose_mode` (`curve` — по кривой `dose_curve.csv`, `scalar` — по `dose_k`, `none`), `dose_w` — фактический охват окна, с |
 | `/api/export.xml` | GET | BecqMoni XML (живой спектр) |
 | `/api/export.csv` | GET | InterSpec CSV (живой спектр) |
 | `/api/export.n42` | GET | ANSI N42.42 (живой спектр) |

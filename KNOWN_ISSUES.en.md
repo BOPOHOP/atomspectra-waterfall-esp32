@@ -50,6 +50,20 @@ request caused the dip is not established. No fix is claimed.
   that the test rig does not make. Not verified.
 - **Workaround:** refresh the page (F5) or wait until replies return (in the observed case about a minute, no board reboot).
 
+### The dose-rate curve loader accepts an energy-based file and computes wrongly - not fixed (#MX-17)
+
+The curve loader (`dose_curve.csv`) does not check the file header and treats the first column as a channel number (0-8191).
+A `dosecurve-v1` file (an energy column in keV) is accepted without an error, the energy values are read as channel numbers,
+and the dose rate is then computed with wrong coefficients. A loader guard is not implemented and no date is set
+(format description and the warning - `docs/dose-curve.md`).
+- **Workaround:** load only files with channel numbers in the first column; do not load a `dosecurve-v1` file or an `E_keV` column.
+
+### The curve loader accepts the coefficient `inf`
+
+For the coefficient `k` the loader checks only `k >= 0`, so the value `inf` is accepted. Finite values must be guaranteed by
+the file's author. What `inf` does in the dose-rate calculation was not checked. No fix is claimed
+(`docs/dose-curve.md`).
+
 ### Background import (Saved -> "Import background...") - limits in 1.2.31
 
 - Exactly 8192 channels are accepted (board JSON, BecqMoni XML, N42, board CSV); 1024/4096 channels are rejected. CSV carries no

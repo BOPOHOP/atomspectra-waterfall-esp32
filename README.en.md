@@ -369,9 +369,10 @@ that point into a **base**, then shows the analyzer's fresh (zeroed) histogram o
 |---|---|---|
 | `/` | GET | Web UI |
 | `/api/csrf-token` | GET | Issue a CSRF token (required in the `X-CSRF-Token` header on all POSTs) |
-| `/api/status` | GET | Device status (JSON) |
+| `/api/status` | GET | Device status (JSON); `dose_mode` / `dose_rate` / `dose_w` - live dose rate over a 10 s window (µSv/h; `null` - no data or mode `none`) |
 | `/api/spectrum.json` | GET | Live spectrum + statistics + calibration |
 | `/api/spectrum` | GET | Raw binary spectrum (32768 bytes) |
+| `/api/spectrum/meta.json?w=N` | GET | Spectrum metadata without bins; with an integer `w` - the N-second SMA (`sma`, `sma_w`, `sma_n`) and the live dose rate of the same window: `dose_rate` (µSv/h or `null`), `dose_mode` (`curve` - from `dose_curve.csv`, `scalar` - from `dose_k`, `none`), `dose_w` - actual window coverage, s |
 | `/api/export.xml` | GET | BecqMoni XML (live spectrum) |
 | `/api/export.csv` | GET | InterSpec CSV (live spectrum) |
 | `/api/export.n42` | GET | ANSI N42.42 (live spectrum) |

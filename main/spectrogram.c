@@ -95,6 +95,7 @@ static bool wf_base_zero(void)
 static float            s_dose_k;       // µSv/h per cps из NVS (0.0 → NaN в dose_rate строк)
 static float           *s_dose_lut;     // PSRAM: 8192×float LUT кривой МД (NULL → scalar k)
 static int              s_dose_curve_n; // точек загружено (0 → scalar k)
+static volatile uint32_t s_dose_gen;   // #DOSE-A: поколение кривой/коэффициента; НЕЧЁТНОЕ — идёт (пере)загрузка LUT
 
 static wf_status_t       s_status;
 static wf_row_cb_t       s_row_cb;
@@ -494,7 +495,7 @@ static void build_dose_lut(const float *ch_arr, const float *k_arr, int n)
     }
 }
 
-void spectrogram_load_dose_curve(void)
+static void dose_curve_load_impl(void)
 {
     if (!s_dose_lut) { s_dose_curve_n = 0; return; }
     static float ch_buf[DOSE_CURVE_MAX_POINTS];
@@ -525,6 +526,40 @@ void spectrogram_load_dose_curve(void)
     ESP_LOGI(TAG, "dose_curve: %d points loaded", n);
 }
 
+// #DOSE-A: публичная загрузка кривой = обёртка над прежним телом (dose_curve_load_impl). Поколение нечётное на время
+// пересборки LUT на месте и чётное после: monitor_task отбрасывает сэмплы, посчитанные по полупересобранной LUT.
+void spectrogram_load_dose_curve(void)
+{
+    s_dose_gen++;
+    dose_curve_load_impl();
+    s_dose_gen++;
+}
+
+// 0 = нет МД (ни кривой, ни k), 1 = scalar (k, µSv/h на 1 cps), 2 = curve (LUT по каналам). Кривая приоритетнее k.
+int spectrogram_dose_mode(void)
+{
+    if (s_dose_lut && s_dose_curve_n > 0) return 2;
+    if (s_dose_k > 0.0f && s_dose_k < 1.0e30f) return 1;
+    return 0;
+}
+
+uint32_t spectrogram_dose_gen(void) { return s_dose_gen; }
+
+// Σ (cur[i]-prev[i]) * lut[i] по каналам, µSv/h·с (float, нулевые Δ пропускаются). false: режим не curve, LUT нет,
+// либо где-то cur[i] < prev[i] (откат гистограммы = сброс) — вызывающий не смешивает такой сэмпл с остальными.
+bool spectrogram_dose_delta_sum(const uint32_t *prev, const uint32_t *cur, float *out_wsum)
+{
+    if (!s_dose_lut || s_dose_curve_n <= 0 || !prev || !cur || !out_wsum) return false;
+    float w = 0.0f;
+    for (int i = 0; i < WF_CHANNELS; i++) {
+        uint32_t c = cur[i], p = prev[i];
+        if (c == p) continue;
+        if (c < p) return false;
+        w += (float)(c - p) * s_dose_lut[i];
+    }
+    *out_wsum = w;
+    return true;
+}
 int spectrogram_get_dose_curve_n(void) { return s_dose_curve_n; }
 
 float spectrogram_compute_dose_rate(const uint16_t *bins, uint32_t dur)
@@ -2483,6 +2518,7 @@ int spectrogram_seg_delete_async(uint32_t idx)
 void spectrogram_set_dose_k(float k)
 {
     s_dose_k = k;
+    s_dose_gen += 2;   // #DOSE-A: чётность поколения не меняется; монитор сбросит кольцо доз
     nvs_handle_t h;
     if (nvs_open(WF_SETTINGS_NS, NVS_READWRITE, &h) != ESP_OK) return;
     uint32_t bits; memcpy(&bits, &k, 4);

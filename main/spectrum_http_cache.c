@@ -433,6 +433,53 @@ esp_err_t spectrum_http_send_meta(httpd_req_t *req)
 // 1.2.36 #MX-14 (G1): meta + хвост SMA окна W (monitor_window.h), ответ ЧАНКАМИ: s_meta[0 .. len-1) + хвост + терминатор.
 // Заголовки (X-Spectrum-Render-Count, Cache-Control: no-store) ставит snapshot_begin() ДО первого чанка - httpd шлёт их с ним;
 // hdr[] живёт до конца функции (httpd хранит указатель). Без параметра w отправка прежняя (spectrum_http_send_meta).
+// #DOSE-A: meta + хвост SMA + хвост живой МД; хвосты собираются без промежуточных '}' (SMA-хвост теряет свою '}', дозовый её не имеет).
+esp_err_t spectrum_http_send_meta_sma_dose(httpd_req_t *req, uint64_t sum_counts, uint32_t sum_dur, uint32_t n, const spec_dose_t *dose)
+{
+    if (!dose) return spectrum_http_send_meta_sma(req, sum_counts, sum_dur, n);
+
+    if (!spectrum_http_cache_ensure()) {
+        httpd_resp_set_hdr(req, "X-Spectrometer-Dead", usb_host_cdc_spectrometer_dead() ? "1" : "0");
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "No spectrum data yet");
+        return ESP_FAIL;
+    }
+
+    const char *payload = NULL;
+    size_t len = 0;
+    char hdr[16];
+    char tail[320];
+
+    snapshot_begin(req, PAYLOAD_META, &payload, &len, hdr, sizeof(hdr));
+
+    size_t sl = 0;
+    size_t dl = 0;
+    sl = spec_meta_sma_tail(tail, 128, sum_counts, sum_dur, n);
+    if (sl > 1 && sl < 128 && tail[sl - 1] == '}') {
+        sl--;   // снять '}' SMA-хвоста: она встанет в самый конец
+        dl = spec_dose_tail(tail + sl, sizeof(tail) - sl - 1, dose);
+    }
+
+    if (len <= 1 || payload[len - 1] != '}' || dl == 0 || sl + dl + 1 >= sizeof(tail)) {
+        snapshot_end();
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "meta dose");
+        return ESP_FAIL;
+    }
+    tail[sl + dl] = '}';
+    size_t total = sl + dl + 1;
+
+    httpd_resp_set_type(req, "application/json");
+
+    esp_err_t er = httpd_resp_send_chunk(req, payload, (ssize_t)(len - 1));
+    if (er == ESP_OK) {
+        er = httpd_resp_send_chunk(req, tail, (ssize_t)total);
+    }
+    if (er == ESP_OK) {
+        er = httpd_resp_send_chunk(req, NULL, 0);
+    }
+
+    snapshot_end();
+    return er;
+}
 esp_err_t spectrum_http_send_meta_sma(httpd_req_t *req, uint64_t sum_counts, uint32_t sum_dur, uint32_t n)
 {
     if (!spectrum_http_cache_ensure()) {
