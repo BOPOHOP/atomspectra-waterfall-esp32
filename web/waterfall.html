@@ -239,6 +239,7 @@ nav a,nav span{ padding:12px 10px; }
 </div>
 </div>
 
+<script src="/common-time.js" onerror="try{var t=+sessionStorage.ctRl||0;if(Date.now()-t>30000){sessionStorage.ctRl=Date.now();setTimeout(function(){location.reload()},800);return}}catch(e){}document.body.insertAdjacentHTML('afterbegin','<p style=&quot;margin:1em;color:#b00;font:16px sans-serif&quot;>Не удалось загрузить скрипт страницы, обновите (F5) / Page script failed to load, press F5</p>')"></script>
 <script>
 "use strict";
 
@@ -369,35 +370,16 @@ var DICT={
   "ofl.err_nvs":"NVS write error","ofl.err":"failed to save settings"
  }
 };
-var LANG=(function(){try{return localStorage.getItem("aswf-lang")||"ru";}catch(e){return"ru";}})();
-function t(k){var d=DICT[LANG]||DICT.ru;return(d[k]!==undefined)?d[k]:(DICT.ru[k]||k);}
-function tfmt(k){var s=t(k);for(var i=1;i<arguments.length;i++)s=s.replace("%"+i,arguments[i]);return s;}
-function applyI18n(){
- document.querySelectorAll("[data-i18n]").forEach(function(el){
-  var k=el.getAttribute("data-i18n"); el.textContent=t(k);
- });
- document.querySelectorAll("[data-i18n-html]").forEach(function(el){
-  var k=el.getAttribute("data-i18n-html"); el.innerHTML=t(k);
- });
- document.querySelectorAll("[data-i18n-title]").forEach(function(el){
-  var k=el.getAttribute("data-i18n-title"); el.title=t(k);
- });
- document.querySelectorAll("[data-i18n-placeholder]").forEach(function(el){
-  var k=el.getAttribute("data-i18n-placeholder"); el.placeholder=t(k);
- });
- document.documentElement.lang=LANG;
- var btn=document.getElementById("langBtn"); if(btn)btn.textContent=(LANG==="ru")?"EN":"RU";
- if(typeof syncNucBtn==="function")syncNucBtn();
-}
-function setLang(l){
- if(l!=="ru"&&l!=="en")l="ru";
- LANG=l; try{localStorage.setItem("aswf-lang",l);}catch(e){}
- applyI18n();
- try{if(typeof applyRecState==="function")applyRecState();}catch(e){}   // #REC-7: «● ЗАПИСЬ»/«● REC» сразу на новом языке
- try{if((dskWritable||dskMemChunks)&&typeof updDiskInd==="function")updDiskInd();}catch(e){}
- try{if(typeof updGrip==="function")updGrip();}catch(e){}   // #AWF-UI-6 №6: подсказка/aria ручки на новом языке
- try{if(typeof draw==="function")draw();}catch(e){}
-}
+/* #OPT-13: LANG/t/tfmt/applyI18n/setLang - общий каркас в common-time.js; здесь только страничные хвосты */
+i18nInit(DICT,{
+ onApply:function(){if(typeof syncNucBtn==="function")syncNucBtn();},
+ onLang:function(){
+  try{if(typeof applyRecState==="function")applyRecState();}catch(e){}   // #REC-7: «● ЗАПИСЬ»/«● REC» сразу на новом языке
+  try{if((dskWritable||dskMemChunks)&&typeof updDiskInd==="function")updDiskInd();}catch(e){}
+  try{if(typeof updGrip==="function")updGrip();}catch(e){}   // #AWF-UI-6 №6: подсказка/aria ручки на новом языке
+  try{if(typeof draw==="function")draw();}catch(e){}
+ }
+});
 
 // === 10-стоп палитры (заимствованы из mock v3) ===
 var PALETTES={
@@ -567,7 +549,7 @@ var slcMode="log", slcHoverLi=-1, slcCursorCh=-1, cursorY=-1;
 // внутрибуферных строк).
 var slcCursorInDark=false;
 
-function lg(m){var d=document.getElementById("log");var t=new Date().toLocaleTimeString();
+function lg(m){var d=document.getElementById("log");var t=fmtTimeOfDay(new Date());
  d.textContent+="["+t+"] "+m+"\n";d.scrollTop=d.scrollHeight}
 
 function cmap(t){
@@ -576,8 +558,8 @@ function cmap(t){
  var o=i*3;
  return [currentLut[o],currentLut[o+1],currentLut[o+2]];
 }
-function ch2kev(c){if(!calib)return c;var e=0;for(var i=0;i<calib.length;i++)e+=calib[i]*Math.pow(c,i);return e}
-function kev2ch(k){var lo=0,hi=CH;for(var i=0;i<30;i++){var m=(lo+hi)/2;if(ch2kev(m)<k)lo=m;else hi=m}return(lo+hi)/2}
+function ch2kev(c){return calKev(calib,c)}
+function kev2ch(k){return calChan(calib,k,CH)}
 
 /* #DEMO-12: выбранные линии нуклидов — те же, что на «Спектре» (index.html).
    Выбор хранится в общем localStorage["aswf-nuc"]; здесь только читаем и рисуем
@@ -1061,9 +1043,6 @@ async function refreshStatus(){
  }catch(e){}
 }
 
-function fmtHMS(s){s=Math.max(0,Math.floor(s));
- var h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;
- function p(n){return(n<10?"0":"")+n;}return p(h)+":"+p(m)+":"+p(x);}
 // #FW-21: elapsedBase = последнее elapsed_sec с платы, elapsedAtMs = когда получено.
 // Тик = elapsedBase + прошедшее с момента получения → плавный ход между поллами.
 // -1 = не пишем / плата не отдала elapsed_sec (старая прошивка — fallback ниже).
@@ -1079,7 +1058,7 @@ function recElapsed(){
 function tickRecTime(){
  var el=document.getElementById("rectime"); if(!el)return;
  var e=recElapsed();
- el.textContent=(e<0)?"--:--:--":fmtHMS(e);
+ el.textContent=(e<0)?"--:--:--":fmtClock(e);
  el.style.color=(wfStat&&wfStat.recording)?"var(--accent)":"#f0c45a";
 }
 
@@ -1096,9 +1075,9 @@ async function refreshSystem(){
  }catch(e){}
 }
 
-function dskTs(){var d=new Date();function p(n){return(n<10?"0":"")+n;}
- return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+"_"+
-        p(d.getHours())+p(d.getMinutes())+p(d.getSeconds());}
+function dskTs(){var d=new Date();
+ return d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate())+"_"+
+        pad2(d.getHours())+pad2(d.getMinutes())+pad2(d.getSeconds());}
 function padJson(obj,len){
  var s=JSON.stringify(obj);
  var enc=new TextEncoder().encode(s);
@@ -1260,18 +1239,16 @@ function updDiskInd(){
  var tag=(!dskWritable&&dskMemChunks)?t("disk.ram_tag"):"";   // ОЗУ-режим (Firefox/Safari) — файл скачается на «Стоп»
  var errtag=dskWriteErrs?(" ⚠×"+dskWriteErrs):"";   // #REC-8: ⚠×N — были ретраи записи, но стрим жив
  document.getElementById("disktxt").textContent=
-  tfmt("disk.ind",dskName,dskRows,(dskBytes/1048576).toFixed(2),fmtHMS(sec))+tag+errtag;
+  tfmt("disk.ind",dskName,dskRows,(dskBytes/1048576).toFixed(2),fmtClock(sec))+tag+errtag;
  // #REC-5: цвет надписи «💾 Диск:» по назначению записи — красный=файл на диске, янтарный=буфер ОЗУ.
  // Имя файла (b#disktxt) остаётся near-white по правилу «.ind b» — читаемо.
  document.getElementById("diskwrap").style.color=dskWritable?"#ff5247":"#f0c45a";
 }
 
-var csrfToken="";
-/* CSRF-1: токен меняется при каждом старте платы — на 403 берём новый и повторяем один раз. */
-async function post(url,body){var f=function(){return fetch(url,{method:"POST",headers:{"X-CSRF-Token":csrfToken,"Content-Type":"application/json"},body:body?JSON.stringify(body):undefined})};var r=await f();if(r.status===403){await loadCsrf();r=await f()}return r}
-async function loadCsrf(){try{var r=await(await fetch("/api/csrf-token")).json();csrfToken=r.token||"";}catch(e){}}
+/* #OPT-12: post(url,body)/loadCsrf/csrfToken - общие в common-time.js (ретрай CSRF там же); здесь только JSON-обёртка: body - объект, всегда Content-Type: application/json */
+function postJson(url,body){return post(url,{headers:{"Content-Type":"application/json"},body:body?JSON.stringify(body):undefined})}
 async function loadPrefix(){try{var r=await(await fetch("/api/boot-config")).json();var e=document.getElementById("fx-prefix");if(e)e.value=r.name_prefix||"";}catch(_){}}
-async function savePrefix(){var e=document.getElementById("fx-prefix"),st=document.getElementById("fx-prefix-st");if(!e)return;st.textContent="…";try{var r=await post("/api/boot-config",{name_prefix:e.value});st.textContent=r.ok?"✓":"✗";}catch(_){st.textContent="✗";}}
+async function savePrefix(){var e=document.getElementById("fx-prefix"),st=document.getElementById("fx-prefix-st");if(!e)return;st.textContent="…";try{var r=await postJson("/api/boot-config",{name_prefix:e.value});st.textContent=r.ok?"✓":"✗";}catch(_){st.textContent="✗";}}
 
 // === #REC-11-A2: автономная выгрузка сегментов (push HTTP POST на адрес оператора) ===
 // Народмон-бан (CLAUDE.md): URL c «narodmon» отвергается ещё в браузере — зеркало
@@ -1284,7 +1261,7 @@ function oflSetMsg(s,kind){var m=document.getElementById("oflMsg");if(!m)return;
 function oflRenderStat(j){
  var el=document.getElementById("oflStat"); if(!el)return;
  var busy=j.busy?t("ofl.st_busy"):t("ofl.st_idle");
- var last=j.last_ok_at?(new Date(j.last_ok_at*1000)).toLocaleString():t("ofl.never");
+ var last=j.last_ok_at?fmtDateTime(j.last_ok_at*1000):t("ofl.never");
  var pass=j.has_pass?("   ·   "+t("ofl.pass_set")):"";
  el.textContent=t("ofl.st_sent")+" "+(j.sent_ok||0)+"   "+t("ofl.st_failed")+" "+(j.failed||0)+
    "   "+t("ofl.st_last")+" "+(j.last_status||0)+"   "+busy+"   "+t("ofl.st_lastok")+" "+last+pass;
@@ -1301,7 +1278,7 @@ function loadOffload(){
 function oflPollStat(){   // лёгкое обновление статистики, не трогая поля ввода оператора
  var card=document.getElementById("oflCard"); if(!card||!card.open)return;
  var ae=document.activeElement; if(ae&&(ae.id==="oflUrl"||ae.id==="oflUser"||ae.id==="oflPass"))return;
- fetch("/api/waterfall/offload").then(function(r){if(!r.ok)throw 0;return r.json();}).then(function(j){
+ return fetch("/api/waterfall/offload").then(function(r){if(!r.ok)throw 0;return r.json();}).then(function(j){
   lastOffload.enabled=!!j.enabled;
   if(j.url!==undefined)lastOffload.url=j.url||"";
   if(j.user!==undefined)lastOffload.user=j.user||"";
@@ -1312,7 +1289,7 @@ function oflPollStat(){   // лёгкое обновление статисти�
 async function enablePersistNow(){
  var el=document.getElementById("persist"); if(el)el.checked=true;
  try{
-  var r=await post("/api/waterfall/config",{persist:true});
+  var r=await postJson("/api/waterfall/config",{persist:true});
   if(!r.ok)return false;
   await refreshStatus();
   return true;
@@ -1337,24 +1314,24 @@ async function saveOffload(){
  var body={enabled:en,url:url,user:(document.getElementById("oflUser").value||"")};
  var pw=document.getElementById("oflPass").value; if(pw)body.pass=pw;          // пусто → прежний пароль сохраняется
  oflSetMsg("…","");
- post("/api/waterfall/offload",body).then(function(r){return r.json();}).then(function(j){
+ postJson("/api/waterfall/offload",body).then(function(r){return r.json();}).then(function(j){
   if(j&&j.ok){oflSetMsg(t("ofl.saved"),"ok");document.getElementById("oflPass").value="";loadOffload();}
   else{var e=(j&&j.err)||"error";var k={"narodmon-blocked":"ofl.err_blocked","invalid-url":"ofl.err_invalid","nvs":"ofl.err_nvs"}[e]||"ofl.err";oflSetMsg(t(k),"err");}
  }).catch(function(){oflSetMsg(t("ofl.err"),"err");});
 }
 
-document.getElementById("bStart").onclick=async function(){var r=await post("/api/waterfall/start");if(!r.ok)lg("start: HTTP "+r.status);refreshStatus();};
-document.getElementById("bStop").onclick=async function(){var r=await post("/api/waterfall/stop");if(!r.ok)lg("stop: HTTP "+r.status);refreshStatus();};
+document.getElementById("bStart").onclick=async function(){var r=await postJson("/api/waterfall/start");if(!r.ok)lg("start: HTTP "+r.status);refreshStatus();};
+document.getElementById("bStop").onclick=async function(){var r=await postJson("/api/waterfall/stop");if(!r.ok)lg("stop: HTTP "+r.status);refreshStatus();};
 function wfClearDone(){clearRows();draw();refreshStatus();lg(t("log.cleared"));}
 document.getElementById("bClear").onclick=async function(){
  if(!confirm(t("confirm.clear")))return;
- var r=await(await post("/api/waterfall/clear")).json().catch(function(){return{ok:false,err:"busy"};});
+ var r=await(await postJson("/api/waterfall/clear")).json().catch(function(){return{ok:false,err:"busy"};});
  if(r.ok){wfClearDone();return;}
  // #FW-25: сервер отклонил — запись активна. Предложить stop→clear.
  if(r.err==="recording"){
   if(!confirm(t("confirm.clear_rec")))return;
-  await post("/api/waterfall/stop");
-  var r2=await(await post("/api/waterfall/clear")).json().catch(function(){return{ok:false,err:"busy"};});
+  await postJson("/api/waterfall/stop");
+  var r2=await(await postJson("/api/waterfall/clear")).json().catch(function(){return{ok:false,err:"busy"};});
   if(r2.ok){wfClearDone();}else{lg(t("log.clear_err"));refreshStatus();}
   return;
  }
@@ -1363,7 +1340,7 @@ async function applyInterval(){
  var el=document.getElementById("iv");
  var v=parseInt(el.value)||5;
  if(v<5)v=5; if(v>3600)v=3600; el.value=v;
- await post("/api/waterfall/config",{interval:v});refreshStatus();lg(tfmt("log.interval",v));}
+ await postJson("/api/waterfall/config",{interval:v});refreshStatus();lg(tfmt("log.interval",v));}
 document.getElementById("bIv").onclick=applyInterval;
 document.getElementById("iv").onchange=applyInterval;
 document.getElementById("persist").onchange=async function(){
@@ -1381,7 +1358,7 @@ document.getElementById("persist").onchange=async function(){
     if(enEl)enEl.checked=false;
     if(lastOffload.enabled){
      var body={enabled:false,url:lastOffload.url||"",user:lastOffload.user||""};
-     var j=await(await post("/api/waterfall/offload",body)).json();
+     var j=await(await postJson("/api/waterfall/offload",body)).json();
      if(!(j&&j.ok)){oflSetMsg(t("ofl.err"),"err");el.checked=true;if(enEl)enEl.checked=true;return;}
      lastOffload.enabled=false;
      loadOffload();
@@ -1390,7 +1367,7 @@ document.getElementById("persist").onchange=async function(){
   }
   // refreshStatus() перезаписывает чекбокс с платы — не трогаем, если
   // пользователь уже снова кликнул (activeElement == этот же чекбокс).
-  await post("/api/waterfall/config",{persist:want});
+  await postJson("/api/waterfall/config",{persist:want});
   if(document.activeElement!==el)refreshStatus();
  }catch(e){oflSetMsg(t("ofl.err"),"err");el.checked=!want;}
 };
@@ -1512,10 +1489,10 @@ wf.addEventListener("wheel",function(e){
  connectWS();
  var os=document.getElementById("oflSave"); if(os)os.onclick=saveOffload;   // #REC-11-A2
  loadOffload();
- setInterval(refreshStatus,5000);
- setInterval(refreshSystem,5000);
+ (window.pollWhileVisible||setInterval)(refreshStatus,5000);
+ (window.pollWhileVisible||setInterval)(refreshSystem,5000);
  setInterval(tickRecTime,1000);
- setInterval(oflPollStat,5000);   // #REC-11-A2: статистика выгрузки, только при раскрытой карточке
+ (window.pollWhileVisible||setInterval)(oflPollStat,5000);   // #REC-11-A2: статистика выгрузки, только при раскрытой карточке
 })();
 </script>
 <style>
@@ -1789,7 +1766,7 @@ window.openZoomOverlay=function(sourcesFn,opts){
     var cps=(intervalSec>0)?(cnt/intervalSec):0;
     var eStr=calib?(ch2kev(c).toFixed(1)+" "+t("opt.kev")):("ch "+c);
     var tStr;
-    if(startedAt>0){tStr=new Date((startedAt+gIdx*intervalSec)*1000).toLocaleTimeString(LANG==="ru"?"ru-RU":"en-US");}
+    if(startedAt>0){tStr=fmtTimeOfDay(new Date((startedAt+gIdx*intervalSec)*1000));}
     else{var es=gIdx*intervalSec;tStr="+"+Math.floor(es/60)+"m "+(es%60)+"s";}
     return "CPS "+cps.toFixed(2)+"\nE "+eStr+"\nt "+tStr;
    }
@@ -1806,6 +1783,5 @@ window.addEventListener("storage",function(e){
  if(typeof draw==="function")draw();
 });
 </script>
-<script src="/common-time.js"></script>
 </body>
 </html>

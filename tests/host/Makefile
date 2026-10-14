@@ -53,14 +53,44 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_wf_tail_plan.c \
        test_ota_gh_check_state.c \
        test_debug_log_chunk.c \
-       test_spectrum_import_plan.c
+       test_spectrum_import_plan.c \
+       test_live_time.c \
+       test_spectrum_calib_meta.c \
+       test_autosave_skip_plan.c \
+       test_ttl_plan.c \
+       test_spectrum_meta_fmt.c \
+       test_seq_copy.c \
+       test_monitor_window.c \
+       test_autosave_mark_retry.c \
+       test_meta_w_parse.c
 
-test: $(SRCS) test_util.h test_import_body_plan test_import_tmp_plan test_n42_time_plan
+test: $(SRCS) test_util.h socket_budget_check.sh ../../main/socket_budget.h test_import_body_plan test_import_tmp_plan test_n42_time_plan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm
 	./test_runner
+	bash ./socket_budget_check.sh
 	./test_import_body_plan
 	./test_import_tmp_plan
 	./test_n42_time_plan
+	./test_glue_cache
+	./test_glue_monitor
+	./test_glue_cache_oom
+	./test_glue_meta_w
+
+# release-gate 1.2.36 pass1 С-2: тесты СКЛЕЙКИ - сам main/*.c (не копия) с заглушками IDF/FreeRTOS из glue/ (учёт блоков glue_alloc).
+GLUE_DEPS = glue/glue_stubs.c glue/*.h glue/freertos/*.h
+test_glue_cache: test_glue_cache.c glue/glue_cache_env.h $(GLUE_DEPS) ../../main/spectrum_http_cache.c ../../main/spectrum_meta_fmt.h ../../main/spectrum_t1.c
+	$(CC) $(CFLAGS) -Iglue -I. -o test_glue_cache test_glue_cache.c glue/glue_stubs.c ../../main/spectrum_t1.c -lm
+
+# З-1 (gate pass1): отказ роста буфера spectrum.json сверх 64 КиБ - без утечки (отдельный бинарь: s_json == NULL на старте)
+test_glue_cache_oom: test_glue_cache_oom.c glue/glue_cache_env.h $(GLUE_DEPS) ../../main/spectrum_http_cache.c ../../main/spectrum_meta_fmt.h ../../main/spectrum_t1.c
+	$(CC) $(CFLAGS) -Iglue -I. -o test_glue_cache_oom test_glue_cache_oom.c glue/glue_stubs.c ../../main/spectrum_t1.c -lm
+
+# pass2 З-3: сам обработчик meta.json?w= (main/meta_w_handler.h) с самим spectrum_http_cache.c - коды 414/400, байты meta, окно SMA
+test_glue_meta_w: test_glue_meta_w.c glue/glue_cache_env.h $(GLUE_DEPS) ../../main/meta_w_handler.h ../../main/meta_w_parse.h ../../main/spectrum_http_cache.c ../../main/spectrum_meta_fmt.h ../../main/spectrum_t1.c
+	$(CC) $(CFLAGS) -Iglue -I. -o test_glue_meta_w test_glue_meta_w.c glue/glue_stubs.c ../../main/spectrum_t1.c -lm
+
+test_glue_monitor: test_glue_monitor.c $(GLUE_DEPS) ../../main/monitor.c ../../main/monitor_window.h
+	$(CC) $(CFLAGS) -Iglue -I. -o test_glue_monitor test_glue_monitor.c glue/glue_stubs.c -lm
 
 # #AWF-F4: автономный тест со своим main() (import_tmp_plan.h) — какой файл SPEC_DIR чистить на старте.
 test_import_tmp_plan: test_import_tmp_plan.c ../../main/import_tmp_plan.h
@@ -80,8 +110,21 @@ asan: $(SRCS) test_util.h
 	$(CC) $(CFLAGS) -fsanitize=address,undefined -g -o test_runner_asan $(SRCS) -lm
 	./test_runner_asan
 
+# 1.2.36 H1 (A): многопоточный стресс seqlock (pthread): писатель под мьютексом с теми же seq++/барьерами,
+# что SPEC_LOCK/SPEC_UNLOCK; читатели - seq_copy() без мьютекса; каждый принятый снимок total == сумма bins.
+# Отдельно от test_runner: MA1/MA2 (mutate_seq_copy.sh) обязаны краснить его своим прогоном.
+stress: test_seq_stress.c ../../main/seq_copy.h
+	$(CC) $(CFLAGS) -pthread -o test_seq_stress test_seq_stress.c
+	./test_seq_stress
+
+# То же под ThreadSanitizer: гонка копии с писателем ОЖИДАЕМА (риск R-1, копия отбрасывается проверкой seq);
+# отчёты не валят прогон (exitcode=0) - их места сводит run-лог.
+tsan: test_seq_stress.c ../../main/seq_copy.h
+	$(CC) $(CFLAGS) -pthread -fsanitize=thread -g -o test_seq_stress_tsan test_seq_stress.c
+	TSAN_OPTIONS="halt_on_error=0 exitcode=0" ./test_seq_stress_tsan
+
 clean:
-	rm -f test_runner test_runner_asan bench_json_fmt test_import_body_plan test_import_tmp_plan test_n42_time_plan
+	rm -f test_runner test_runner_asan bench_json_fmt test_import_body_plan test_import_tmp_plan test_n42_time_plan test_seq_stress test_seq_stress_tsan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w
 
 # UI-P1: замер до/после старого(vsnprintf-loop)/нового(json_append_uint32_csv)
 # форматтера бинов — числа для отчёта, не гейт ALL PASSED.
@@ -89,4 +132,4 @@ bench: bench_json_fmt.c ../../main/json_uint_fmt.h
 	$(CC) -std=c11 -Wall -Wextra -O2 -I../../main -o bench_json_fmt bench_json_fmt.c
 	./bench_json_fmt
 
-.PHONY: test asan clean bench
+.PHONY: test asan clean bench stress tsan

@@ -14,6 +14,7 @@
 // коммита → один честный сэмпл dur=2, а не искажение.
 
 #include "monitor.h"
+#include "monitor_window.h"
 #include "atomspectra.h"
 
 #include <stdlib.h>
@@ -110,6 +111,24 @@ size_t monitor_copy_since(uint32_t since, monitor_sample_t *out, size_t max,
     if (out_next_seq)  *out_next_seq  = next;
     if (out_epoch)     *out_epoch     = epoch;
     return n;
+}
+
+// 1.2.36 #MX-14: SMA окна W секунд наборного времени прямо по кольцу (без копии и без выделений) — для meta.json?w=.
+// Лок кольца — единственный, что держится внутри; вызывающий не держит других замков.
+void monitor_window(uint32_t w_sec, uint64_t *sum_counts, uint32_t *sum_dur, uint32_t *n)
+{
+    uint64_t sc = 0;
+    uint32_t sd = 0, k = 0;
+    if (s_lock && s_ring) {
+        if (w_sec < 1) w_sec = 1;
+        if (w_sec > s_cap) w_sec = s_cap;
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        k = mon_window_sum(s_ring, s_cap, s_head, s_count, w_sec, &sc, &sd);
+        xSemaphoreGive(s_lock);
+    }
+    *sum_counts = sc;
+    *sum_dur = sd;
+    *n = k;
 }
 
 static void monitor_task(void *arg)

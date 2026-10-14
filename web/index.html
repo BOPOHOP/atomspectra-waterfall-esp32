@@ -57,6 +57,7 @@ nav .on{ font-weight:600; color:#e8efe2; border-bottom:2px solid var(--accent); 
 .cal-coef input{ flex:1; background:#0c0f0b; border:1px solid #283024; color:var(--accent); padding:7px 10px; border-radius:7px; font-size:12px; outline:none; }
 table.saved{ border-collapse:collapse; width:100%; font-size:12px; }
 table.saved th,table.saved td{ border-bottom:1px solid #1b211a; padding:8px 10px; text-align:left; color:#cfd6cd; }
+#saved{ overflow-x:auto; }   /* #UI-MOB: таблица сохранённых прокручивается внутри панели, страница не растягивается */
 table.saved th{ color:var(--accent); font-weight:600; font-size:11.5px; }
 table.saved tr.on td{ background:rgba(110,168,255,.07); }
 .empty{ color:#5b655a; font-style:italic; font-size:12.5px; }
@@ -124,7 +125,7 @@ nav a,nav span{ padding:12px 10px; }
 </div>
 <div class="row">
 <div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.scale">Шкала Y</span><div class="seg" id="seg-scale"><button id="btn-lin" onclick="setLog(false)">Lin</button><button id="btn-log" class="on" onclick="setLog(true)">Log</button><button id="btn-pow" onclick="setPow()" title="y^(1/e)">x<sup>1/e</sup></button></div></div>
-<div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.value">Величина</span><div class="seg" id="seg-y"><button id="btn-cnt" onclick="setCps(false)">Counts</button><button id="btn-cps" class="on" onclick="setCps(true)">CPS</button></div></div>
+<div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.value">Величина</span><div class="seg" id="seg-y"><button id="btn-cnt" onclick="setCps(false)" data-i18n="ctl.cnt">Отсчёты</button><button id="btn-cps" class="on" onclick="setCps(true)">CPS</button></div></div>
 <div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.x">Ось X</span><div class="seg" id="seg-x"><button id="btn-ch" onclick="setKev(false)">Ch</button><button id="btn-kev" class="on" onclick="setKev(true)">keV</button></div></div>
 <div style="display:flex;align-items:center;gap:8px"><span class="lbl" data-i18n="ctl.xr">Диапазон X</span><div class="seg" id="seg-xr"><button id="btn-x1k" onclick="setXRange(1000)">0–1000</button><button id="btn-x2k" onclick="setXRange(2000)">0–2000</button><button id="btn-xall" class="on" onclick="setXRange(0)" data-i18n="ctl.xall">весь</button></div></div>
 <!-- #UI-3: оверлей энергетических линий нуклидов -->
@@ -209,6 +210,7 @@ nav a,nav span{ padding:12px 10px; }
 </section>
 </div>
 
+<script src="/common-time.js" onerror="try{var t=+sessionStorage.ctRl||0;if(Date.now()-t>30000){sessionStorage.ctRl=Date.now();setTimeout(function(){location.reload()},800);return}}catch(e){}document.body.insertAdjacentHTML('afterbegin','<p style=&quot;margin:1em;color:#b00;font:16px sans-serif&quot;>Не удалось загрузить скрипт страницы, обновите (F5) / Page script failed to load, press F5</p>')"></script>
 <script>
 "use strict";
 var DICT={
@@ -224,13 +226,13 @@ var DICT={
   "dead.retry":"Повторить связь",
   "flash.label":"⚙ Flash LittleFS",
   "flash.fmt":"%1 / %2 КБ (%3%) &middot; свободно %4 КБ",
-  "btn.start":"&#9654; Старт","btn.stop":"&#9632; Стоп","btn.reset":"&#8634; Сброс",
+  "btn.start":"▶ Старт","btn.stop":"■ Стоп","btn.reset":"&#8634; Сброс",
   "acq.run":"● НАБОР","acq.stop":"○ стоп",
   "btn.save":"&#128190; Сохранить",
   "btn.expXml":"Экспорт XML","btn.expCsv":"Экспорт CSV","btn.expN42":"Экспорт N42","btn.expSpe":"Экспорт SPE",
   "btn.clearOvl":"Снять overlay",
   "btn.rebootDev":"Reboot прибора","btn.rebootEsp":"Reboot ESP","btn.wifiReset":"WiFi Reset",
-  "ctl.scale":"Шкала Y","ctl.value":"Величина","ctl.x":"Ось X","ctl.xr":"Диапазон X, кэВ","ctl.xall":"весь",
+  "ctl.scale":"Шкала Y","ctl.value":"Величина","ctl.cnt":"Отсчёты","ctl.x":"Ось X","ctl.xr":"Диапазон X, кэВ","ctl.xall":"весь",
   "nuc.toggle":"&#9883; Линии","nuc.title":"Линии нуклидов",
   "nuc.all":"Все","nuc.none":"Снять",
   "nuc.need_cal":"Нужна калибровка энергии",
@@ -242,9 +244,9 @@ var DICT={
   "cal.apply":"Применить","cal.clear":"Очистить","cal.read":"Считать с прибора",
   "saved.title":"Сохранённые спектры","saved.all":"все &rarr;",
   "saved.loading":"Загрузка...","saved.empty":"Нет сохранённых",
-  "ax.ch":"Channel","ax.kev":"keV","ax.cnt":"Counts","ax.cps":"CPS",
-  "cur.kev":"кэВ","cur.cnt":"counts",
-  "th.idx":"#","th.saved":"Сохранено","th.counts":"Counts","th.time":"Время","th.export":"Экспорт",
+  "ax.ch":"Channel","ax.kev":"кэВ","ax.cnt":"Отсчёты","ax.cps":"CPS",
+  "cur.kev":"кэВ","cur.cnt":"отсчётов",
+  "th.idx":"#","th.saved":"Сохранено","th.counts":"Импульсы","th.time":"Время","th.export":"Экспорт",
   "btn.overlay":"Overlay","btn.overlayOff":"Снять","btn.del":"Удал.",
   "confirm.del":"Удалить спектр #%1?",
   "confirm.rebootDev":"Перезагрузить спектрометр?",
@@ -253,14 +255,14 @@ var DICT={
   "saved.savedAs":"Сохранён #%1","saved.saveErr":"Ошибка сохранения",
   "saved.saveErrNoData":"Нет данных спектра (прибор не подключён/не выдаёт спектр)","saved.saveErrNoSpace":"Мало места на flash — удалите старые снимки",
   "log.start":"Старт отправлен","log.stop":"Стоп отправлен","log.reset":"Сброс отправлен","log.resetNotSent":"Прибор не получил -rst (USB не подключён?) — плата повторит его в ближайшие секунды или при подключении прибора","log.resetUnconfirmed":"Прибор не выполнил сброс за ~10 с — показан его набор","log.resetUnconfirmedBoot":"С загрузки платы прибор не выполнил сбросов: {n} — показан его набор","log.info":"Запрошена информация",
-  "log.ovlOk":"Наложение загружено: #%1","log.ovlErr":"Ошибка наложения: %1","log.ovlClear":"Наложение очищено",
+  "log.sent":"Отправлено: %1","log.ovlOk":"Наложение загружено: #%1","log.ovlErr":"Ошибка наложения: %1","log.ovlClear":"Наложение очищено",
   "ovl.noTime":" (время не задано — показан счёт, не CPS)",
   "ovl.rebinned":" (перенесено по энергии)","ovl.byChannel":" (в записи нет калибровки — по каналам)","saved.impTag":"фон, импорт",
   "cal.readEmpty":"Прибор вернул пустую калибровку (нули/NaN) — калибровка платы не изменена",
   "log.del":"Удалено: #%1","log.rebootDev":"Команда перезагрузки прибора отправлена",
   "log.exportOk":"Выгружено: %1","log.exportErr":"Экспорт не удался: %1",
   "log.cal":"Калибровка: [%1]","log.calErr":"Ошибка калибровки: %1","log.calClear":"Калибровка очищена",
-  "cps.sec":" с","cps.smaT":"SMA: скользящее среднее CPS за последние %1 с","t.d":"д","st.lost":"Потеряно","st.counts":" Импульсов","st.real":"Реал.","st.live":"Живое","st.avg":"Ср. CPS (реал.)","st.avgT":"Средний CPS за набор: импульсы / реальное время набора, тот же знаменатель, что у SMA","st.dead":"Мёртв.","st.dose":"МД",
+  "cps.smaT":"SMA: скользящее среднее CPS за последние %1 с","st.lost":"Потеряно","st.counts":" Импульсов","st.real":"Реал.","st.live":"Живое","st.avg":"Ср. CPS (реал.)","st.avgT":"Средний CPS за набор: импульсы / реальное время набора, тот же знаменатель, что у SMA","st.dead":"Мёртв.","st.dose":"МД",
   "err.prefix":"Ошибка: %1"
  },
  en:{
@@ -275,13 +277,13 @@ var DICT={
   "dead.retry":"Retry link",
   "flash.label":"⚙ Flash LittleFS",
   "flash.fmt":"%1 / %2 KB (%3%) &middot; free %4 KB",
-  "btn.start":"&#9654; Start","btn.stop":"&#9632; Stop","btn.reset":"&#8634; Reset",
+  "btn.start":"▶ Start","btn.stop":"■ Stop","btn.reset":"&#8634; Reset",
   "acq.run":"● ACQ","acq.stop":"○ stop",
   "btn.save":"&#128190; Save",
   "btn.expXml":"Export XML","btn.expCsv":"Export CSV","btn.expN42":"Export N42","btn.expSpe":"Export SPE",
   "btn.clearOvl":"Clear overlay",
   "btn.rebootDev":"Reboot device","btn.rebootEsp":"Reboot ESP","btn.wifiReset":"WiFi Reset",
-  "ctl.scale":"Y scale","ctl.value":"Value","ctl.x":"X axis","ctl.xr":"X range, keV","ctl.xall":"full",
+  "ctl.scale":"Y scale","ctl.value":"Value","ctl.cnt":"Counts","ctl.x":"X axis","ctl.xr":"X range, keV","ctl.xall":"full",
   "nuc.toggle":"&#9883; Lines","nuc.title":"Nuclide lines",
   "nuc.all":"All","nuc.none":"None",
   "nuc.need_cal":"Energy calibration required",
@@ -311,39 +313,24 @@ var DICT={
   "log.del":"Deleted #%1","log.rebootDev":"Reboot device sent",
   "log.exportOk":"Exported: %1","log.exportErr":"Export failed: %1",
   "log.cal":"Calibration: [%1]","log.calErr":"Calibration error: %1","log.calClear":"Calibration cleared",
-  "cps.sec":" s","cps.smaT":"SMA: moving-average CPS over the last %1 s","t.d":"d","st.lost":"Lost","st.counts":" counts","st.real":"Real","st.live":"Live","st.avg":"Avg CPS (real)","st.avgT":"Average CPS over the acquisition: counts / real acquisition time, the same denominator as SMA","st.dead":"Dead","st.dose":"DR",
+  "cps.smaT":"SMA: moving-average CPS over the last %1 s","st.lost":"Lost","st.counts":" counts","st.real":"Real","st.live":"Live","st.avg":"Avg CPS (real)","st.avgT":"Average CPS over the acquisition: counts / real acquisition time, the same denominator as SMA","st.dead":"Dead","st.dose":"DR",
   "err.prefix":"Error: %1"
  }
 };
-var LANG=(function(){try{return localStorage.getItem("aswf-lang")||"ru";}catch(e){return"ru";}})();
-function tr(k){var d=DICT[LANG]||DICT.ru;return(d[k]!==undefined)?d[k]:(DICT.ru[k]||k);}
-function tfmt(k){var s=tr(k); for(var i=1;i<arguments.length;i++){s=s.replace("%"+i,arguments[i]);} return s;}
-function lcl(){return LANG==="ru"?"ru-RU":"en-US";}
-function applyI18n(){
- document.querySelectorAll("[data-i18n]").forEach(function(el){
-  var k=el.getAttribute("data-i18n"); el.textContent=tr(k);
- });
- document.querySelectorAll("[data-i18n-html]").forEach(function(el){
-  var k=el.getAttribute("data-i18n-html"); el.innerHTML=tr(k);
- });
- document.querySelectorAll("[data-i18n-placeholder]").forEach(function(el){
-  var k=el.getAttribute("data-i18n-placeholder"); el.placeholder=tr(k);
- });
- document.documentElement.lang=LANG;
- var b=document.getElementById("langBtn"); if(b)b.textContent=(LANG==="ru")?"EN":"RU";
- document.title="AtomSpectra · "+tr("nav.spectrum");
- if(typeof syncNucVisBtn==="function")syncNucVisBtn();   // #UI-40 mirror: подпись кнопки on/off при старте и смене языка
-}
-function setLang(l){
- if(l!=="ru"&&l!=="en")l="ru";
- LANG=l; try{localStorage.setItem("aswf-lang",l);}catch(e){}
- applyI18n();
- if(typeof populateNucPanel==="function")populateNucPanel();
- if(lastD)draw(lastD);else clearCanvas();
- loadFlashInfo();
- loadSaved();
- refreshCalibStatus();
-}
+/* #OPT-13: LANG/tr/tfmt/applyI18n/setLang - общий каркас в common-time.js; здесь только страничные хвосты */
+i18nInit(DICT,{
+ onApply:function(){
+  document.title="AtomSpectra · "+tr("nav.spectrum");
+  if(typeof syncNucVisBtn==="function")syncNucVisBtn();   // #UI-40 mirror: подпись кнопки on/off при старте и смене языка
+ },
+ onLang:function(){
+  if(typeof populateNucPanel==="function")populateNucPanel();
+  if(lastD)draw(lastD);else clearCanvas();
+  loadFlashInfo();
+  loadSaved();
+  refreshCalibStatus();
+ }
+});
 
 var C=document.getElementById("sp"),X=C.getContext("2d");
 var Ccur=document.getElementById("spcur"),Xcur=Ccur.getContext("2d");
@@ -364,32 +351,23 @@ function calibIsSet(dev){if(!dev)return false;if(typeof dev.calib_set==="boolean
 var devSeq=0;  /* #UI-1: курсор seq последнего показанного ответа прибора (/api/devlog) */
 var failStreak=0;  /* #UI-2: подряд-неудачи fetch спектра; гасим экран только после >=3 (одиночный 503 при конкуренции — не гасит) */
 var PL=65,PT=15,PW=1120,PH=340,PR=PL+PW,PB=PT+PH;
-var csrfToken="";
 var doseK=0;
 
-async function loadCsrf(){try{var r=await(await fetch("/api/csrf-token")).json();csrfToken=r.token||""}catch(e){}}
 async function loadDoseK(){try{var r=await(await fetch("/api/waterfall/dose_k")).json();doseK=(typeof r.dose_k==="number"&&r.dose_k>0)?r.dose_k:0;}catch(e){}}
-/* CSRF-1: токен меняется при каждом старте платы — вкладка, открытая до перезагрузки, получала 403 молча. На 403 берём новый токен и повторяем один раз. */
-async function post(url,opts){opts=opts||{};opts.method="POST";var h=opts.headers||{};opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});var r=await fetch(url,opts);if(r.status===403){await loadCsrf();opts.headers=Object.assign({},h,{"X-CSRF-Token":csrfToken});r=await fetch(url,opts)}return r}
 async function loadPrefix(){try{var r=await(await fetch("/api/boot-config")).json();var e=document.getElementById("fx-prefix");if(e)e.value=r.name_prefix||"";}catch(_){}}
 async function savePrefix(){var e=document.getElementById("fx-prefix"),st=document.getElementById("fx-prefix-st");if(!e)return;st.textContent="…";try{var r=await post("/api/boot-config",{headers:{"Content-Type":"application/json"},body:JSON.stringify({name_prefix:e.value})});st.textContent=r.ok?"✓":"✗";}catch(_){st.textContent="✗";}}
 
 var LOGMAX=500;
 function lgCount(n){var c=document.getElementById("log-count");if(c)c.textContent=n?String(n):""}
-function lg(m,at){if(!logEl)return;var a=(logEl.textContent+(at||new Date()).toLocaleTimeString()+"  "+m).split("\n").filter(Boolean).slice(-LOGMAX);logEl.textContent=a.join("\n")+"\n";logEl.scrollTop=logEl.scrollHeight;lgCount(a.length)}
+function lg(m,at){if(!logEl)return;var a=(logEl.textContent+fmtTimeOfDay(at||new Date())+"  "+m).split("\n").filter(Boolean).slice(-LOGMAX);logEl.textContent=a.join("\n")+"\n";logEl.scrollTop=logEl.scrollHeight;lgCount(a.length)}
 function clearLog(){logEl.textContent="";lgCount(0)}
-function saveLog(){var d=new Date(),z=function(n){return(n<10?"0":"")+n},u=URL.createObjectURL(new Blob(["# "+d.toLocaleString()+"\n"+logEl.textContent],{type:"text/plain;charset=utf-8"})),a=document.createElement("a");a.href=u;a.download="atomspectra-exchange-"+d.getFullYear()+z(d.getMonth()+1)+z(d.getDate())+"-"+z(d.getHours())+z(d.getMinutes())+z(d.getSeconds())+".txt";document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(u)},1000)}
+function saveLog(){var d=new Date(),u=URL.createObjectURL(new Blob(["# "+d.toLocaleString()+"\n"+logEl.textContent],{type:"text/plain;charset=utf-8"})),a=document.createElement("a");a.href=u;a.download="atomspectra-exchange-"+d.getFullYear()+pad2(d.getMonth()+1)+pad2(d.getDate())+"-"+pad2(d.getHours())+pad2(d.getMinutes())+pad2(d.getSeconds())+".txt";document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(u)},1000)}
 /* #UI-1: подтянуть текстовые ответы прибора из /api/devlog и показать их в логе команд («← ...») */
 async function pollDevLog(){try{var r=await(await fetch("/api/devlog?since="+devSeq)).json();if(r.lines&&r.lines.length){r.lines.forEach(function(e){var t=(e.text||"").replace(/\n+$/,"").replace(/\n/g," ⏎ ");lg("← "+t,(typeof r.up_ms==="number"&&typeof e.t==="number")?new Date(Date.now()-((r.up_ms-e.t)>>>0)):undefined)})}if(typeof r.next==="number")devSeq=r.next}catch(e){}}
-/* #MX-7 (1.2.31): наборы бывают по 30–40 суток — больше 24 ч время показывается с днями */
-function fmtTime(s){s=Math.round(s);var dd=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60),ss=s%60;return(dd>0?dd+tr("t.d")+" ":"")+(dd>0||h>0?h+"h ":"")+(m>0?m+"m ":"")+ss+"s"}
-function fmtHMS(s){var dd=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60),ss=s%60;return(dd>0?dd+tr("t.d")+" ":"")+String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(ss).padStart(2,"0")}
-/* #MX-8 (1.2.31): CPS, усреднённый за окно SMA вкладки «Мониторинг» (окно отсчётов × интервал, по умолчанию 10 × 10 с).
-   Считается по счёту и времени набора: (Δcounts)/(Δtime) за последние W секунд; сброс набора (time убыл) очищает историю. */
-var smaHist=[];
-function smaWinSec(){var w=10,iv=10;try{var v=parseInt(localStorage.getItem("aswf-sma-win"),10);if(v>=2&&v<=200)w=v;var st=JSON.parse(localStorage.getItem("aswf-mon-sess")||"{}");if(st.iv>=1)iv=st.iv}catch(e){}return w*iv}
-function smaCps(t,n){if(typeof t!=="number"||typeof n!=="number")return null;if(smaHist.length&&t<smaHist[smaHist.length-1].t)smaHist=[];if(!smaHist.length||t>smaHist[smaHist.length-1].t)smaHist.push({t:t,n:n});var W=smaWinSec();while(smaHist.length>2&&smaHist[1].t<=t-W)smaHist.shift();if(smaHist.length>600)smaHist.shift();var a=smaHist[0];return(t>a.t)?(n-a.n)/(t-a.t):null}
-function fmtNum(n){return Math.round(n).toLocaleString(lcl())}
+/* #MX-7 (1.2.31): наборы бывают по 30–40 суток — больше 24 ч время показывается с днями (fmtDur/fmtClock — common-time.js, OPT-11) */
+/* #MX-8 (1.2.31) / 1.2.36: CPS, усреднённый за окно = «Интервал усреднения, с» вкладки «Мониторинг» (iv в localStorage aswf-mon-sess,
+   его пишет monitor.html при вводе интервала и при Старте); нет данных или iv<1 — 10 с. Окно уходит на плату в meta.json?w=. */
+function smaWinSec(){var iv=10;try{var st=JSON.parse(localStorage.getItem("aswf-mon-sess")||"{}");if(st.iv>=1)iv=Math.min(Math.floor(st.iv),86400)}catch(e){}return iv}
 /* #MX-10 (1.2.31): степенная шкала Y — y^(1/e): поджимает пики мягче логарифма, по аналогии с BecqMoni */
 function viewSave(){try{localStorage.setItem("aswf-view",JSON.stringify({log:isLog,pow:isPow,cps:isCps,kev:isKev}))}catch(e){}}
 function setPow(ns){isPow=true;isLog=false;if(!ns)viewSave();setSeg(["btn-lin","btn-log","btn-pow"],2);if(lastD)draw(lastD);else clearCanvas()}
@@ -402,16 +380,12 @@ function visN(N){if(!xRange||!isKev||!calib)return N;var c=Math.ceil(kev2ch(xRan
 function setXRange(v){xRange=v;try{localStorage.setItem("aswf-xrange",String(v))}catch(e){}setSeg(["btn-x1k","btn-x2k","btn-xall"],v===1000?0:v===2000?1:2);if(lastD)draw(lastD);drawCursor()}
 function setKev(v,ns){isKev=v;if(!ns)viewSave();setSeg(["btn-ch","btn-kev"],v?1:0);if(lastD)draw(lastD);else clearCanvas()}
 function setSeg(ids,onIdx){ids.forEach(function(id,i){var el=document.getElementById(id);if(!el)return;if(i===onIdx)el.classList.add("on");else el.classList.remove("on")})}
-function ch2kev(ch){if(!calib)return ch;var e=0;for(var i=0;i<calib.length;i++)e+=calib[i]*Math.pow(ch,i);return e}
-function kev2ch(kev){var lo=0,hi=8192;for(var i=0;i<30;i++){var m=(lo+hi)/2;if(ch2kev(m)<kev)lo=m;else hi=m}return(lo+hi)/2}
+function ch2kev(ch){return calKev(calib,ch)}
+function kev2ch(kev){return calChan(calib,kev,8192)}
 /*REBIN-BEGIN*/
 /* 1.2.31: перенос оверлея по ЭНЕРГИИ. Запись (импорт фона с другой платы / другая калибровка) рисовалась на тот же КАНАЛ, что живой
    спектр, — при разных калибровках линии не совпадали. Канал i — ячейка [i-1/2, i+1/2]; последний канал — переполнение (всё выше
    шкалы) и остаётся последним. Счёт сохраняется: ячейка источника делится по перекрытию, вышедшее за шкалу приёмника — в край. */
-function calE(c,x){var e=0;for(var i=c.length-1;i>=0;i--)e=e*x+c[i];return e}
-function calMono(c,n){var p=-Infinity;for(var j=0;j<=64;j++){var e=calE(c,-0.5+j*n/64);if(!(e>p))return false;p=e}return true}
-function calSame(a,b){var n=8192,p=[0,2048,4096,6144,8191],i;for(i=0;i<p.length;i++)if(!(Math.abs(calE(a,p[i])-calE(b,p[i]))<0.5))return false;return true}
-function calInv(c,E,n){var lo=-0.5,hi=n-0.5;for(var i=0;i<45;i++){var m=(lo+hi)/2;if(calE(c,m)<E)lo=m;else hi=m}return(lo+hi)/2}
 function rebinByEnergy(src,ca,cb){
  var n=src.length;
  if(!ca||!cb||!ca.length||!cb.length||n<3||!calMono(ca,n)||!calMono(cb,n)||calSame(ca,cb))return src;
@@ -473,7 +447,7 @@ async function update(){
  try{
   /* #PERF-1: binary bins (32 KiB) + meta JSON — shared 2s server cache */
   var rb=await fetch("/api/spectrum");
-  var rm=await fetch("/api/spectrum/meta.json");
+  var rm=await fetch("/api/spectrum/meta.json?w="+smaWinSec());  /* #MX-14 (1.2.36): SMA окна W с платы (кольцо monitor.c), тем же запросом */
   if(!rb.ok||!rm.ok){
    acqStale();  /* #UI-44 */
    var deadHdr=(rm.headers&&rm.headers.get("X-Spectrometer-Dead"))||(rb.headers&&rb.headers.get("X-Spectrometer-Dead"));
@@ -499,20 +473,19 @@ async function update(){
   var tStr=(typeof d.t1==="number")?(''+d.t1):"—";
   if(typeof d.t2==="number" && d.t2>0)tStr+='/'+d.t2;
   if(typeof d.t3==="number" && d.t3>0)tStr+='/'+d.t3;
-  var doseStr=(doseK>0)?(d.cps*doseK).toFixed(3):"";
-  /* #MX-13 (1.2.34, #62): средний CPS по реальному времени набора = импульсы / d.time (тот же знаменатель, что у мгновенного CPS и SMA); формула avgCps — common-time.js (подключён в конце страницы); нет значения — элемент не выводится */
+  /* #MX-13 (1.2.34, #62): средний CPS по реальному времени набора = импульсы / d.time (тот же знаменатель, что у мгновенного CPS и SMA); формула avgCps — common-time.js (подключён перед inline-скриптом, OPT-12); нет значения — элемент не выводится */
   var avgV=(typeof avgCps==="function")?avgCps(d.total,d.time):null;
   var avgHtml=(avgV===null)?"":'<span class="sep">|</span><span title="'+tr("st.avgT")+'"><span class="mut">'+tr("st.avg")+'</span> '+avgV.toFixed(2)+'</span>';
   /* #MX-5/#MX-6 (1.2.31): CPS, счёт, МД и реальное время — только крупными цифрами выше; здесь — остальное */
-  stEl.innerHTML='<span><span class="mut">'+tr("st.live")+'</span> '+fmtTime(lv)+'</span><span class="sep">|</span>'+
+  stEl.innerHTML='<span><span class="mut">'+tr("st.live")+'</span> '+fmtDur(lv)+'</span><span class="sep">|</span>'+
    '<span><span class="mut">'+tr("st.dead")+'</span> '+dpct.toFixed(2)+'%</span><span class="sep">|</span>'+
    '<span>'+tr("st.lost")+' <span>'+d.lost+'</span></span><span class="sep">|</span>'+
    '<span>t '+tStr+' &deg;C</span>'+avgHtml;
-  document.getElementById("big-time").textContent=fmtHMS(d.time);
+  document.getElementById("big-time").textContent=fmtClock(d.time);
   document.getElementById("big-cps").textContent=d.cps;
   /* #MX-13 (1.2.34, #62): рядом с целым CPS — SMA с подписью фактического охвата; среднее за набор по реальному времени — в строке статуса, по живому — на «Мониторинге»; формула avgCps в common-time.js */
-  /* подпись — фактический охват истории (после F5 он короче номинального окна smaWinSec()) */
-  var sma=smaCps(d.time,d.total);var es=document.getElementById("big-sma"),W=(sma===null)?0:Math.round(d.time-smaHist[0].t);es.textContent=(sma===null)?"":" / SMA "+W+tr("cps.sec")+" "+sma.toFixed(2);es.title=(sma===null)?"":tr("cps.smaT").replace("%1",W);
+  /* #MX-14 (1.2.36): SMA и фактический охват окна (sma_w, с) приходят с платы в meta.json?w=; без собственной истории вкладки, после F5 не копится заново */
+  var sma=(typeof d.sma==="number")?d.sma:null;var es=document.getElementById("big-sma"),W=(sma===null)?0:Math.round(d.sma_w);es.textContent=(sma===null)?"":" / "+sma.toFixed(2);es.title=(sma===null)?"":tr("cps.smaT").replace("%1",W);
   document.getElementById("big-total").textContent=d.total.toLocaleString(lcl());
   if(doseK>0){var bigDr=(d.cps*doseK).toFixed(3);document.getElementById("big-dose").textContent=bigDr;document.getElementById("big-dose-sep").style.display="";document.getElementById("big-dose-wrap").style.display="";}else{document.getElementById("big-dose-sep").style.display="none";document.getElementById("big-dose-wrap").style.display="none";}
   draw(d);
@@ -719,9 +692,9 @@ async function loadSaved(retry){
   if(!r.spectra||r.spectra.length===0){el.innerHTML='<span class="empty">'+tr("saved.empty")+'</span>';return}
   var html='<table class="saved"><tr><th>'+tr("th.idx")+'</th><th>'+tr("th.saved")+'</th><th>'+tr("th.counts")+'</th><th>'+tr("th.time")+'</th><th>'+tr("th.export")+'</th><th></th></tr>';
   for(var i=0;i<r.spectra.length;i++){
-   var s=r.spectra[i];var dt=s.saved_at>0?new Date(s.saved_at*1000).toLocaleString(lcl()):'—';
+   var s=r.spectra[i];var dt=s.saved_at>0?fmtDateTime(s.saved_at*1000):'—';
    var onCls=s.index===overlayIdx?' class="on"':'';
-   html+='<tr'+onCls+'><td>'+s.index+(s.imp?' <span style="color:#f0c45a;font-size:10.5px">'+tr("saved.impTag")+'</span>':'')+'</td><td>'+dt+'</td><td>'+s.counts.toLocaleString(lcl())+'</td><td>'+fmtTime(s.time)+'</td>'+
+   html+='<tr'+onCls+'><td>'+s.index+(s.imp?' <span style="color:#f0c45a;font-size:10.5px">'+tr("saved.impTag")+'</span>':'')+'</td><td>'+dt+'</td><td>'+s.counts.toLocaleString(lcl())+'</td><td>'+fmtDur(s.time)+'</td>'+
     '<td><a href="/api/saved/'+s.index+'/export.xml" style="color:var(--accent)">XML</a> &middot; <a href="/api/saved/'+s.index+'/export.csv" style="color:var(--accent)">CSV</a></td>'+
     '<td><button class="btn sm" onclick="toggleOverlay('+s.index+')">'+(s.index===overlayIdx?tr("btn.overlayOff"):tr("btn.overlay"))+'</button> <button class="btn sm red" onclick="delSaved('+s.index+')">'+tr("btn.del")+'</button></td></tr>';
   }
@@ -926,8 +899,8 @@ function viewRestore(){try{var o=JSON.parse(localStorage.getItem("aswf-view")||"
  loadPrefix();
  try{var oi=parseInt(localStorage.getItem("aswf-ovl"),10);var qo=/[?&]overlay=(\d+)/.exec(location.search);if(qo)oi=parseInt(qo[1],10);if(oi>=0)loadOverlay(oi)}catch(e){}   /* ?overlay=N из saved.html */
  populateNucPanel();
- setInterval(update,2000);   /* #UI-15: 1000→2000ms — chunked /api/spectrum.json ел сокеты при F5; макс. uri_handlers=11 */
- setInterval(loadFlashInfo,10000);
+ (window.pollWhileVisible||setInterval)(update,2000);   /* #UI-15: 1000→2000ms — chunked /api/spectrum.json ел сокеты при F5; макс. uri_handlers=11 */
+ (window.pollWhileVisible||setInterval)(loadFlashInfo,10000);
  loadFlashInfo();   // #FIELD-6: сразу показать режим Indoor/Outdoor в шапке
  clearCanvas();
  initCalib();
@@ -1103,12 +1076,11 @@ window.openZoomOverlay=function(sourcesFn,opts){
     var cnt=lastD.bins[ch];
     var cps=(lastD.time>0)?(cnt/lastD.time):0;
     var eStr=calib?(ch2kev(ch).toFixed(1)+" "+tr("cur.kev")):("ch "+ch);
-    return "CPS "+cps.toFixed(2)+"\nE "+eStr+"\nt "+fmtTime(lastD.time);
+    return "CPS "+cps.toFixed(2)+"\nE "+eStr+"\nt "+fmtDur(lastD.time);
    }
   });
  });
 })();
 </script>
-<script src="/common-time.js"></script>
 </body>
 </html>

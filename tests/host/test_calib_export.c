@@ -435,6 +435,13 @@ void round2_wiring_sites_suite(void)
     w_site("../../main/web_server.c", "handle_settings_snapshot", "X-Dsp-Snapshot-Saved", NULL);
     /* М5 поколение кэша */
     w_site("../../main/spectrum_http_cache.c", "spectrum_http_cache_finish_build", "spec_cache_gen_stale(", NULL);
+    /* 1.2.36 H3: полный JSON — лениво из send_json (решает spec_json_need_build); пересборка кэша его не строит */
+    w_site("../../main/spectrum_http_cache.c", "spectrum_http_send_json", "spec_json_need_build(", NULL);
+    w_absent("../../main/spectrum_http_cache.c", "spectrum_http_cache_finish_build", "build_json_full(");
+    w_absent("../../main/spectrum_http_cache.c", "spectrum_http_cache_finish_build", "spec_json_full_fmt(");
     /* М6 гейт OTA в автосохранении */
     w_site("../../main/main.c", "app_main", "if (ota_busy_is_busy())", "spectrum_autosave_fail_streak()");
+    /* 1.2.36 H12: /api/device берёт поля хвоста снимка в локальную структуру, без буфера ~33 КБ */
+    w_site("../../main/web_server.c", "handle_device", "spectrum_get_calib_meta(", NULL);
+    w_absent("../../main/web_server.c", "handle_device", "malloc(");
 }

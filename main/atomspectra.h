@@ -261,11 +261,19 @@ const spectrum_data_t *spectrum_get_current(void);
 // Поле bins[] в out НЕ заполняется — не читать его после этого вызова.
 bool spectrum_get_meta(spectrum_data_t *out);
 
+// 1.2.36 OPT-1: живое время, с (метод BecqMoni; формула — live_time.h). Одна функция для JSON, XML, N42, SPE.
+float spectrum_compute_live_time(const spectrum_data_t *sp);
+
 // #FW-53: счётчики СВИПОВ (не чанков). commits — собрано полных спектров,
 // drops — отброшено рваных (разрыв в чанках). pkt_hist в usb-diag считает
 // ЧАНКИ гистограммы и в разы больше — это разные величины.
 void spectrum_get_sweep_stats(uint32_t *commits, uint32_t *drops);
 bool spectrum_get_snapshot(spectrum_data_t *out);
+// 1.2.36 H1 (A): снимок для кэша /api/spectrum* без SPEC_LOCK (seqlock, seq_copy.h); не вышло за
+// 3 попытки — spectrum_get_snapshot(). Счётчики повторов и запасных путей — /api/system.
+bool spectrum_get_snapshot_seq(spectrum_data_t *out);
+uint32_t spectrum_spec_seq_retry(void);
+uint32_t spectrum_spec_seq_fallback(void);
 // У-3: снимок + счётчик переноса опоры водопада (под одним локом).
 bool spectrum_get_snapshot_wf(spectrum_data_t *out, uint32_t *resync_seq);
 // У-2: сколько Reset с боота прибор не выполнил (данные прибора сохранены по таймауту).
@@ -345,6 +353,10 @@ void spectrum_autosave_yield(void);
 void spectrum_autosave_note_fail(void);
 void spectrum_autosave_note_ok(void);
 int  spectrum_autosave_fail_streak(void);
+/** 1.2.36 Commit 0: число успешных one-shot записей current.bin с загрузки (наблюдаемость). */
+uint32_t spectrum_autosave_writes(void);
+/** 1.2.36 P1: число пропущенных (неизменных) одноразовых записей current.bin с загрузки. */
+uint32_t spectrum_autosave_skips(void);
 /** Seconds since last successful autosave; -1 if never. */
 int  spectrum_autosave_age_sec(void);
 void spectrum_restore_autosave(void);
