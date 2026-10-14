@@ -121,13 +121,18 @@ header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
 #sec-danger .danger-card{ max-width:520px; }
 #sec-danger .danger-row .btn{ background:#1a1413; border:1px solid #4a2c27; color:#e39a8a; border-radius:6px; padding:12px 14px; }
 @media(max-width:700px){   /* узкий экран: список разделов сворачивается в горизонтальные вкладки */
- .sys-side{ flex:1 1 100%; max-width:none; flex-direction:row; overflow-x:auto; border-right:none; border-bottom:1px solid #1c241c; padding:0; }
- .sec-link{ flex:0 0 auto; white-space:nowrap; border-left:none; border-bottom:2px solid transparent; padding:10px 14px; }
+ .sys-layout{ display:block; min-height:0; }   /* без flex-wrap/min-height: иначе строка вкладок растягивается до 560px */
+ .sys-side{ display:flex; width:100%; max-width:none; flex-direction:row; align-items:stretch; overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; scrollbar-width:none; border-right:none; border-bottom:1px solid #1c241c; padding:0; }
+ .sys-side::-webkit-scrollbar{ display:none; }
+ .sec-link{ flex:0 0 auto; justify-content:center; white-space:nowrap; border-left:none; border-bottom:2px solid transparent; padding:0 14px; height:44px; box-sizing:border-box; }
  .sec-link small{ display:none; }
  .sec-link.on{ border-bottom-color:var(--accent); }
  .sec-link.danger.on{ border-bottom-color:#e39a8a; }
- .sys-main{ flex:1 1 100%; padding:14px 12px; }
- .stat-strip{ padding:10px 12px; gap:4px 16px; }
+ .sys-main{ width:100%; padding:14px 12px; }
+ .stat-strip{ padding:8px 12px; gap:2px 14px; font-size:10.5px; }
+ .sys-main .fld input, .sys-main select, .sys-main .btn{ max-width:100%; box-sizing:border-box; }
+ .sys-main .fld input:not([type=checkbox]):not([type=radio]){ width:100%; }
+ .sys-sec{ min-width:0; }
 }
 </style>
 </head>
@@ -1075,7 +1080,8 @@ function showSec(name){
  if(SECS.indexOf(name)<0)name="ov";
  SECS.forEach(function(k){var s=document.getElementById("sec-"+k);if(s)s.classList.toggle("on",k===name);});
  var ls=document.querySelectorAll(".sec-link");
- for(var i=0;i<ls.length;i++)ls[i].classList.toggle("on",ls[i].getAttribute("data-sec")===name);
+ for(var i=0;i<ls.length;i++){var on=ls[i].getAttribute("data-sec")===name;ls[i].classList.toggle("on",on);
+  if(on){var sd=ls[i].parentNode;if(sd&&sd.scrollWidth>sd.clientWidth)sd.scrollLeft=ls[i].offsetLeft-(sd.clientWidth-ls[i].offsetWidth)/2;}}
  try{if(location.hash!=="#"+name)history.replaceState(null,"","#"+name);}catch(e){}
 }
 function initSections(){
