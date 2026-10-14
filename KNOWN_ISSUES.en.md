@@ -64,6 +64,13 @@ For the coefficient `k` the loader checks only `k >= 0`, so the value `inf` is a
 the file's author. What `inf` does in the dose-rate calculation was not checked. No fix is claimed
 (`docs/dose-curve.md`).
 
+### Loading a dose-rate curve overwrites the previous one before the file is validated
+
+The loader opens `dose_curve.csv` for writing before parsing the content (`main/web_waterfall.c`, the `dose_curve`
+handler). A file with no valid rows returns `{"ok":true,"n":0}` while the previous curve is already lost; the page
+shows this as an error. Not fixed in 1.2.37.
+- **Workaround:** keep your own copy of the previous CSV before uploading.
+
 ### Background import (Saved -> "Import background...") - limits in 1.2.31
 
 - Exactly 8192 channels are accepted (board JSON, BecqMoni XML, N42, board CSV); 1024/4096 channels are rejected. CSV carries no
