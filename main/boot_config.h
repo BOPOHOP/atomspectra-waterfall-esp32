@@ -49,6 +49,9 @@ typedef struct {
     // dose_rate null — сразу, без перезагрузки (см. boot_config_dose_live_enabled); буферы освобождает monitor_task при записи
     // следующего сэмпла (при молчащем приборе — позже).
     bool     dose_live_enabled;
+    // #GZ-T (1.2.37-rc90, ТЕСТ): уровень сжатия gzip тел /api/spectrum.json и /api/spectrum (NVS "gz_lvl", u8): 0 — выкл
+    // (умолчание; нет ключа = 0), 1 или 6; иное значение в NVS читается как 0. Действует сразу (spectrum_gz_sync).
+    uint8_t  gzip_level;
 
 } boot_config_t;
 
@@ -57,6 +60,9 @@ bool boot_config_calib_always(void);
 
 // #DOSE-TOGGLE: кэш тумблера живой МД (читает monitor_task раз в сэмпл и httpd, NVS не дёргаем); умолчание true; обновляется при load/save.
 bool boot_config_dose_live_enabled(void);
+
+// #GZ-T: кэш уровня сжатия спектра (читает httpd на каждом запросе спектра, NVS не дёргаем); умолчание 0; обновляется при load/save.
+uint8_t boot_config_gzip_level(void);
 
 
 // Читает конфиг из NVS. Любой отсутствующий ключ → false / "". Безопасно вызывать

@@ -296,6 +296,12 @@ header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
 <label class="boot-row" style="border-bottom:none"><input type="checkbox" class="sw" id="bc-calib-always" onchange="saveBootConfig('bc-status')"><span data-i18n="boot.calibAlways">Всегда читать калибровку из прибора при старте набора</span></label>
 <div class="mut" style="font-size:10.5px;line-height:1.4" data-i18n="boot.calibAlwaysNote">Калибровка прибора заменяет заданную на плате (удобно при смене прибора). Выключено: плата читает её, только если своя не задана.</div>
 <div class="mut" style="font-size:10.5px;line-height:1.4" data-i18n="boot.calibAlwaysApply">Применяется при следующем старте набора.</div>
+<div class="grp" data-i18n="boot.secGz">Сжатие спектра (тест)</div>
+<label class="boot-row" style="border-bottom:none"><input type="checkbox" class="sw" id="bc-gz-en" onchange="autoSave('gz',function(){saveGzip('gz-status')},300)"><span data-i18n="boot.gzEn">Сжимать спектр (тест)</span></label>
+<div class="fld"><span data-i18n="boot.gzLevel">Уровень сжатия</span>
+<select id="bc-gz-lvl" onchange="autoSave('gz',function(){saveGzip('gz-status')},300)" style="background:var(--panel);color:var(--txt);border:1px solid #444;padding:4px 8px;border-radius:4px;font-family:inherit;font-size:12px"><option value="1">1</option><option value="6">6</option></select></div>
+<div class="mut" style="font-size:10.5px;line-height:1.4" data-i18n="boot.gzNote">Тест: /api/spectrum.json и /api/spectrum уходят сжатыми (gzip), если клиент принимает gzip и сжатое тело текущего снимка (2 с) уже готово; иначе — как раньше. Сжимает отдельная задача платы; пока включено, занято ≈ 0,24–0,28 МБ PSRAM. Действует сразу.</div>
+<div class="mut" id="gz-status" style="font-size:11px;min-height:14px"></div>
 </section>
 </div>
 <div class="mut" id="bc-status" style="font-size:11px;min-height:14px"></div>
@@ -489,7 +495,9 @@ var DICT={
   "nav.bk":"%1 снимков / %2 ч","nav.prerel":"предрелизы",
   "boot.secCalib":"Калибровка",
   "boot.saveErrDet":"ошибка: %1",
-  "boot.calibAlwaysApply":"Применяется при следующем старте набора."
+  "boot.calibAlwaysApply":"Применяется при следующем старте набора.",
+  "boot.secGz":"Сжатие спектра (тест)","boot.gzEn":"Сжимать спектр (тест)","boot.gzLevel":"Уровень сжатия",
+  "boot.gzNote":"Тест: /api/spectrum.json и /api/spectrum уходят сжатыми (gzip), если клиент принимает gzip и сжатое тело текущего снимка (2 с) уже готово; иначе — как раньше. Сжимает отдельная задача платы; пока включено, занято ≈ 0,24–0,28 МБ PSRAM. Действует сразу."
  },
  en:{
   "page.title":"AtomSpectra · System",
@@ -577,7 +585,9 @@ var DICT={
   "nav.bk":"%1 snapshots / %2 h","nav.prerel":"pre-releases",
   "boot.secCalib":"Calibration",
   "boot.saveErrDet":"error: %1",
-  "boot.calibAlwaysApply":"Applied at the next acquisition start."
+  "boot.calibAlwaysApply":"Applied at the next acquisition start.",
+  "boot.secGz":"Spectrum compression (test)","boot.gzEn":"Compress the spectrum (test)","boot.gzLevel":"Compression level",
+  "boot.gzNote":"Test: /api/spectrum.json and /api/spectrum are sent gzip-compressed when the client accepts gzip and the compressed body of the current snapshot (2 s) is already prepared; otherwise as before. A separate board task compresses; while on, about 0.24–0.28 MB of PSRAM is used. Takes effect immediately."
  }
 };
 /* #OPT-13: LANG/t/tfmt/applyI18n/setLang - общий каркас в common-time.js; здесь только страничные хвосты */
@@ -927,6 +937,9 @@ async function loadBootConfig(){
   if(fb)fb.checked=(r.field_ap_fallback===true);    /* нет ключа (апгрейд) = ВЫКЛ */
   var ca=document.getElementById("bc-calib-always"); if(ca)ca.checked=(r.calib_always===true);   /* #59: нет ключа = ВЫКЛ */
   var dl=document.getElementById("dose-live-en"); if(dl)dl.checked=(r.dose_live!==false);   /* #DOSE-TOGGLE: нет поля (старая прошивка) = ВКЛ */
+  var gze=document.getElementById("bc-gz-en"),gzl=document.getElementById("bc-gz-lvl");   /* #GZ-T: нет поля (прошивка без теста) = выкл */
+  if(gze)gze.checked=(r.gzip_level===1||r.gzip_level===6);
+  if(gzl&&(r.gzip_level===1||r.gzip_level===6))gzl.value=String(r.gzip_level);
 
   /* issue #52: те же данные несут настройки резервных снимков. Поле, которое сейчас
      набирают (фокус или ждёт автосохранения), не перезаписываем. */
@@ -1048,6 +1061,13 @@ async function saveDoseLive(statusId){
 }
 
 
+/* #GZ-T (1.2.37-rc90, тест): сжатие /api/spectrum.json и /api/spectrum — NVS gz_lvl через POST /api/boot-config, ключ gzip_level
+   (0 — выкл, 1 или 6). Отдельная функция, а не saveBootConfig: тело saveBootConfig (6 ключей) не меняется. */
+async function saveGzip(statusId){
+ var en=document.getElementById("bc-gz-en"),sel=document.getElementById("bc-gz-lvl");
+ if(!en||!sel)return false;
+ return await bootPost({gzip_level:en.checked?(sel.value==="6"?6:1):0},statusId||"gz-status");
+}
 /* Состояние кривой хранится в переменной, а не в тексте элемента: applyI18n/смена языка перерисовывают статус. */
 var doseCurveN=0;
 function renderDoseCurveStat(){

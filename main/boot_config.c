@@ -1,5 +1,6 @@
 #include "boot_config.h"
 #include "boot_flag_plan.h"   // AWF-2a финал: чистая семантика missing-key
+#include "spectrum_gz_plan.h" // #GZ-T: spec_gz_level_from_nvs — нет ключа или не 1/6 = 0
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_log.h"
@@ -41,6 +42,10 @@ bool boot_config_calib_always(void) { return s_calib_always; }
 static volatile bool s_dose_live_en = true;
 bool boot_config_dose_live_enabled(void) { return s_dose_live_en; }
 
+// #GZ-T (1.2.37-rc90): кэш уровня сжатия спектра; умолчание 0 (выкл). Пишут boot_config_load/save, читает httpd.
+static volatile uint8_t s_gz_lvl;
+uint8_t boot_config_gzip_level(void) { return s_gz_lvl; }
+
 
 void boot_config_load(boot_config_t *out)
 {
@@ -56,10 +61,11 @@ void boot_config_load(boot_config_t *out)
     out->backup_test_minutes = false;
     out->field_ap_fallback_enabled = false;    // AWF-2a финал: по умолчанию ВЫКЛ
     out->dose_live_enabled   = true;           // #DOSE-TOGGLE: по умолчанию ВКЛ (нет ключа = ВКЛ)
+    out->gzip_level          = 0;              // #GZ-T: по умолчанию выкл. (нет ключа = 0)
 
 
     nvs_handle_t h;
-    if (nvs_open(BOOT_NS, NVS_READONLY, &h) != ESP_OK) { s_dose_live_en = out->dose_live_enabled; return; }   // namespace ещё нет → все false / ""
+    if (nvs_open(BOOT_NS, NVS_READONLY, &h) != ESP_OK) { s_dose_live_en = out->dose_live_enabled; s_gz_lvl = 0; return; }   // namespace ещё нет → все false / ""
     out->autostart_spectrum  = get_flag(h, "as_spec");
     out->autostart_waterfall = get_flag(h, "as_wf");
     out->clear_spectrum      = get_flag(h, "clr_spec");
@@ -88,6 +94,12 @@ void boot_config_load(boot_config_t *out)
     out->field_ap_fallback_enabled = get_flag(h, "fap_en");
     out->calib_always_from_device = get_flag(h, "cal_al");
     s_calib_always = out->calib_always_from_device;
+    {   // #GZ-T (1.2.37-rc90): уровень сжатия спектра; нет ключа "gz_lvl" или значение не 1/6 = 0 (выкл)
+        uint8_t gv = 0;
+        esp_err_t grc = nvs_get_u8(h, "gz_lvl", &gv);
+        out->gzip_level = spec_gz_level_from_nvs(grc == ESP_OK, gv);
+        s_gz_lvl = out->gzip_level;
+    }
     {   // #DOSE-TOGGLE: положительный флаг с умолчанием ВКЛ; нет ключа "dose_live_en" (апгрейд) = ВКЛ
         uint8_t dv = 1;
         esp_err_t drc = nvs_get_u8(h, "dose_live_en", &dv);
@@ -127,10 +139,12 @@ int boot_config_save(const boot_config_t *in)
     e |= nvs_set_u8(h, "fap_en", in->field_ap_fallback_enabled ? 1 : 0);
     e |= nvs_set_u8(h, "cal_al", in->calib_always_from_device ? 1 : 0);
     e |= nvs_set_u8(h, "dose_live_en", in->dose_live_enabled ? 1 : 0);
+    e |= nvs_set_u8(h, "gz_lvl", spec_gz_level_from_nvs(true, in->gzip_level));   // #GZ-T: не 1/6 = 0
 
     if (e == ESP_OK) e = nvs_commit(h);
     if (e == ESP_OK) s_calib_always = in->calib_always_from_device;
     if (e == ESP_OK) s_dose_live_en = in->dose_live_enabled;
+    if (e == ESP_OK) s_gz_lvl = spec_gz_level_from_nvs(true, in->gzip_level);
 
     nvs_close(h);
     if (e != ESP_OK) { ESP_LOGW(TAG, "save failed (0x%x)", (int)e); return -1; }

@@ -39,6 +39,20 @@ esp_err_t spectrum_http_send_json(httpd_req_t *req);
 // Send bins only (uint32 LE × SPECTRUM_CHANNELS).
 esp_err_t spectrum_http_send_bins(httpd_req_t *req);
 
+// #GZ-T (1.2.37-rc90, ТЕСТ): сжатие тел спектра отдельной задачей (main/spectrum_gz.c). Виды тела:
+#define SPECTRUM_HTTP_KIND_JSON 0   // полный /api/spectrum.json
+#define SPECTRUM_HTTP_KIND_BINS 1   // бинарный /api/spectrum (32 768 Б)
+// Крючок обработчика: true — ответ уже отправлен (готовое сжатое тело), *out — результат отправки; false — ответить как раньше.
+typedef bool (*spectrum_http_gz_try_fn)(httpd_req_t *req, int kind, esp_err_t *out);
+// Уведомление: тело вида kind текущего поколения собрано (зовётся под мьютексом кэша — только уведомить, не ждать).
+typedef void (*spectrum_http_gz_note_fn)(int kind);
+// Ставит spectrum_gz_init() один раз до httpd_start. NULL (по умолчанию) — путь ответа прежний.
+void spectrum_http_cache_set_gz_hooks(spectrum_http_gz_try_fn try_send, spectrum_http_gz_note_fn note);
+// Закрепить тело вида kind ТЕКУЩЕГО поколения как читатель кэша (JSON — только если уже собран для текущего поколения):
+// пересборка не освободит и не перезапишет его до spectrum_http_cache_unpin(kind). false — тела нет.
+bool spectrum_http_cache_pin(int kind, const void **body, size_t *len, uint32_t *gen);
+void spectrum_http_cache_unpin(int kind);
+
 // Send meta JSON without bins (cps, total, calib, …).
 esp_err_t spectrum_http_send_meta(httpd_req_t *req);
 

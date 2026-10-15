@@ -68,13 +68,14 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_autosave_mark_retry.c \
        test_meta_w_parse.c
 
-test: $(SRCS) test_util.h socket_budget_check.sh ../../main/socket_budget.h test_import_body_plan test_import_tmp_plan test_n42_time_plan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w test_glue_fold test_epoch_atomic test_glue_epoch
+test: $(SRCS) test_util.h socket_budget_check.sh ../../main/socket_budget.h test_import_body_plan test_import_tmp_plan test_n42_time_plan test_spectrum_gz_plan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w test_glue_fold test_epoch_atomic test_glue_epoch
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm
 	./test_runner
 	bash ./socket_budget_check.sh
 	./test_import_body_plan
 	./test_import_tmp_plan
 	./test_n42_time_plan
+	./test_spectrum_gz_plan
 	./test_glue_cache
 	./test_glue_monitor
 	./test_glue_cache_oom
@@ -124,6 +125,10 @@ test_import_tmp_plan: test_import_tmp_plan.c ../../main/import_tmp_plan.h
 test_n42_time_plan: test_n42_time_plan.c ../../main/n42_time_plan.h
 	$(CC) $(CFLAGS) -o test_n42_time_plan test_n42_time_plan.c
 
+# #GZ-T (1.2.37-rc90): автономный тест со своим main() (spectrum_gz_plan.h) - уровень, Accept-Encoding, рамка gzip, поколение, запас PSRAM.
+test_spectrum_gz_plan: test_spectrum_gz_plan.c ../../main/spectrum_gz_plan.h
+	$(CC) $(CFLAGS) -o test_spectrum_gz_plan test_spectrum_gz_plan.c
+
 # Автономный тест со своим main() (import_body_plan.h) — в общий test_runner не линкуется.
 test_import_body_plan: test_import_body_plan.c ../../main/import_body_plan.h
 	$(CC) $(CFLAGS) -o test_import_body_plan test_import_body_plan.c
@@ -148,7 +153,7 @@ tsan: test_seq_stress.c ../../main/seq_copy.h
 	TSAN_OPTIONS="halt_on_error=0 exitcode=0" ./test_seq_stress_tsan
 
 clean:
-	rm -f test_runner test_runner_asan bench_json_fmt test_import_body_plan test_import_tmp_plan test_n42_time_plan test_seq_stress test_seq_stress_tsan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w test_glue_fold test_epoch_atomic test_glue_epoch
+	rm -f test_runner test_runner_asan bench_json_fmt test_import_body_plan test_import_tmp_plan test_n42_time_plan test_spectrum_gz_plan test_seq_stress test_seq_stress_tsan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w test_glue_fold test_epoch_atomic test_glue_epoch
 
 # UI-P1: замер до/после старого(vsnprintf-loop)/нового(json_append_uint32_csv)
 # форматтера бинов — числа для отчёта, не гейт ALL PASSED.
