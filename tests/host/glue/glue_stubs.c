@@ -9,6 +9,7 @@
 #include "esp_timer.h"
 #include "esp_random.h"
 #include "esp_http_server.h"
+#include "lwip/sockets.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
@@ -16,6 +17,7 @@ size_t glue_fail_above = SIZE_MAX;
 int64_t glue_now_us = 1000000;
 int glue_sem_depth = 0;
 void (*glue_on_send)(httpd_req_t *r) = NULL;
+int glue_nodelay_on, glue_nodelay_off, glue_nodelay_other, glue_setsockopt_fail;
 
 static void *g_ptrs[512];
 static size_t g_nptrs;
@@ -86,6 +88,21 @@ uint32_t esp_random(void) {
 void glue_req_init(httpd_req_t *r) {
     memset(r, 0, sizeof *r);
     r->status = 200;
+    r->sockfd = 7;
+}
+
+int httpd_req_to_sockfd(httpd_req_t *r) {
+    return r->sockfd;
+}
+
+int glue_setsockopt(int fd, int level, int optname, const void *optval, unsigned optlen) {
+    (void)fd;
+    if (level == IPPROTO_TCP && optname == TCP_NODELAY && optval && optlen == sizeof(int)) {
+        if (*(const int *)optval) glue_nodelay_on++; else glue_nodelay_off++;
+    } else {
+        glue_nodelay_other++;
+    }
+    return glue_setsockopt_fail ? -1 : 0;
 }
 
 void glue_req_free(httpd_req_t *r) {

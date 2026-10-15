@@ -14,6 +14,7 @@ typedef struct httpd_req {
     int sends, chunks, terminated;
     char render_hdr[24];
     const char *query;     /* pass2 З-3: query string without '?' (NULL - no query) */
+    int sockfd;            /* 1.2.37: fake socket of the request (httpd_req_to_sockfd), glue_req_init sets 7 */
 } httpd_req_t;
 #define ESP_ERR_HTTPD_RESULT_TRUNC 0xb004   /* IDF v5.4 esp_http_server.h:86 */
 size_t httpd_req_get_url_query_len(httpd_req_t *r);
@@ -22,6 +23,7 @@ esp_err_t httpd_req_get_url_query_str(httpd_req_t *r, char *buf, size_t buf_len)
 extern void (*glue_on_send)(httpd_req_t *r);
 void glue_req_init(httpd_req_t *r);
 void glue_req_free(httpd_req_t *r);
+int httpd_req_to_sockfd(httpd_req_t *r);
 esp_err_t httpd_resp_send(httpd_req_t *r, const char *buf, ssize_t len);
 esp_err_t httpd_resp_send_chunk(httpd_req_t *r, const char *buf, ssize_t len);
 esp_err_t httpd_resp_send_err(httpd_req_t *r, httpd_err_code_t code, const char *msg);

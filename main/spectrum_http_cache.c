@@ -10,6 +10,8 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "lwip/sockets.h"           // 1.2.37: setsockopt(TCP_NODELAY) — спектральные ответы
+#include <errno.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -243,6 +245,23 @@ static void set_render_hdr(httpd_req_t *req, uint32_t render_count,
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 }
 
+// 1.2.37: ответы спектра (23 КБ JSON, 32 КБ бинарный) уходят десятком сегментов; без TCP_NODELAY lwIP придерживает последний
+// неполный сегмент до ACK клиента (Nagle) -> +40 мс при нечётном числе сегментов. Флаг НЕ снимаем: httpd_resp_send()
+// возвращается, когда данные скопированы в буфер отправки, а не когда они ушли, — снятие вернуло бы Nagle хвосту.
+// Ошибка не фатальна: ответ уйдёт, как раньше; WARN один раз.
+static void spectrum_http_nodelay(httpd_req_t *req)
+{
+    static bool s_warned;
+    int one = 1;
+    int fd = httpd_req_to_sockfd(req);
+    if (fd < 0 || setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one) < 0) {
+        if (!s_warned) {
+            s_warned = true;
+            ESP_LOGW(TAG, "TCP_NODELAY failed: fd=%d errno=%d", fd, errno);
+        }
+    }
+}
+
 typedef enum { PAYLOAD_META, PAYLOAD_BINS } payload_kind_t;
 
 // Зафиксировать снапшот кэша: заголовки и указатели берём под мьютексом, но сама
@@ -306,6 +325,7 @@ esp_err_t spectrum_http_send_json(httpd_req_t *req)
         xSemaphoreGive(s_mtx);
         set_render_hdr(req, render_for_hdr, hdr, sizeof(hdr));
         httpd_resp_set_type(req, "application/json");
+        spectrum_http_nodelay(req);
         esp_err_t e = httpd_resp_send(req, payload, len);
         xSemaphoreTake(s_mtx, portMAX_DELAY);
         if (s_json_users > 0) s_json_users--;
@@ -377,6 +397,7 @@ esp_err_t spectrum_http_send_json(httpd_req_t *req)
 
     set_render_hdr(req, render_for_hdr, hdr, sizeof(hdr));
     httpd_resp_set_type(req, "application/json");
+    spectrum_http_nodelay(req);
     esp_err_t e = httpd_resp_send(req, payload, len);
 
     xSemaphoreTake(s_mtx, portMAX_DELAY);
@@ -407,6 +428,7 @@ esp_err_t spectrum_http_send_bins(httpd_req_t *req)
     snapshot_begin(req, PAYLOAD_BINS, &payload, &len, hdr, sizeof(hdr));
     httpd_resp_set_type(req, "application/octet-stream");
     httpd_resp_set_hdr(req, "Content-Disposition", "inline");
+    spectrum_http_nodelay(req);
     esp_err_t e = httpd_resp_send(req, payload, len);
     snapshot_end();
     return e;

@@ -401,6 +401,9 @@ need spectrum_http_cache.c 1 'sl = spec_meta_sma_tail(tail, 128, sum_counts, sum
 need web_server.c 1 'return meta_w_handle(req);'   # pass2 З-3: обработчик - в meta_w_handler.h (исполняет test_glue_meta_w)
 need spectrum_http_cache.c 1 'size_t tl = spec_meta_sma_tail('
 need spectrum_http_cache.c 1 'e = httpd_resp_send_chunk(req, NULL, 0);'
+# 1.2.37: TCP_NODELAY на сокете запроса ПЕРЕД httpd_resp_send спектральных ответов (spectrum.json: кэш + сборка, бинарный /api/spectrum) - ровно три вызова хелпера, флаг не снимается; исполняет test_glue_cache (glue_nodelay)
+line spectrum_http_cache.c 3 'spectrum_http_nodelay(req);'
+need spectrum_http_cache.c 1 'setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one)'
 # release-gate 1.2.36 passA З-1: КАЖДАЯ запись s_spectrum - под SPEC_LOCK (или из мест вызова под ним): spec_writers.py с
 # фиксированными флагами. Законные исключения ровно два: memset в spectrum_init (до запуска httpd, одна задача) и const-геттер
 # spectrum_get_current (--scan-dir: приведений без const - 0). Отказ - одна строка WIRING FAIL с перечнем UNLOCKED.

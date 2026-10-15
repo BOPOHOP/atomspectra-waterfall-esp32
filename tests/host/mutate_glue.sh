@@ -19,6 +19,14 @@ mt_mut MZ2_private_leak glue_json_oom "$C" '/if (!claimed) free(buf);/d'
 mt_mut MZ3_users_kept   glue_json_oom "$C" 's/if (claimed) { s_json = buf; s_json_cap = cap; s_json_users--; }/if (claimed) { s_json = buf; s_json_cap = cap; }/'
 mt_mut MZ4_readers_kept glue_json_oom "$C" '/^            s_readers--;/d'
 mt_mut Y5_win_60     glue_mon_window  "$M" 's/if (w_sec > s_cap) w_sec = s_cap;/if (w_sec > 60) w_sec = 60;/'
+# 1.2.37 TCP_NODELAY (spectrum.json: кэш + сборка, бинарный /api/spectrum): каждый мутант обязан покраснить РОВНО glue_nodelay
+#   ND1: нет вызова в ветке из кэша; ND2: нет вызова в ветке после сборки; ND3: нет вызова в send_bins;
+#   ND4: флаг ставится в 0 вместо 1; ND5: флаг снимается сразу после httpd_resp_send (ветка из кэша)
+mt_mut ND1_cached_no_call glue_nodelay "$C" 's/^        spectrum_http_nodelay(req);/        (void)req;/'
+mt_mut ND2_build_no_call  glue_nodelay "$C" '0,/^    spectrum_http_nodelay(req);/s//    (void)req;/'
+mt_mut ND3_bins_no_call   glue_nodelay "$C" '/"Content-Disposition", "inline"/{n;s/spectrum_http_nodelay(req);/(void)req;/}'
+mt_mut ND4_one_zero       glue_nodelay "$C" 's/^    int one = 1;/    int one = 0;/'
+mt_mut ND5_cleared_after  glue_nodelay "$C" '/^        esp_err_t e = httpd_resp_send(req, payload, len);/a\        { int z = 0; setsockopt(httpd_req_to_sockfd(req), IPPROTO_TCP, TCP_NODELAY, \&z, sizeof z); }'
 mt_base
 mt_done
 exit $?
