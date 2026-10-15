@@ -21,7 +21,12 @@ int spectrogram_dose_mode(void) { return g_stub_mode; }
 uint32_t spectrogram_dose_gen(void) { return 0; }
 bool spectrogram_dose_delta_sum(const uint32_t *prev, const uint32_t *cur, float *out_wsum) { (void)prev; (void)cur; *out_wsum = 0.0f; return true; }
 float spectrogram_get_dose_k(void) { return g_stub_k; }
-bool spectrum_get_snapshot_wf(spectrum_data_t *out, uint32_t *resync_seq) { (void)out; *resync_seq = 0; return false; }
+static int g_snap_calls;   /* #DOSE-TOGGLE: сколько раз dose_sample() брал снимок спектра */
+bool spectrum_get_snapshot_wf(spectrum_data_t *out, uint32_t *resync_seq) { (void)out; *resync_seq = 0; g_snap_calls++; return false; }
+/* #DOSE-TOGGLE: заглушка кэша тумблера «Считать живую МД» (в плате — boot_config.c) */
+static bool g_stub_dose_en = true;
+bool boot_config_dose_live_enabled(void) { return g_stub_dose_en; }
+
 
 static int g_failures;
 #define NCHECK(name, cond) do { if (!(cond)) { printf("FAIL %s %s:%d: %s\n", name, __FILE__, __LINE__, #cond); g_failures++; } } while (0)
@@ -109,6 +114,44 @@ int main(void) {
     { float gs = 1.0f; uint32_t gd = 7, gn = 7; monitor_window_dose(1, &gs, &gd, &gn); NCHECK("glue_mon_dose", gd == 0 && gn == 0 && gs == 0.0f); }
     printf("INFO glue_mon_dose: cases=%d\n", dose_cases);
   }
+  /* #DOSE-TOGGLE: тумблер dose_live_en = 0 -> monitor_dose_live() отдаёт режим "off" при ЛЮБОМ режиме МД, rate=null (have=false), w=0;
+     dose_sample() не берёт снимок и освобождает кольцо/снимок/предыдущие bins; обратное включение — снимок берётся, буферы выделены снова */
+  {
+    int off_cases = 0;
+    NCHECK("glue_mon_dose_off", s_dose_ring != NULL && s_dose_snap != NULL && s_dose_prev_bins != NULL);   /* буферы остались от блока выше */
+    for (int m = 0; m <= 2; m++) {
+      spec_dose_t dz;
+      g_stub_mode = m;
+      g_stub_dose_en = false;
+      monitor_dose_live(60, &dz);
+      NCHECK("glue_mon_dose_off", strcmp(dz.mode, "off") == 0 && !dz.have && dz.w == 0);
+      off_cases++;
+    }
+    g_stub_mode = 2;
+    g_stub_dose_en = false;
+    {
+      int c0 = g_snap_calls;
+      float v = dose_sample(1, 0, 0);
+      NCHECK("glue_mon_dose_off", isnan(v) && g_snap_calls == c0);
+      NCHECK("glue_mon_dose_off", s_dose_ring == NULL && s_dose_snap == NULL && s_dose_prev_bins == NULL && !s_dose_alloc_failed);
+    }
+    g_stub_dose_en = true;
+    {
+      int c0 = g_snap_calls;
+      float v = dose_sample(1, 0, 0);
+      NCHECK("glue_mon_dose_off", isnan(v) && g_snap_calls == c0 + 1);
+      NCHECK("glue_mon_dose_off", s_dose_ring != NULL && s_dose_snap != NULL && s_dose_prev_bins != NULL);
+    }
+    {
+      spec_dose_t dz;
+      g_stub_mode = 1;
+      monitor_dose_live(60, &dz);
+      NCHECK("glue_mon_dose_off", strcmp(dz.mode, "scalar") == 0);
+    }
+    g_stub_mode = 0;
+    printf("INFO glue_mon_dose_off: cases=%d\n", off_cases);
+  }
+
   NCHECK("glue_mon_window", glue_sem_depth == 0);
   printf("INFO glue_monitor: samples=%d dur_sum=%" PRIu32 " windows=%d differ_y5=%d\n", NS, dsum, nw, differ_y5);
   if (g_failures) { printf("test_glue_monitor: %d CHECK(S) FAILED\n", g_failures); return 1; }

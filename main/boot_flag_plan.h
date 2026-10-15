@@ -9,6 +9,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+// #DOSE-TOGGLE: положительный флаг с умолчанием ВКЛ (живая МД, NVS-ключ dose_live_en): ключа нет (апгрейд, чистая NVS,
+// ошибка чтения) = ВКЛ при любом raw_value; ключ есть — по значению (0 = ВЫКЛ). Обратная семантика к boot_flag_from_nvs().
+static inline bool boot_flag_default_on_from_nvs(bool key_present, uint8_t raw_value)
+{
+    return !key_present || raw_value != 0;
+}
+
 static inline bool boot_flag_from_nvs(bool key_present, uint8_t raw_value)
 {
     return key_present && raw_value != 0;

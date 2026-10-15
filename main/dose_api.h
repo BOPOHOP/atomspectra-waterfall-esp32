@@ -12,7 +12,7 @@
 typedef struct {
     bool        have;   // есть конечное значение rate
     float       rate;   // µSv/h
-    const char *mode;   // "curve" | "scalar" | "none"
+    const char *mode;   // "curve" | "scalar" | "none" | "off" (тумблер dose_live_en = 0)
     uint32_t    w;      // фактический охват окна, с
 } spec_dose_t;
 

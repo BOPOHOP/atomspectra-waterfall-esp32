@@ -354,7 +354,7 @@ var PL=65,PT=15,PW=1120,PH=340,PR=PL+PW,PB=PT+PH;
 var doseK=0;
 
 /* #DOSE-A: живая МД с платы (по кривой или коэффициенту; окно = окно SMA): поля dose_mode/dose_rate/dose_w приходят в meta.json?w=.
-   dose_mode curve|scalar - показываем dose_rate (null - прочерк), none - блок скрыт. Нет поля dose_mode (старая прошивка) - прежний расчёт cps*doseK. */
+   dose_mode curve|scalar - показываем dose_rate (null - прочерк), none и off (тумблер «Считать живую МД» выключен на плате) - блок скрыт. Нет поля dose_mode (старая прошивка) - прежний расчёт cps*doseK. */
 function showDose(d){
  var wrap=document.getElementById("big-dose-wrap"),sep=document.getElementById("big-dose-sep"),el=document.getElementById("big-dose");
  var show=false,txt="\u2014",ttl="";

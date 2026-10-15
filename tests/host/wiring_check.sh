@@ -390,6 +390,13 @@ need meta_w_handler.h 0 'if (ql >= sizeof(q))'
 need meta_w_handler.h 1 'return spectrum_http_send_meta_sma_dose(req, sc, sd, n, &dz);'
 need meta_w_handler.h 1 'monitor_dose_live(w, &dz);'
 need monitor.c 1 'float dose_ws = dose_sample(tsec, prev_time, resync);'
+# #DOSE-TOGGLE (1.2.37): тумблер «Считать живую МД» — NVS (чтение/запись), API, UI и освобождение буферов в dose_sample
+need boot_config.c 1 '    e |= nvs_set_u8(h, "dose_live_en", in->dose_live_enabled ? 1 : 0);'
+need boot_config.c 1 '        out->dose_live_enabled = boot_flag_default_on_from_nvs(drc == ESP_OK, dv);'
+need web_server.c 1 '        bc.dose_live_enabled = cJSON_IsTrue(it);'
+need ../web/system.html 1 ' return await bootPost({dose_live:el.checked},statusId||"dose-live-status");'
+need monitor.c 1 '        dose_buffers_release();'
+
 need spectrum_http_cache.c 1 'sl = spec_meta_sma_tail(tail, 128, sum_counts, sum_dur, n);'
 need web_server.c 1 'return meta_w_handle(req);'   # pass2 З-3: обработчик - в meta_w_handler.h (исполняет test_glue_meta_w)
 need spectrum_http_cache.c 1 'size_t tl = spec_meta_sma_tail('

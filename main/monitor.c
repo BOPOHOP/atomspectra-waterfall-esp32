@@ -16,6 +16,8 @@
 #include "monitor.h"
 #include "monitor_window.h"
 #include "dose_api.h"       // #DOSE-A: spec_dose_t, spectrogram_dose_*
+#include "boot_config.h"    // #DOSE-TOGGLE: boot_config_dose_live_enabled()
+
 #include "atomspectra.h"
 
 #include <stdlib.h>
@@ -185,12 +187,40 @@ static bool dose_buffers_ready(void)
     return true;
 }
 
+// #DOSE-TOGGLE: освободить буферы живой МД (тумблер dose_live_en = 0). Вызывается ТОЛЬКО из dose_sample() в monitor_task:
+// эта задача — единственный владелец s_dose_snap / s_dose_prev_bins и единственный писатель кольца доз. Указатель кольца
+// гасится ПОД s_lock, free() — после xSemaphoreGive: читатель (monitor_window_dose) проверяет указатель под тем же локом.
+// s_dose_alloc_failed сбрасывается — повторное включение пробует выделить память заново. Нечего освобождать — тихий выход (без журнала).
+static void dose_buffers_release(void)
+{
+    if (!s_dose_ring && !s_dose_snap && !s_dose_prev_bins) { s_dose_alloc_failed = false; return; }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    float *old_ring = s_dose_ring;
+    s_dose_ring = NULL;
+    xSemaphoreGive(s_lock);
+    free(old_ring);
+    free(s_dose_snap);
+    s_dose_snap = NULL;
+    free(s_dose_prev_bins);
+    s_dose_prev_bins = NULL;
+    s_dose_alloc_failed = false;
+    s_dose_prev_ok = false;
+    ESP_LOGI(TAG, "live dose disabled - dose buffers freed");
+}
+
+
 // Доза сэмпла = Σ(Δbins·lut) между снимком прошлого сэмпла и снимком этого коммита, µSv/h·с; NAN — дозы нет.
 // Сэмпл годен, только если: кривая загружена и не пересобирается; снимок того же коммита, что пара totals
 // (total_time_sec == tsec, тот же resync); прошлый снимок взят на предыдущем сэмпле (s_dose_prev_t == prev_time);
 // ни одного канала с откатом; поколение кривой не менялось за время расчёта.
 static float dose_sample(uint32_t tsec, uint32_t prev_time, uint32_t resync)
 {
+    if (!boot_config_dose_live_enabled()) {   // #DOSE-TOGGLE: тумблер выключен — ни снимка спектра, ни кольца доз
+        dose_buffers_release();
+        s_dose_prev_ok = false;
+        return NAN;
+    }
+
     uint32_t g0 = spectrogram_dose_gen();
     if (g0 != s_dose_gen_seen) {          // кривую/коэффициент загрузили, удалили или сменили на лету
         dose_ring_fill_nan();
@@ -243,6 +273,8 @@ void monitor_dose_live(uint32_t w_sec, spec_dose_t *out)
     out->rate = 0.0f;
     out->mode = "none";
     out->w = 0;
+    if (!boot_config_dose_live_enabled()) { out->mode = "off"; return; }   // #DOSE-TOGGLE: тумблер выключен — режим "off", dose_rate null
+
     int m = spectrogram_dose_mode();
     if (m == 2) {
         if (s_dose_alloc_failed) return;   // нет памяти под кольцо — клиентам "none"
