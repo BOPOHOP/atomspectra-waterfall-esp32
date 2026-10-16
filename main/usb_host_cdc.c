@@ -880,7 +880,7 @@ int32_t usb_host_cdc_hist_age_ms(void)
 // #FW-53: см. декларацию в atomspectra.h. "good" = сумма распознанных типов кадров
 // (hist+text+stat+osc+unknown, всё, что дошло до handle_rx_packet — уже валидный CRC),
 // "bad" = отброшено по CRC/framing (pkt_bad). Формат строки — по мотивам находки
-// внешнего пользователя (wf-recorder#1, BOPOHOP): в его кастомной сборке была такая же
+// внешнего пользователя (автор issue wf-recorder#1): в его кастомной сборке была такая же
 // диагностика, у нас сигнал уже был внутри shproto_struct.dropped, просто не считался.
 void usb_host_cdc_log_pkt_stats(void)
 {

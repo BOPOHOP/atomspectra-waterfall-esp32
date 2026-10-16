@@ -373,7 +373,7 @@ that point into a **base**, then shows the analyzer's fresh (zeroed) histogram o
 | `/api/spectrum.json` | GET | Live spectrum + statistics + calibration |
 | `/api/spectrum` | GET | Raw binary spectrum (32768 bytes) |
 | `/api/spectrum/meta.json?w=N` | GET | Spectrum metadata without bins; with an integer `w` - the N-second SMA (`sma`, `sma_w`, `sma_n`) and the live dose rate of the same window: `dose_rate` (µSv/h or `null`), `dose_mode` (`curve` - from `dose_curve.csv`, `scalar` - from `dose_k`, `none`), `dose_w` - actual window coverage, s |
-| `/api/boot-config` | GET / POST | Board start settings (JSON); `dose_live` - the "Compute live dose rate" switch (default `true`; `false` - `dose_mode` = `off`, `dose_rate` = `null`, the board takes no spectrum snapshots for the calculation and frees the memory; takes effect immediately) |
+| `/api/boot-config` | GET / POST | Board start settings (JSON); `dose_live` - the "Compute live dose rate" switch (default `true`; `false` - `dose_mode` = `off`, `dose_rate` = `null`, the board takes no spectrum snapshots for the calculation; mode `off` takes effect at once, while the dose-ring memory is freed when the monitor records its next sample - if the instrument is silent or disconnected, it stays allocated until the next sample) |
 | `/api/export.xml` | GET | BecqMoni XML (live spectrum) |
 | `/api/export.csv` | GET | InterSpec CSV (live spectrum) |
 | `/api/export.n42` | GET | ANSI N42.42 (live spectrum) |
