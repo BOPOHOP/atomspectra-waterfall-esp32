@@ -425,7 +425,7 @@ whatever was not measured on a live instrument is marked as such.
 | `lost` | integer, pulses | Number of lost pulses from the instrument's status packet |
 | `calib`, `calib_set` | array of numbers; boolean | `calib` - coefficients c₀…c_k of the polynomial `E(ch) = c₀ + c₁·ch + …` (energy in keV, `ch` is the channel number); present only when the calibration is considered valid (`calib_valid`). `calib_set: false` - no calibration is set (no coefficients, or all of them are zero) |
 | `hist_ok` | integer, pcs | Count of complete histograms (8192 channels) published by the board since its boot. It does not necessarily grow by exactly 1 per instrument histogram: a histogram postponed because the reset was ambiguous is not counted and is published with the next one. Reset to zero only by rebooting the **board**; `-rst` and `POST /api/reset` do not reset it |
-| `hist_drop` | integer, pcs | Number of incomplete histograms (a gap between fragments) dropped since the board's boot |
+| `hist_drop` | integer, pcs | Number of histograms dropped since the board's boot: incomplete ones (a gap between fragments) and ones received during a spectrum reset |
 
 The other fields (`bridge_drop`, `usb_rx_err`, `rx_ring_drops`, `autosave_age_sec`, `autosave_fail_streak`, `t1`-`t3`, `serial`,
 `reset_unconfirmed`) are diagnostic and are not described here.
