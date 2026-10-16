@@ -419,7 +419,7 @@ whatever was not measured on a live instrument is marked as such.
 | `total` | integer, counts | Sum of counts of the same spectrum (including the base) |
 | `time` | integer, s | Acquisition time including the base; whole seconds |
 | `live` | number with one decimal, s | Live time: `time` minus the dead-time estimate `(RISE+FALL+1)/F` per pulse (parameters from the instrument's `-inf`); equal to `time` until the parameters are received |
-| `dead` | 0 or 1, **flag** | Not the dead time. `1` - USB is open and FTDI frames keep arriving (the last one less than 4 s ago), more than 6 s have passed since the port was opened, but no instrument packet has been received since then; the flag is not set during the first 6 s after the port is opened |
+| `dead` | 0 or 1, **flag** | Not the dead time. `1` - USB is open and FTDI frames keep arriving (the last one less than 4 s ago), 6 s or more have passed since the port was opened, but no instrument packet has been received since then; the flag is not set during the first 6 s after the port is opened |
 | `cpu` | integer, % | CPU load of the instrument, from the status packet |
 | `cps` | integer, counts/s | The value reported by the instrument; its averaging interval is not stated in the board code or in `PROTOCOL.md`. The count rate can also be estimated by the client: the difference of `total` over the difference of `time` between requests |
 | `lost` | integer, pulses | Number of lost pulses from the instrument's status packet |
