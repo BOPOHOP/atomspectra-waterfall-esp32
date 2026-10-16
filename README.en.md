@@ -374,7 +374,6 @@ that point into a **base**, then shows the analyzer's fresh (zeroed) histogram o
 | `/api/spectrum` | GET | Raw binary spectrum (32768 bytes) |
 | `/api/spectrum/meta.json?w=N` | GET | Spectrum metadata without bins; with an integer `w` - the N-second SMA (`sma`, `sma_w`, `sma_n`) and the live dose rate of the same window: `dose_rate` (µSv/h or `null`), `dose_mode` (`curve` - from `dose_curve.csv`, `scalar` - from `dose_k`, `none`), `dose_w` - actual window coverage, s |
 | `/api/boot-config` | GET / POST | Board start settings (JSON); `dose_live` - the "Compute live dose rate" switch (default `true`; `false` - `dose_mode` = `off`, `dose_rate` = `null`, the board takes no spectrum snapshots for the calculation and frees the memory; takes effect immediately) |
-
 | `/api/export.xml` | GET | BecqMoni XML (live spectrum) |
 | `/api/export.csv` | GET | InterSpec CSV (live spectrum) |
 | `/api/export.n42` | GET | ANSI N42.42 (live spectrum) |
@@ -406,6 +405,62 @@ that point into a **base**, then shows the analyzer's fresh (zeroed) histogram o
 > **All POST endpoints require the `X-CSRF-Token` header** with the value obtained
 > from `GET /api/csrf-token`. The Web UI does this automatically. The CSRF token is generated
 > at board startup and protects against request forgery from a third-party page in the browser.
+
+### REST mode: notes for clients
+
+For developers of programs that poll the board over HTTP. The description is based on the 1.2.37 firmware source code;
+whatever was not measured on a live instrument is marked as such.
+
+**Fields of `GET /api/spectrum.json`**
+
+| Field | Type, unit | Meaning |
+|---|---|---|
+| `bins` | array of 8192 integers, counts | Counts in each channel; the base is added to the instrument's own accumulation (see "Spectrum after a power loss"). The length is repeated in `channels` |
+| `total` | integer, counts | Sum of counts of the same spectrum (including the base) |
+| `time` | integer, s | Acquisition time including the base; whole seconds |
+| `live` | number with one decimal, s | Live time: `time` minus the dead-time estimate `(RISE+FALL+1)/F` per pulse (parameters from the instrument's `-inf`); equal to `time` until the parameters are received |
+| `dead` | 0 or 1, **flag** | Not the dead time. `1` - USB is open and FTDI frames keep arriving, but no instrument packet has been received since the port was opened |
+| `cpu` | integer, % | CPU load of the instrument, from the status packet |
+| `cps` | integer, counts/s | The value reported by the instrument; its averaging interval is not stated in the board code or in `PROTOCOL.md`. The count rate can also be estimated by the client: the difference of `total` over the difference of `time` between requests |
+| `lost` | integer, pulses | Number of lost pulses from the instrument's status packet |
+| `calib`, `calib_set` | array of numbers; boolean | `calib` - coefficients c₀…c_k of the polynomial `E(ch) = c₀ + c₁·ch + …` (energy in keV, `ch` is the channel number); present only when the calibration is considered valid (`calib_valid`). `calib_set: false` - no calibration is set (no coefficients, or all of them are zero) |
+| `hist_ok` | integer, pcs | Count of complete histograms (8192 channels) published by the board since its boot. It does not necessarily grow by exactly 1 per instrument histogram: a histogram postponed because the reset was ambiguous is not counted and is published with the next one. Reset to zero only by rebooting the **board**; `-rst` and `POST /api/reset` do not reset it |
+| `hist_drop` | integer, pcs | Number of incomplete histograms (a gap between fragments) dropped since the board's boot |
+
+The other fields (`bridge_drop`, `usb_rx_err`, `rx_ring_drops`, `autosave_age_sec`, `autosave_fail_streak`, `t1`-`t3`, `serial`,
+`reset_unconfirmed`) are diagnostic and are not described here.
+
+**Cache and polling rate.** The response body is built from one snapshot and cached for 2 s (the cache is dropped earlier when
+the calibration changes). Polling more often than once per 2 s does not yield new data; `time` also advances in whole seconds.
+
+**Response headers of `GET /api/spectrum.json`**
+
+- `X-Spectrum-Render-Count` - cache generation number (integer); the same for `spectrum.json`, `/api/spectrum` and `meta.json` of one generation.
+- `X-Hist-Age-Ms` (since 1.2.37) - integer, ms: time since the board received the last histogram packet, **at the moment of the
+  response** (not of the cached body's build); `-1` - nothing has been received since the board's boot. A histogram arrives in
+  fragments and every received fragment updates the stamp, so it can be refreshed before `hist_ok` grows. The header reports only
+  the fact of reception; whether an acquisition is running is for the client to decide (for example, from an age threshold and the
+  growth of `time`). Whether the instrument keeps sending histograms after `-sto` has not been checked on the instrument.
+- `X-Spectrometer-Dead` (`1`/`0`, same as `dead`) - only in the 404 response (`/api/spectrum` and `meta.json` return it too).
+
+**Responses.** `404` with the text `No spectrum data yet` means "no data": since the board's boot, or since the spectrum was reset,
+no new histogram has been published yet. The reply of the instrument to a command does not come in the `POST /api/command` response:
+the body is `{"ok":true}` or `{"ok":false}` with status 200 (`true` - the command was written to USB without an error; there is no
+confirmation from the instrument). Look for the instrument's text reply in `GET /api/devlog?since=N`:
+`{"up_ms":…,"lines":[{"seq":…,"t":…,"text":"…"}],"next":M}`; `t` and `up_ms` are board milliseconds; the log keeps the last 8 lines,
+so poll it with `since=<previous next>`. `POST /api/reset` answers `{"ok":true,"sent":true|false}` (`sent:false` - `-rst` was not
+delivered to the instrument, the board tries to resend it on the next connection). Both POSTs require `X-CSRF-Token`.
+
+**Who owns the instrument**
+
+- **REST.** The board owns the instrument: it keeps the acquisition going (the watchdog repeats `-sta` if the gateway started the
+  acquisition and no histograms have arrived for 20 s), maintains the base, reads the calibration before `-sta` when needed and
+  saves the spectrum to flash. A REST client only reads data and sends commands.
+- **TCP bridge :8234** is a branch of the instrument's raw stream: the board keeps building its own spectrum in parallel. There is
+  one client (a second one connects and is closed), no authentication. Any bytes received from the client switch the acquisition
+  intent to "unknown", and the acquisition watchdog stops repeating `-sta`. The commands `-rst` and `-sta … -r` from the client,
+  once delivered to the instrument, erase the board's spectrum and base. The board code contains no coordination between the
+  commands of a TCP client, the Web UI and a REST client, so controlling the instrument from several channels at once is not recommended.
 
 ## Security and trust model
 

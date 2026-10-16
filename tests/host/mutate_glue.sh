@@ -27,6 +27,13 @@ mt_mut ND2_build_no_call  glue_nodelay "$C" '0,/^    spectrum_http_nodelay(req);
 mt_mut ND3_bins_no_call   glue_nodelay "$C" '/"Content-Disposition", "inline"/{n;s/spectrum_http_nodelay(req);/(void)req;/}'
 mt_mut ND4_one_zero       glue_nodelay "$C" 's/^    int one = 1;/    int one = 0;/'
 mt_mut ND5_cleared_after  glue_nodelay "$C" '/^        esp_err_t e = httpd_resp_send(req, payload, len);/a\        { int z = 0; setsockopt(httpd_req_to_sockfd(req), IPPROTO_TCP, TCP_NODELAY, \&z, sizeof z); }'
+# 1.2.37 X-Hist-Age-Ms (spectrum.json): каждый мутант обязан покраснить РОВНО glue_hist_age (замена, не удаление: иначе unused/-Werror и прогон на старом бинарнике)
+#   HA1: нет заголовка в ветке из кэша; HA2: нет заголовка в ветке после сборки; HA3: значение всегда -1 (возраст не считается);
+#   HA4: заголовок ставится дважды (ветка после сборки)
+mt_mut HA1_cached_no_hdr glue_hist_age "$C" 's/^        set_hist_age_hdr(req, age_hdr, sizeof(age_hdr));/        (void)age_hdr;/'
+mt_mut HA2_build_no_hdr  glue_hist_age "$C" 's/^    set_hist_age_hdr(req, age_hdr, sizeof(age_hdr));/    (void)age_hdr;/'
+mt_mut HA3_always_m1     glue_hist_age "$C" 's/usb_host_cdc_hist_age_ms());/-1);/'
+mt_mut HA4_build_twice   glue_hist_age "$C" '/^    set_hist_age_hdr(req, age_hdr, sizeof(age_hdr));/a\    set_hist_age_hdr(req, age_hdr, sizeof(age_hdr));'
 mt_base
 mt_done
 exit $?

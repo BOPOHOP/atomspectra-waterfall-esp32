@@ -20,3 +20,12 @@ static inline bool acq_watch_resend_due(uint8_t intent, uint32_t now_ms, uint32_
     if (hist_age < ACQ_WATCH_MS) return false;
     return now_ms - last_resend_ts_ms >= ACQ_WATCH_MS;
 }
+
+/* 1.2.37: возраст последней принятой гистограммы, мс (заголовок X-Hist-Age-Ms). -1 — ни одной с загрузки (штамп 0, как в
+ * acq_watch_resend_due). Разность uint32 — переполнение мс безопасно; потолок INT32_MAX, чтобы значение не стало отрицательным. */
+static inline int32_t acq_hist_age_ms(uint32_t now_ms, uint32_t hist_ts_ms)
+{
+    if (hist_ts_ms == 0) return -1;
+    uint32_t age = now_ms - hist_ts_ms;
+    return age > (uint32_t)INT32_MAX ? INT32_MAX : (int32_t)age;
+}

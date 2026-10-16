@@ -169,6 +169,11 @@ esp_err_t httpd_resp_send_err(httpd_req_t *r, httpd_err_code_t code, const char 
 }
 
 esp_err_t httpd_resp_set_hdr(httpd_req_t *r, const char *field, const char *value) {
+    if (r->hdr_n < 16) {
+        snprintf(r->hdr_field[r->hdr_n], sizeof r->hdr_field[0], "%s", field);
+        snprintf(r->hdr_value[r->hdr_n], sizeof r->hdr_value[0], "%s", value);
+    }
+    r->hdr_n++;
     if (strcmp(field, "X-Spectrum-Render-Count") == 0) {
         snprintf(r->render_hdr, sizeof r->render_hdr, "%s", value);
     }

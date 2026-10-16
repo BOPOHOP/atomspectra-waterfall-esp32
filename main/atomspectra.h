@@ -212,6 +212,10 @@ typedef struct {
 
 void usb_host_cdc_diag_snapshot(usb_diag_snapshot_t *out);
 
+// 1.2.37: мс с приёма последней гистограммы (CMD_HISTOGRAM) на момент вызова; -1 — ни одной с загрузки. Штамп и «сейчас» —
+// под тем же DIAG_LOCK, что у соседних геттеров (заголовок X-Hist-Age-Ms ответа /api/spectrum.json).
+int32_t usb_host_cdc_hist_age_ms(void);
+
 // #FW-53: периодическая строка "shproto pkts: N good, M bad" в serial-лог (тег usb_cdc) —
 // диагностика целостности USB CDC-канала прибор<->ESP32 без похода в /api/usb-diag.
 void usb_host_cdc_log_pkt_stats(void);

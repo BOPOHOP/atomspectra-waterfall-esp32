@@ -404,6 +404,10 @@ need spectrum_http_cache.c 1 'e = httpd_resp_send_chunk(req, NULL, 0);'
 # 1.2.37: TCP_NODELAY на сокете запроса ПЕРЕД httpd_resp_send спектральных ответов (spectrum.json: кэш + сборка, бинарный /api/spectrum) - ровно три вызова хелпера, флаг не снимается; исполняет test_glue_cache (glue_nodelay)
 line spectrum_http_cache.c 3 'spectrum_http_nodelay(req);'
 need spectrum_http_cache.c 1 'setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one)'
+# 1.2.37: X-Hist-Age-Ms - ровно у двух отправок spectrum.json (из кэша и после сборки), значение - геттер платы под DIAG_LOCK; исполняет test_glue_cache (glue_hist_age)
+line spectrum_http_cache.c 2 'set_hist_age_hdr(req, age_hdr, sizeof(age_hdr));'
+need spectrum_http_cache.c 1 'httpd_resp_set_hdr(req, "X-Hist-Age-Ms", hdr);'
+need usb_host_cdc.c 1 '    return acq_hist_age_ms(now, hist_ts);'
 # release-gate 1.2.36 passA З-1: КАЖДАЯ запись s_spectrum - под SPEC_LOCK (или из мест вызова под ним): spec_writers.py с
 # фиксированными флагами. Законные исключения ровно два: memset в spectrum_init (до запуска httpd, одна задача) и const-геттер
 # spectrum_get_current (--scan-dir: приведений без const - 0). Отказ - одна строка WIRING FAIL с перечнем UNLOCKED.

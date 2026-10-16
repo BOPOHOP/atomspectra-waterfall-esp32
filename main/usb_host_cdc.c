@@ -867,6 +867,16 @@ void usb_host_cdc_diag_snapshot(usb_diag_snapshot_t *out)
     out->uptime_ms = diag_now_ms();
 }
 
+// 1.2.37: см. декларацию в atomspectra.h. Штамп пишет handle_rx_packet под тем же замком, поэтому now >= штампа.
+int32_t usb_host_cdc_hist_age_ms(void)
+{
+    DIAG_LOCK();
+    uint32_t now = diag_now_ms();
+    uint32_t hist_ts = s_diag.last_hist_ts_ms;
+    DIAG_UNLOCK();
+    return acq_hist_age_ms(now, hist_ts);
+}
+
 // #FW-53: см. декларацию в atomspectra.h. "good" = сумма распознанных типов кадров
 // (hist+text+stat+osc+unknown, всё, что дошло до handle_rx_packet — уже валидный CRC),
 // "bad" = отброшено по CRC/framing (pkt_bad). Формат строки — по мотивам находки

@@ -13,6 +13,10 @@ typedef struct httpd_req {
     char *body; size_t body_len; size_t body_cap;
     int sends, chunks, terminated;
     char render_hdr[24];
+    /* 1.2.37: every httpd_resp_set_hdr() pair in call order (like ra->resp_hdrs of esp_http_server: field/value are kept as given, count is capped by
+       max_resp_headers = 8 of HTTPD_DEFAULT_CONFIG); hdr_n counts all calls, pairs beyond 16 are counted but not stored */
+    int hdr_n;
+    char hdr_field[16][40], hdr_value[16][32];
     const char *query;     /* pass2 З-3: query string without '?' (NULL - no query) */
     int sockfd;            /* 1.2.37: fake socket of the request (httpd_req_to_sockfd), glue_req_init sets 7 */
 } httpd_req_t;

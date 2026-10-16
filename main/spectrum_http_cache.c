@@ -245,6 +245,15 @@ static void set_render_hdr(httpd_req_t *req, uint32_t render_count,
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 }
 
+// 1.2.37: X-Hist-Age-Ms — мс с приёма последней гистограммы ПЛАТОЙ на момент ответа (не кэширования тела: тело живёт до 2 с),
+// -1 — ни одной с загрузки. Только у spectrum.json. Буфер, как у render-заголовка, принадлежит кадру отправителя (указатель
+// хранится до httpd_resp_send). Вызывать вне s_mtx: геттер берёт DIAG_LOCK usb_host_cdc, вложенности замков нет.
+static void set_hist_age_hdr(httpd_req_t *req, char *hdr, size_t hdr_size)
+{
+    snprintf(hdr, hdr_size, "%" PRId32, usb_host_cdc_hist_age_ms());
+    httpd_resp_set_hdr(req, "X-Hist-Age-Ms", hdr);
+}
+
 // 1.2.37: ответы спектра (23 КБ JSON, 32 КБ бинарный) уходят десятком сегментов; без TCP_NODELAY lwIP придерживает последний
 // неполный сегмент до ACK клиента (Nagle) -> +40 мс при нечётном числе сегментов. Флаг НЕ снимаем: httpd_resp_send()
 // возвращается, когда данные скопированы в буфер отправки, а не когда они ушли, — снятие вернуло бы Nagle хвосту.
@@ -306,6 +315,7 @@ esp_err_t spectrum_http_send_json(httpd_req_t *req)
     const char *payload = NULL;
     size_t len = 0;
     char hdr[16];   // живёт до конца функции — дольше, чем httpd_resp_send()
+    char age_hdr[16];   // X-Hist-Age-Ms: то же требование к времени жизни
     uint32_t render_for_hdr = 0;
     bool claimed = false;
     char *buf = NULL;
@@ -324,6 +334,7 @@ esp_err_t spectrum_http_send_json(httpd_req_t *req)
         render_for_hdr = s_json_render;
         xSemaphoreGive(s_mtx);
         set_render_hdr(req, render_for_hdr, hdr, sizeof(hdr));
+        set_hist_age_hdr(req, age_hdr, sizeof(age_hdr));
         httpd_resp_set_type(req, "application/json");
         spectrum_http_nodelay(req);
         esp_err_t e = httpd_resp_send(req, payload, len);
@@ -396,6 +407,7 @@ esp_err_t spectrum_http_send_json(httpd_req_t *req)
     xSemaphoreGive(s_mtx);
 
     set_render_hdr(req, render_for_hdr, hdr, sizeof(hdr));
+    set_hist_age_hdr(req, age_hdr, sizeof(age_hdr));
     httpd_resp_set_type(req, "application/json");
     spectrum_http_nodelay(req);
     esp_err_t e = httpd_resp_send(req, payload, len);
