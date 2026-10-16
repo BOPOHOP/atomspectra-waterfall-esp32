@@ -369,10 +369,10 @@ that point into a **base**, then shows the analyzer's fresh (zeroed) histogram o
 |---|---|---|
 | `/` | GET | Web UI |
 | `/api/csrf-token` | GET | Issue a CSRF token (required in the `X-CSRF-Token` header on all POSTs) |
-| `/api/status` | GET | Device status (JSON); `dose_mode` / `dose_rate` / `dose_w` - live dose rate over a 10 s window (µSv/h; `null` - no data or mode `none`) |
+| `/api/status` | GET | Device status (JSON); `dose_mode` / `dose_rate` / `dose_w` - live dose rate over a 10 s window (µSv/h; `null` - no data, or mode `none` or `off`) |
 | `/api/spectrum.json` | GET | Live spectrum + statistics + calibration |
 | `/api/spectrum` | GET | Raw binary spectrum (32768 bytes) |
-| `/api/spectrum/meta.json?w=N` | GET | Spectrum metadata without bins; with an integer `w` - the N-second SMA (`sma`, `sma_w`, `sma_n`) and the live dose rate of the same window: `dose_rate` (µSv/h or `null`), `dose_mode` (`curve` - from `dose_curve.csv`, `scalar` - from `dose_k`, `none`), `dose_w` - actual window coverage, s |
+| `/api/spectrum/meta.json?w=N` | GET | Spectrum metadata without bins; with an integer `w` - the N-second SMA (`sma`, `sma_w`, `sma_n`) and the live dose rate of the same window: `dose_rate` (µSv/h or `null`), `dose_mode` (`curve` - from `dose_curve.csv`, `scalar` - from `dose_k`, `none` - neither a curve nor `k`, `off` - the "Compute live dose rate" switch is off), `dose_w` - actual window coverage, s |
 | `/api/boot-config` | GET / POST | Board start settings (JSON); `dose_live` - the "Compute live dose rate" switch (default `true`; `false` - `dose_mode` = `off`, `dose_rate` = `null`, the board takes no spectrum snapshots for the calculation; mode `off` takes effect at once, while the dose-ring memory is freed when the monitor records its next sample - if the instrument is silent or disconnected, it stays allocated until the next sample) |
 | `/api/export.xml` | GET | BecqMoni XML (live spectrum) |
 | `/api/export.csv` | GET | InterSpec CSV (live spectrum) |
@@ -419,12 +419,12 @@ whatever was not measured on a live instrument is marked as such.
 | `total` | integer, counts | Sum of counts of the same spectrum (including the base) |
 | `time` | integer, s | Acquisition time including the base; whole seconds |
 | `live` | number with one decimal, s | Live time: `time` minus the dead-time estimate `(RISE+FALL+1)/F` per pulse (parameters from the instrument's `-inf`); equal to `time` until the parameters are received |
-| `dead` | 0 or 1, **flag** | Not the dead time. `1` - USB is open and FTDI frames keep arriving, but no instrument packet has been received since the port was opened |
+| `dead` | 0 or 1, **flag** | Not the dead time. `1` - USB is open and FTDI frames keep arriving (the last one less than 4 s ago), more than 6 s have passed since the port was opened, but no instrument packet has been received since then; the flag is not set during the first 6 s after the port is opened |
 | `cpu` | integer, % | CPU load of the instrument, from the status packet |
 | `cps` | integer, counts/s | The value reported by the instrument; its averaging interval is not stated in the board code or in `PROTOCOL.md`. The count rate can also be estimated by the client: the difference of `total` over the difference of `time` between requests |
 | `lost` | integer, pulses | Number of lost pulses from the instrument's status packet |
-| `calib`, `calib_set` | array of numbers; boolean | `calib` - coefficients c₀…c_k of the polynomial `E(ch) = c₀ + c₁·ch + …` (energy in keV, `ch` is the channel number); present only when the calibration is considered valid (`calib_valid`). `calib_set: false` - no calibration is set (no coefficients, or all of them are zero) |
-| `hist_ok` | integer, pcs | Count of complete histograms (8192 channels) published by the board since its boot. It does not necessarily grow by exactly 1 per instrument histogram: a histogram postponed because the reset was ambiguous is not counted and is published with the next one. Reset to zero only by rebooting the **board**; `-rst` and `POST /api/reset` do not reset it |
+| `calib`, `calib_set` | array of numbers; boolean | `calib` - coefficients c₀…c_k of the polynomial `E(ch) = c₀ + c₁·ch + …` (energy in keV, `ch` is the channel number); present only when the calibration is considered valid (`calib_valid`). `calib_set: false` - no calibration is set: it is not valid (`calib_valid` is false), or the coefficients are not finite numbers, or all of them are zero |
+| `hist_ok` | integer, pcs | Count of complete histograms (8192 channels) published by the board since its boot. It does not necessarily grow by exactly 1 per instrument histogram: a histogram whose commit the board postponed because the reset was ambiguous is skipped entirely (it is in neither `hist_ok` nor `hist_drop`), and the instrument's next histogram is published instead; so `hist_ok + hist_drop` is not the number of received histograms. Reset to zero only by rebooting the **board**; `-rst` and `POST /api/reset` do not reset it |
 | `hist_drop` | integer, pcs | Number of histograms dropped since the board's boot: incomplete ones (a gap between fragments) and ones received during a spectrum reset |
 
 The other fields (`bridge_drop`, `usb_rx_err`, `rx_ring_drops`, `autosave_age_sec`, `autosave_fail_streak`, `t1`-`t3`, `serial`,
@@ -444,7 +444,10 @@ the calibration changes). Polling more often than once per 2 s does not yield ne
 - `X-Spectrometer-Dead` (`1`/`0`, same as `dead`) - only in the 404 response (`/api/spectrum` and `meta.json` return it too).
 
 **Responses.** `404` with the text `No spectrum data yet` means "no data": since the board's boot, or since the spectrum was reset,
-no new histogram has been published yet. The reply of the instrument to a command does not come in the `POST /api/command` response:
+no new histogram has been published yet. A reset (`POST /api/reset`) does not clear the body cache: for up to 2 s after it,
+`spectrum.json` may still answer `200` with the spectrum built before the reset (the `X-Hist-Age-Ms` header is computed at the
+moment of the response and says nothing about the age of the body); the client sees `404` only after the cache expires and until a
+new histogram is published. The reply of the instrument to a command does not come in the `POST /api/command` response:
 the body is `{"ok":true}` or `{"ok":false}` with status 200 (`true` - the command was written to USB without an error; there is no
 confirmation from the instrument). Look for the instrument's text reply in `GET /api/devlog?since=N`:
 `{"up_ms":…,"lines":[{"seq":…,"t":…,"text":"…"}],"next":M}`; `t` and `up_ms` are board milliseconds; the log keeps the last 8 lines,
