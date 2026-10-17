@@ -306,6 +306,32 @@ void spectrum_epoch_suite(void) {
         NCHECK("epoch_no_nvs", count_key(src, "s_reset_gen =") == 0);
         NCHECK("epoch_no_nvs", count_key(src, "spec_epoch_on_fold(&s_dev_resets, &s_reset_gen)") == 1);
         NCHECK("epoch_no_nvs", count_key(src, "spec_epoch_on_user_reset(&s_dev_resets, &s_reset_gen)") == 1);
+
+        /* К2: сторож порядка строк запасного пути spectrum_get_snapshot_epoch_seq (на хосте реальная функция заменена заглушкой, прогнать её нельзя):
+           после s_spec_seq_fallback++ строго SPEC_LOCK -> memcpy(бины) -> spec_read_epoch_live -> SPEC_UNLOCK; чтение эпохи вне замка = пара бины+эпоха разорвана */
+        const char *fn = strstr(src, "bool spectrum_get_snapshot_epoch_seq(");
+        NCHECK("epoch_fallback_order", fn != NULL && count_key(src, "bool spectrum_get_snapshot_epoch_seq(") == 1);
+        if (fn) {
+            const char *fn_end = strstr(fn, "\n}");   /* конец функции: '}' в первой колонке (файл может быть CRLF) */
+            NCHECK("epoch_fallback_order", fn_end != NULL);
+            if (fn_end) {
+                size_t fl = (size_t)(fn_end - fn);
+                char *body = (char *)malloc(fl + 1);
+                if (body) {
+                    memcpy(body, fn, fl);
+                    body[fl] = '\0';
+                    const char *fb = strstr(body, "s_spec_seq_fallback++;");
+                    const char *lk = strstr(body, "SPEC_LOCK();");
+                    const char *cp = strstr(body, "memcpy(out, &s_spectrum");
+                    const char *rd = strstr(body, "spec_read_epoch_live(ep);");
+                    const char *ul = strstr(body, "SPEC_UNLOCK();");
+                    NCHECK("epoch_fallback_order", count_key(body, "SPEC_LOCK();") == 1 && count_key(body, "SPEC_UNLOCK();") == 1);
+                    NCHECK("epoch_fallback_order", count_key(body, "spec_read_epoch_live(ep);") == 1 && count_key(body, "memcpy(out, &s_spectrum") == 1);
+                    NCHECK("epoch_fallback_order", fb && lk && cp && rd && ul && fb < lk && lk < cp && cp < rd && rd < ul);
+                    free(body);
+                }
+            }
+        }
         free(src);
     }
 

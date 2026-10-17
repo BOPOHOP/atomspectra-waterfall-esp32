@@ -298,19 +298,45 @@ int main(void) {
         glue_req_free(&r);
     }
 
-    {
-        char q2[160];
-        q2[0] = 'p'; q2[1] = '=';
-        for (int i = 0; i < 118; i++) q2[2 + i] = 'a';
-        q2[120] = '\0';
+    {   /* К0: длинный query БЕЗ channels - ответ версии 1 (200), как до D2; вход "_=<94 символа>" (96 символов, буфер 95) и 118 символов */
+        static const int lens[2] = {94, 116};
+        for (int k = 0; k < 2; k++) {
+            char q2[160];
+            q2[0] = '_'; q2[1] = '=';
+            for (int i = 0; i < lens[k]; i++) q2[2 + i] = 'a';
+            q2[2 + lens[k]] = '\0';
 
-        httpd_req_t r;
-        glue_req_init(&r);
-        r.query = q2;
-        spectrum_http_send_json(&r);
-        NCHECK("glue_query_trunc", r.status == 400);
-        g_samples_trunc++;
-        glue_req_free(&r);
+            httpd_req_t r;
+            glue_req_init(&r);
+            r.query = q2;
+            spectrum_http_send_json(&r);
+            NCHECK("glue_query_trunc_v1", r.status == 200 && strncmp(r.body, "{\"bins\":[", 9) == 0 && strstr(r.body, "\"boot_id\"") == NULL);
+            g_samples_trunc++;
+            glue_req_free(&r);
+        }
+    }
+
+    {   /* К0: граница - усечённый хвост может начинаться с "channels" (q[] = 95 символов) -> 400; чужой хвост -> 200 */
+        static const char *tails[4] = {"&", "&chan", "&channels", "&chx"};
+        static const int want400[4] = {1, 1, 1, 0};
+        for (int k = 0; k < 4; k++) {
+            char q3[160];
+            int pre = 95 - (int)strlen(tails[k]);   /* "_=" + a... + хвост ровно 95 символов, дальше (за буфером) идёт "channels=2048" */
+            q3[0] = '_'; q3[1] = '=';
+            for (int i = 2; i < pre; i++) q3[i] = 'a';
+            memcpy(q3 + pre, tails[k], strlen(tails[k]));
+            q3[95] = '\0';
+            strcat(q3, k == 0 ? "channels=2048" : "x");
+
+            httpd_req_t r;
+            glue_req_init(&r);
+            r.query = q3;
+            spectrum_http_send_json(&r);
+            if (want400[k]) { NCHECK("glue_query_trunc", r.status == 400 && r.body_len == 0); }
+            else { NCHECK("glue_query_trunc_v1", r.status == 200); }   /* чужой хвост - ответ версии 1 (тот же класс, что и К0-вход) */
+            g_samples_trunc++;
+            glue_req_free(&r);
+        }
     }
 
     {

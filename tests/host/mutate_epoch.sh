@@ -25,11 +25,13 @@ mt_mut KE9_no_rnd         boot_id_mix     "$E" 's|spec_fmix32(rnd ^ mac_lo32 ^ t
 mt_mut KE10_no_mac        boot_id_mix     "$E" 's|spec_fmix32(rnd ^ mac_lo32 ^ timer_lo32)|spec_fmix32(rnd ^ (mac_lo32 \& 0u) ^ timer_lo32)|'
 mt_mut KE11_zero_kept     boot_id_mix     "$E" 's|return id == 0u ? 1u : id;|return id;|'
 mt_mut KE12_nvs           epoch_no_nvs    "$S" 's|s_boot_id = spec_boot_id_mix(|(void)nvs_get_u32(0, "k", 0); s_boot_id = spec_boot_id_mix(|'
+mt_mut KE15_read_after_unlock epoch_fallback_order "$S" '/^bool spectrum_get_snapshot_epoch_seq/,/^}/{s|    SPEC_UNLOCK();|    SPEC_UNLOCK(); spec_read_epoch_live(ep);|;s|^    spec_read_epoch_live(ep);?$||}'
+mt_mut KE16_read_before_lock  epoch_fallback_order "$S" '/^bool spectrum_get_snapshot_epoch_seq/,/^}/{s|^    SPEC_LOCK();.*|    spec_read_epoch_live(ep); SPEC_LOCK();|;s|^    spec_read_epoch_live(ep);?$||}'
 mt_mut KE13_init_before   epoch_no_nvs    "$M" 's|    spectrum_boot_id_init();.*||;s|    wifi_manager_init();|    spectrum_boot_id_init();\n    wifi_manager_init();|'
 mt_mut KE14_raw_incr      epoch_no_nvs    "$S" 's|spec_epoch_on_user_reset(&s_dev_resets, &s_reset_gen);|s_reset_gen++;|'
 mt_mut CC1_no_calib_ch    calib_channels  "$H" 's|,\\"calib_channels\\":%d}|}|;s|ep->spec_resets, SPECTRUM_CHANNELS);|ep->spec_resets);|'
 mt_mut FR1_stride         fold_ref        "$H" 's|sum += bins\[k \* m + j\];|sum += bins[k + j * (SPECTRUM_CHANNELS / m)];|'
-mt_mut P3A_trunc_parsed   glue_query_trunc "$C" 's|if (qe == ESP_ERR_HTTPD_RESULT_TRUNC) return -1;.*|if (qe == ESP_ERR_HTTPD_RESULT_TRUNC) qe = ESP_OK;|'
+mt_mut P3A_trunc_parsed   glue_query_trunc "$C" 's|if (qe == ESP_ERR_HTTPD_RESULT_TRUNC) {|qe = (qe == ESP_ERR_HTTPD_RESULT_TRUNC) ? ESP_OK : qe; if (qe == 0xdead) {|'
 mt_mut P3B_dup_first      channels_400    "$H" 's|if (found) return -1;|if (found) found = 1;|'
 mt_mut SD1_pending_off    sweep_no_double_count "$W" 's|return s->done + sweep_gap_intervals(now_ms - s->last_ms);|return s->done + 0u * sweep_gap_intervals(now_ms - s->last_ms);|'
 mt_mut SD2_pending_x2     sweep_no_double_count "$W" 's|return s->done + sweep_gap_intervals(now_ms - s->last_ms);|return s->done + 2u * sweep_gap_intervals(now_ms - s->last_ms);|'

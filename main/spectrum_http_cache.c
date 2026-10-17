@@ -316,7 +316,13 @@ static int spec_req_channels(httpd_req_t *req, int *n)
     char q[96];
     if (httpd_req_get_url_query_len(req) == 0) return 0;
     esp_err_t qe = httpd_req_get_url_query_str(req, q, sizeof q);
-    if (qe == ESP_ERR_HTTPD_RESULT_TRUNC) return -1;   // D2 (P3): запрос не уместился в q[] - разобрать нельзя (раньше "channels=20480" читалось как 2048) -> 400
+    if (qe == ESP_ERR_HTTPD_RESULT_TRUNC) {   // D2 (P3, К0): запрос не уместился в q[]. 400 - только если channels виден в уместившейся части или на её границе
+        if (spec_channels_query_parse(q, n) != 0) return -1;   // ключ в q[] (в т.ч. "channels=2048" + усечённое "0": раньше читалось как 2048) -> 400
+        const char *seg = strrchr(q, '&');
+        seg = seg ? seg + 1 : q;   // последний (возможно усечённый) параметр: если это начало слова "channels" - хвост мог его продолжить -> 400
+        if (strncmp(seg, "channels", strlen(seg)) == 0) return -1;
+        return 0;   // иначе ответ версии 1, как без параметров (до D2 такой запрос получал 200)
+    }
     if (qe != ESP_OK) return 0;
     return spec_channels_query_parse(q, n);
 }
