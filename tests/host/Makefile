@@ -59,12 +59,15 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_autosave_skip_plan.c \
        test_ttl_plan.c \
        test_spectrum_meta_fmt.c \
+       test_spectrum_fold.c \
+       test_sweep_missed.c \
+       test_task_load.c \
        test_seq_copy.c \
        test_monitor_window.c \
        test_autosave_mark_retry.c \
        test_meta_w_parse.c
 
-test: $(SRCS) test_util.h socket_budget_check.sh ../../main/socket_budget.h test_import_body_plan test_import_tmp_plan test_n42_time_plan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w
+test: $(SRCS) test_util.h socket_budget_check.sh ../../main/socket_budget.h test_import_body_plan test_import_tmp_plan test_n42_time_plan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w test_glue_fold
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm
 	./test_runner
 	bash ./socket_budget_check.sh
@@ -75,6 +78,7 @@ test: $(SRCS) test_util.h socket_budget_check.sh ../../main/socket_budget.h test
 	./test_glue_monitor
 	./test_glue_cache_oom
 	./test_glue_meta_w
+	./test_glue_fold
 
 # release-gate 1.2.36 pass1 С-2: тесты СКЛЕЙКИ - сам main/*.c (не копия) с заглушками IDF/FreeRTOS из glue/ (учёт блоков glue_alloc).
 GLUE_DEPS = glue/glue_stubs.c glue/*.h glue/freertos/*.h
@@ -91,6 +95,10 @@ test_glue_meta_w: test_glue_meta_w.c glue/glue_cache_env.h $(GLUE_DEPS) ../../ma
 
 test_glue_monitor: test_glue_monitor.c $(GLUE_DEPS) ../../main/monitor.c ../../main/monitor_window.h
 	$(CC) $(CFLAGS) -Iglue -I. -o test_glue_monitor test_glue_monitor.c glue/glue_stubs.c -lm
+
+# D1: склейка GET /api/spectrum.json?channels=N с самим spectrum_http_cache.c (коды 400/404, байты v1/v2, чередование)
+test_glue_fold: test_glue_fold.c glue/glue_cache_env.h $(GLUE_DEPS) ../../main/spectrum_fold.h ../../main/spectrum_http_cache.c ../../main/spectrum_meta_fmt.h ../../main/spectrum_t1.c
+	$(CC) $(CFLAGS) -Iglue -I. -o test_glue_fold test_glue_fold.c glue/glue_stubs.c ../../main/spectrum_t1.c -lm
 
 # #AWF-F4: автономный тест со своим main() (import_tmp_plan.h) — какой файл SPEC_DIR чистить на старте.
 test_import_tmp_plan: test_import_tmp_plan.c ../../main/import_tmp_plan.h
@@ -124,7 +132,7 @@ tsan: test_seq_stress.c ../../main/seq_copy.h
 	TSAN_OPTIONS="halt_on_error=0 exitcode=0" ./test_seq_stress_tsan
 
 clean:
-	rm -f test_runner test_runner_asan bench_json_fmt test_import_body_plan test_import_tmp_plan test_n42_time_plan test_seq_stress test_seq_stress_tsan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w
+	rm -f test_runner test_runner_asan bench_json_fmt test_import_body_plan test_import_tmp_plan test_n42_time_plan test_seq_stress test_seq_stress_tsan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w test_glue_fold
 
 # UI-P1: замер до/после старого(vsnprintf-loop)/нового(json_append_uint32_csv)
 # форматтера бинов — числа для отчёта, не гейт ALL PASSED.

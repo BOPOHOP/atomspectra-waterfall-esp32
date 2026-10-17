@@ -5,6 +5,7 @@
 #include "spectrum_t1.h"
 #include "spec_cache_gen.h"       // М5: чистое решение "отбросить устаревший снимок" (host-pure)
 #include "spectrum_meta_fmt.h"
+#include "spectrum_fold.h"          // D1: ?channels=N - свёртка bins (версия 2 ответа)
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -301,14 +302,34 @@ static void snapshot_end(void)
     xSemaphoreGive(s_mtx);
 }
 
+// D1: параметр channels запроса. 0 - ключа нет (ответ версии 1, байты прежние), 1 - допустимое N в *n, -1 - ключ есть, значение недопустимо (400).
+// Запрос длиннее буфера приходит обрезанным (ESP_ERR_HTTPD_RESULT_TRUNC) и разбирается по уместившейся части.
+static int spec_req_channels(httpd_req_t *req, int *n)
+{
+    char q[96];
+    if (httpd_req_get_url_query_len(req) == 0) return 0;
+    esp_err_t qe = httpd_req_get_url_query_str(req, q, sizeof q);
+    if (qe != ESP_OK && qe != ESP_ERR_HTTPD_RESULT_TRUNC) return 0;
+    return spec_channels_query_parse(q, n);
+}
+
+static esp_err_t spectrum_http_send_json_v2(httpd_req_t *req, int n);
+
 esp_err_t spectrum_http_send_json(httpd_req_t *req)
 {
+    int ch = 0;
+    int qk = spec_req_channels(req, &ch);
+    if (qk < 0) {   // D1: недопустимое channels - 400 раньше проверки наличия данных
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "channels must be 8192, 4096, 2048 or 1024");
+        return ESP_FAIL;
+    }
     if (!spectrum_http_cache_ensure()) {
         httpd_resp_set_hdr(req, "X-Spectrometer-Dead",
                            usb_host_cdc_spectrometer_dead() ? "1" : "0");
         httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "No spectrum data yet");
         return ESP_FAIL;
     }
+    if (qk > 0) return spectrum_http_send_json_v2(req, ch);   // D1: версия 2, кэш JSON версии 1 не трогаем
     // 1.2.36 H3: полный JSON (8192 канала текстом) строится ЛЕНИВО, только если его кто-то запросил, и из ТОЙ ЖЕ строки meta,
     // что отдаёт meta.json этого поколения. Сборка — ВНЕ s_mtx; s_readers держит s_sp/s_meta от смены.
     
@@ -421,6 +442,48 @@ esp_err_t spectrum_http_send_json(httpd_req_t *req)
     }
     xSemaphoreGive(s_mtx);
 
+    return e;
+}
+
+// D1: ответ версии 2 (?channels=N): bins свёрнуты суммой m=8192/N соседних каналов, в ответе поле channels. Решение «один кэш или два»:
+// ОДИН кэш JSON (версии 1, s_json*), версия 2 в него не пишет - собирается каждый раз в приватный буфер из ТОГО ЖЕ поколения (s_sp/s_meta,
+// s_render_count) под s_readers. Чередование версий кэш версии 1 не пересобирает и не портит. Цена - пересборка текста на каждый запрос v2.
+static esp_err_t spectrum_http_send_json_v2(httpd_req_t *req, int n)
+{
+    char hdr[16];       // живут до конца функции - дольше, чем httpd_resp_send()
+    char age_hdr[16];
+    char *buf = NULL;
+    size_t cap = 0;
+    xSemaphoreTake(s_mtx, portMAX_DELAY);
+    uint32_t rc = s_render_count;
+    s_readers++;
+    const uint32_t *bins = s_sp->bins;
+    const char *meta = s_meta;
+    size_t mlen = s_meta_len, a_end = s_meta_a_end, b_start = s_meta_b_start;
+    xSemaphoreGive(s_mtx);
+    size_t len = 0;
+    bool ok = buf_grow(&buf, &cap, (size_t)n * 6 + 2048, 2048);
+    if (ok) {
+        len = spec_json_full_fmt_v2(buf, cap, bins, n, meta, mlen, a_end, b_start);
+        if (len >= cap) {
+            ok = buf_grow(&buf, &cap, len + 1, 2048);
+            if (ok) len = spec_json_full_fmt_v2(buf, cap, bins, n, meta, mlen, a_end, b_start);
+        }
+    }
+    xSemaphoreTake(s_mtx, portMAX_DELAY);
+    if (s_readers > 0) s_readers--;
+    xSemaphoreGive(s_mtx);
+    if (!ok || len == 0) {
+        free(buf);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+        return ESP_FAIL;
+    }
+    set_render_hdr(req, rc, hdr, sizeof(hdr));
+    set_hist_age_hdr(req, age_hdr, sizeof(age_hdr));
+    httpd_resp_set_type(req, "application/json");
+    spectrum_http_nodelay(req);
+    esp_err_t e = httpd_resp_send(req, buf, len);
+    free(buf);
     return e;
 }
 

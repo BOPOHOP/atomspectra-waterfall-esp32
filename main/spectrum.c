@@ -9,6 +9,7 @@
 #include "seq_copy.h"             // 1.2.36 H1: снимок кэша без SPEC_LOCK (seqlock)
 #include "esp_rom_sys.h"          // esp_rom_delay_us — ожидание чётного seq
 #include "hist_drop_diag.h"
+#include "sweep_missed.h"   // D1: счётчик секундных интервалов без коммита свипа
 #include "flash_quiet.h"
 #include "spectrum_hist_stage.h"
 #include "http_io_gate.h"
@@ -170,6 +171,9 @@ static uint32_t  s_reset_unconfirmed;             // У-2: Reset, не выпо�
 static uint32_t  s_wf_resync_seq;
 static uint32_t  s_hist_commits = 0;             // опубликованных полных свипов
 static uint32_t  s_hist_drops = 0;                // отброшенных рваных свипов
+// D1: секундные интервалы без завершённого коммита свипа (sweep_missed.h). Единственное место отметки - публикация свипа в
+// spectrum_process_histogram_chunk (под SPEC_LOCK); читается spectrum_sweep_missed() под тем же замком. Не hist_drop.
+static sweep_missed_t s_sweep_missed;
 typedef struct {
     uint32_t total_time_sec;
     uint16_t cpu_load;
@@ -462,6 +466,7 @@ void spectrum_process_histogram_chunk(const uint8_t *data, size_t len)
             bool did_reset = commit_fold_and_merge_locked(stat_fresh, t_new_raw, total);
             commit_time_locked(stat_fresh, t_new_raw);
             s_spectrum.valid = true;
+            sweep_missed_commit(&s_sweep_missed, (uint32_t)(esp_timer_get_time() / 1000));   // D1: единственная отметка коммита свипа
             if (spectrum_reset_gate_on_publish(&s_reset_gate, first_valid, reset_confirmed))
                 s_wf_resync_seq++;             // issue #58 / У-3
             SPEC_UNLOCK();
@@ -530,6 +535,16 @@ void spectrum_get_hist_stats(uint32_t *commits, uint32_t *drops)
     if (commits) *commits = s_hist_commits;
     if (drops)   *drops   = s_hist_drops;
 }
+
+// D1: sweep_missed для /api/status - накопленное при коммитах + текущий разрыв с последнего коммита (производное, не хранится).
+uint32_t spectrum_sweep_missed(void)
+{
+    SPEC_LOCK();
+    uint32_t n = sweep_missed_read(&s_sweep_missed, (uint32_t)(esp_timer_get_time() / 1000));
+    SPEC_UNLOCK();
+    return n;
+}
+
 // Копирует text (без хвостовых \r\n\пробел) в raw-буфер фиксированного размера,
 // бампает seq. Общий хелпер для -inf и -tc_pot? (вызывать ТОЛЬКО под SPEC_LOCK).
 static void store_raw_trimmed(const char *text, char *buf, size_t bufsz, int *out_len, uint32_t *out_seq)
@@ -829,6 +844,7 @@ static void reset_state_zero(void)
     SPEC_LOCK();
     if (session_reset_opens(s_spectrum.valid, s_spectrum.total_time_sec)) s_sess_req++;
     s_reset_gen++;
+    sweep_missed_forget(&s_sweep_missed);   // D1: пауза до первого свипа после сброса не считается пропуском
     s_reset_at_us = esp_timer_get_time();   // AWF-4: t0 для гейта правдоподобности STAT
     s_reset_gate.armed = true;              // issue #58
     s_reset_gate.reject_since_us = 0;

@@ -14,6 +14,7 @@
 #include "monitor.h"        // #MON-1: серия CPS-мониторинга (/api/monitor/series)
 #include "meta_w_handler.h" // З-5 (gate 1.2.36 pass1) / З-3 (pass2): обработчик meta.json?w= (разбор meta_w_parse.h)
 #include "spectrum_http_cache.h"  // #PERF-1: 2s snapshot cache + meta/binary
+#include "task_load_sampler.h"    // D1: загрузка по задачам/ядрам за интервал между вызовами /api/status
 #include "spectrum_calib_meta.h"  // 1.2.36 H12: /api/device без буфера 33 КБ
 #include "http_io_gate.h"         // #PERF-2: HEAVY lane gate
 #include "flash_quiet.h"          // М7: координация записи слепка DSP с autosave (#FW-8)
@@ -210,6 +211,10 @@ static esp_err_t handle_status(httpd_req_t *req)
     // наблюдение 25.09: time=3611 неподвижно против растущего spectrum.json).
     cJSON_AddNumberToObject(root, "time", sp->total_time_sec);
     status_add_base_info(root);
+    // D1: интервалы без завершённого коммита свипа (не hist_drop) и загрузка CPU по ядрам/задачам за окно между вызовами.
+    cJSON_AddNumberToObject(root, "sweep_missed", spectrum_sweep_missed());
+    cJSON *load = task_load_json();
+    if (load) cJSON_AddItemToObject(root, "load", load);
     {   // #DOSE-A: живая МД за окно 10 с (умолчание SMA главной); нет данных / режим none — dose_rate:null
         spec_dose_t dz;
         monitor_dose_live(10, &dz);

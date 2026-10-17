@@ -143,3 +143,8 @@ CONFIG_MBEDTLS_HARDWARE_AES=n
 
 # AWF-5 (2026-09-27): 3584 мало, если включён журнал платы (перехватчик кладёт 512 Б на стек каждой задачи)
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# D1 (feat/d1-channels): загрузка CPU по задачам/ядрам в /api/status. Run-time stats FreeRTOS: GENERATE_RUN_TIME_STATS в Kconfig IDF 5.4 сам
+# выбирает USE_TRACE_FACILITY и USE_STATS_FORMATTING_FUNCTIONS; источник счётчика - esp_timer (RUN_TIME_STATS_USING_ESP_TIMER, умолчание), мкс, uint32.
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y

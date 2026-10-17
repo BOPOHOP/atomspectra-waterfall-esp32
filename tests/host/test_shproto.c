@@ -104,6 +104,9 @@ void round3_ota_reopen_suite(void);      // У5 раунда 3
 void round3_seg_rebuild_entry_suite(void); // У6/О5 раунда 3
 void live_time_suite(void);                // 1.2.36 OPT-1: одна формула живого времени
 void autosave_skip_plan_suite(void);       // 1.2.36 P1: пропуск записи неизменного current.bin
+void spectrum_fold_suite(void);             // D1: свёртка bins для ?channels=N (К1)
+void sweep_missed_suite(void);              // D1: счётчик sweep_missed
+void task_load_suite(void);                 // D1: загрузка по задачам/ядрам
 void spectrum_meta_fmt_suite(void);          // 1.2.36 B: meta один раз, полный JSON лениво (побайтовое равенство со старым)
 void ttl_plan_suite(void);                // 1.2.36 H5: срок жизни медленной части /api/system
 void seq_copy_suite(void);               // 1.2.36 H1: снимок кэша без SPEC_LOCK (seqlock, seq_copy.h)
@@ -339,6 +342,9 @@ int main(void)
     autosave_skip_plan_suite();
     ttl_plan_suite();
     spectrum_meta_fmt_suite();
+    spectrum_fold_suite();
+    sweep_missed_suite();
+    task_load_suite();
     seq_copy_suite();
     monitor_window_suite();
     autosave_mark_retry_suite();
