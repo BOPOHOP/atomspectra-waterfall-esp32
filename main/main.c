@@ -83,6 +83,7 @@ void app_main(void)
     heap_caps_register_failed_alloc_callback(alloc_failed_cb);
 
     wifi_manager_init();
+    spectrum_boot_id_init();   // D2 (K2): boot_id после старта Wi-Fi (esp_random() - истинная случайность при работающем радио), не NVS
 
     // #FW-2/#FW-3: настройки поведения при старте платы (NVS, по умолчанию всё OFF).
     // #FW-44: весь USB-стек (boot_config → spectrum → spectrogram → usb_host_cdc)

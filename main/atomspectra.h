@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <time.h>
+#include "spectrum_epoch.h"   // D2 (K2): spec_epoch_t - пара счётчиков эпохи ответа версии 2
 
 #define SPECTRUM_CHANNELS     8192
 #define SPECTRUM_CHUNK_BINS   64
@@ -276,6 +277,11 @@ bool spectrum_get_snapshot(spectrum_data_t *out);
 // 1.2.36 H1 (A): снимок для кэша /api/spectrum* без SPEC_LOCK (seqlock, seq_copy.h); не вышло за
 // 3 попытки — spectrum_get_snapshot(). Счётчики повторов и запасных путей — /api/system.
 bool spectrum_get_snapshot_seq(spectrum_data_t *out);
+// D2 (K2): снимок + эпоха {dev_resets, spec_resets} в ОДНОМ окне seqlock (spectrum_epoch.h); запасной путь - оба под одним SPEC_LOCK.
+bool spectrum_get_snapshot_epoch_seq(spectrum_data_t *out, spec_epoch_t *ep);
+// D2 (K2): boot_id - случайное ненулевое uint32 за загрузку (не NVS). Init один раз в app_main после wifi_manager_init().
+void spectrum_boot_id_init(void);
+uint32_t spectrum_boot_id(void);
 uint32_t spectrum_spec_seq_retry(void);
 uint32_t spectrum_spec_seq_fallback(void);
 // У-3: снимок + счётчик переноса опоры водопада (под одним локом).

@@ -7,6 +7,9 @@
 #include "autosave_skip_plan.h"   // 1.2.36 P1: пропуск записи неизменного current.bin
 #include "spectrum_import_plan.h" // imp_crc32() (host-pure, поточная CRC без массивов)
 #include "seq_copy.h"             // 1.2.36 H1: снимок кэша без SPEC_LOCK (seqlock)
+#include "spectrum_epoch.h"        // D2 (K2): чистые переходы счётчиков эпохи, boot_id, снимок с эпохой
+#include "esp_mac.h"               // D2: esp_read_mac - вход boot_id
+#include "esp_random.h"            // D2: esp_random - вход boot_id
 #include "esp_rom_sys.h"          // esp_rom_delay_us — ожидание чётного seq
 #include "hist_drop_diag.h"
 #include "sweep_missed.h"   // D1: счётчик секундных интервалов без коммита свипа
@@ -151,7 +154,7 @@ static spectrum_hist_stage_t s_hist_stage;        // непрерывность 
 static uint32_t  s_reset_gen;                     // AUD-ASW126 #1/#12: httpd Reset
 // 1.2.36 P1: CRC+gen последней успешной одноразовой записи current.bin. З-4 (gate pass1): писателей ДВА - spectrum_autosave()
 // (задача автосейва, вся структура после записи и снятия метки) и reset_impl (Сброс, have=false под MARK_LOCK перед unlink
-// current.bin); синхронизации между ними нет. Обычную гонку закрывает gen (s_reset_gen++ до снимка). Остаточное окно: снимок
+// current.bin); синхронизации между ними нет. Обычную гонку закрывает gen (инкремент s_reset_gen до снимка). Остаточное окно: снимок
 // ПОСЛЕ reset_state_zero, его rename до unlink(AUTOSAVE_FILE) в reset_impl, затем автосейв ждёт MARK_LOCK -> файл удалён, метка
 // снята, s_as_last={true,crc,G+1}, и без прибора следующие автосейвы пропускаются до изменения спектра (на старте поднимется bk_*).
 // Нужно вытеснение reset_impl между созданием метки и unlink на всё время записи (~100 мс).
@@ -295,7 +298,7 @@ static bool commit_fold_and_merge_locked(bool stat_fresh, uint32_t t_new_raw, ui
     s_base_time_sec = st.base_time;
     s_base_total_counts = st.base_counts;
     s_spectrum.total_counts = st.shown_counts;
-    if (did_reset) s_dev_resets++;
+    if (did_reset) spec_epoch_on_fold(&s_dev_resets, &s_reset_gen);   // D2: единственный инкремент s_dev_resets
     return did_reset;
 }
 
@@ -843,7 +846,7 @@ static void reset_state_zero(void)
 {
     SPEC_LOCK();
     if (session_reset_opens(s_spectrum.valid, s_spectrum.total_time_sec)) s_sess_req++;
-    s_reset_gen++;
+    spec_epoch_on_user_reset(&s_dev_resets, &s_reset_gen);   // D2: единственный инкремент s_reset_gen
     sweep_missed_forget(&s_sweep_missed);   // D1: пауза до первого свипа после сброса не считается пропуском
     s_reset_at_us = esp_timer_get_time();   // AWF-4: t0 для гейта правдоподобности STAT
     s_reset_gate.armed = true;              // issue #58
@@ -957,6 +960,37 @@ bool spectrum_get_snapshot_seq(spectrum_data_t *out)
     s_spec_seq_fallback++;
     return spectrum_get_snapshot(out);
 }
+
+// D2 (K2): снимок + эпоха в ОДНОМ окне seqlock. Существующие геттеры (spectrum_reset_gen, spectrum_get_base_info) берут SPEC_LOCK отдельно -
+// после снимка они дали бы старые бины с новой эпохой (или наоборот); здесь пару читает spec_read_epoch_live ВНУТРИ окна seq.
+static void spec_read_epoch_live(spec_epoch_t *o) { o->dev_resets = s_dev_resets; o->spec_resets = s_reset_gen; }
+bool spectrum_get_snapshot_epoch_seq(spectrum_data_t *out, spec_epoch_t *ep)
+{
+    if (spec_epoch_snapshot_seq(&s_spec_seq, out, &s_spectrum, sizeof(*out), ep, spec_read_epoch_live,
+                                SPEC_SEQ_TRIES, spec_seq_memcpy, spec_seq_wait, &s_spec_seq_retry))
+        return out->valid;
+    s_spec_seq_fallback++;
+    SPEC_LOCK();   // запасной путь: бины и эпоха под одним замком
+    memcpy(out, &s_spectrum, sizeof(*out));
+    spec_read_epoch_live(ep);
+    SPEC_UNLOCK();
+    return out->valid;
+}
+
+// D2 (K2): boot_id - один раз за загрузку, RAM, НЕ NVS. Вызывать после wifi_manager_init() (esp_random() даёт истинную случайность при
+// работающем Wi-Fi/BT, esp_random.h IDF); MAC и таймер - страховка. 0 заменяется на 1 (spec_boot_id_mix).
+static uint32_t s_boot_id;
+/* BOOT_ID_BEGIN */
+void spectrum_boot_id_init(void)
+{
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    uint32_t mac_lo32 = ((uint32_t)mac[2] << 24) | ((uint32_t)mac[3] << 16) | ((uint32_t)mac[4] << 8) | (uint32_t)mac[5];
+    s_boot_id = spec_boot_id_mix(esp_random(), mac_lo32, (uint32_t)esp_timer_get_time());
+}
+/* BOOT_ID_END */
+uint32_t spectrum_boot_id(void) { return s_boot_id; }
+
 uint32_t spectrum_spec_seq_retry(void) { return s_spec_seq_retry; }
 uint32_t spectrum_spec_seq_fallback(void) { return s_spec_seq_fallback; }
 

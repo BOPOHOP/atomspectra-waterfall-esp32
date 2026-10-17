@@ -19,6 +19,8 @@ static char *g_files[5];
 static uint32_t g_total[5];
 static int g_samples;
 static int g_differ_ref;
+static const spec_epoch_t g_ep_t = { 7u, 8u };   /* D2: эпоха/boot_id образцов формата v2 (поля проверяет epoch_fields) */
+#define G_BOOT_T 0x0badf00du
 
 static char *load_file(const char *path, size_t *len) {
     FILE *f = fopen(path, "rb");
@@ -176,7 +178,6 @@ static void test_channels_parse(void) {
         {"channels=2048", 2048},
         {"channels=1024", 1024},
         {"a=1&channels=2048&b=2", 2048},
-        {"channels=1024&channels=3", 1024},
         {"x=1&channels=4096", 4096}
     };
     for (size_t i = 0; i < sizeof(valid)/sizeof(valid[0]); i++) {
@@ -197,7 +198,8 @@ static void test_channels_parse(void) {
         "channels", "channels&x=1", "channels=04096", "channels=-4096", "channels=+4096",
         "channels=4096.0", "channels=4096x", "channels= 4096", "channels=%34096",
         "channels=99999", "channels=100000", "channels=0x1000", "channels=4097",
-        "channels=512", "channels=2", "channels=1", "channels=8193"
+        "channels=512", "channels=2", "channels=1", "channels=8193",
+        "channels=1024&channels=3", "channels=1024&channels=1024", "channels=1024&channels", "a=1&channels=4096&b=2&channels=2048"   /* D2 (P3): повтор ключа - 400 */
     };
     for (size_t i = 0; i < sizeof(invalid)/sizeof(invalid[0]); i++) {
         int n = -7;
@@ -247,7 +249,7 @@ static void test_v2_fields(void) {
         
         for (int j = 0; j < 4; j++) {
             int n = ns[j];
-            size_t out_len = spec_json_full_fmt_v2(g_out, sizeof g_out, bins, n, g_meta, meta_len, a_end, b_start);
+            size_t out_len = spec_json_full_fmt_v2(g_out, sizeof g_out, bins, n, g_meta, meta_len, a_end, b_start, &g_ep_t, G_BOOT_T);
             
             // Check start
             NCHECK("v2_fields", strncmp(g_out, "{\"bins\":[", 9) == 0);
@@ -259,45 +261,19 @@ static void test_v2_fields(void) {
                 continue;
             }
             
-            // Tail starts after "],"
             const char *tail = end_arr + 2;
-            
-            // Expected tail: meta[1..a_end) + ",\"channels\":N" + meta[b_start..meta_len)
-            // Note: spec_meta_fmt returns meta string. 
-            // The v2 function writes: {"bins":[...],<meta[1..a_end)>,"channels":N<meta[b_start..meta_len)>}
-            // Wait, the description says: writes `{"bins":[<N folded values>],<meta[1..a_end)>,"channels":N<meta[b_start..meta_len)>`
-            // And returns its length.
-            // So the tail after `],` is exactly: meta[1..a_end) + ",\"channels\":N" + meta[b_start..meta_len) + "}"?
-            // Let's check the v1 formatter behavior. 
-            // v1: spec_json_full_fmt writes the full JSON.
-            // The description for v2 says: writes `{"bins":[...],<meta[1..a_end)>,"channels":N<meta[b_start..meta_len)>`
-            // It doesn't explicitly mention the closing `}` in the snippet, but JSON must be closed.
-            // Let's assume the output ends with `}`.
-            
-            // Let's construct the expected tail string.
+
+            /* Хвост после "],": meta[1..a_end) + ,"channels":N + meta[b_start..meta_len-1) (без закрывающей '}'), далее поля эпохи
+               (их проверяет epoch_fields, здесь - только то, что за ними идёт запятая). */
             char expected_tail[2048];
             size_t exp_len = 0;
-            
-            // meta[1..a_end)
-            size_t len1 = a_end - 1;
-            memcpy(expected_tail + exp_len, g_meta + 1, len1);
-            exp_len += len1;
-            
-            // ",\"channels\":N"
-            char chan_str[32];
-            int chan_len = snprintf(chan_str, sizeof chan_str, ",\"channels\":%d", n);
-            memcpy(expected_tail + exp_len, chan_str, chan_len);
-            exp_len += chan_len;
-            
-            // meta[b_start..meta_len)
-            size_t len2 = meta_len - b_start;
-            memcpy(expected_tail + exp_len, g_meta + b_start, len2);
-            exp_len += len2;
-            
-            // Compare tail
-            NCHECK("v2_fields", strlen(tail) == exp_len && memcmp(tail, expected_tail, exp_len) == 0);
-            
-            // Check end
+            memcpy(expected_tail + exp_len, g_meta + 1, a_end - 1);
+            exp_len += a_end - 1;
+            exp_len += (size_t)snprintf(expected_tail + exp_len, sizeof expected_tail - exp_len, ",\"channels\":%d", n);
+            memcpy(expected_tail + exp_len, g_meta + b_start, meta_len - 1 - b_start);
+            exp_len += meta_len - 1 - b_start;
+
+            NCHECK("v2_fields", strncmp(tail, expected_tail, exp_len) == 0 && tail[exp_len] == ',');
             NCHECK("v2_fields", g_out[out_len - 1] == '}');
         }
     }
@@ -330,7 +306,7 @@ static void test_fold_sum(void) {
         
         for (int j = 0; j < 4; j++) {
             int n = ns[j];
-            (void)spec_json_full_fmt_v2(g_out, sizeof g_out, bins, n, g_meta, meta_len, a_end, b_start);
+            (void)spec_json_full_fmt_v2(g_out, sizeof g_out, bins, n, g_meta, meta_len, a_end, b_start, &g_ep_t, G_BOOT_T);
             int count = parse_out_bins(g_out, g_vals, 8192);
             
             uint64_t sum_out = 0;
@@ -342,18 +318,12 @@ static void test_fold_sum(void) {
             uint32_t ref[8192];
             ref_fold(bins, n, ref);
             g_samples++;
-            if (count != n) {
-                g_differ_ref++;
-            } else {
-                bool diff = false;
-                for (int k = 0; k < n; k++) {
-                    if (g_vals[k] != ref[k]) {
-                        diff = true;
-                        break;
-                    }
-                }
-                if (diff) g_differ_ref++;
+            bool diff = (count != n);
+            for (int k = 0; !diff && k < n; k++) {
+                if (g_vals[k] != ref[k]) diff = true;
             }
+            if (diff) g_differ_ref++;
+            NCHECK("fold_ref", !diff);   /* D2 (P2): независимая ссылка ref_fold, 5 снимков x 4 N = 20 образцов */
         }
     }
 }
@@ -376,14 +346,14 @@ static void test_fold_width(void) {
         
         for (int j = 0; j < 4; j++) {
             int n = ns[j];
-            (void)spec_json_full_fmt_v2(g_out, sizeof g_out, bins, n, g_meta, meta_len, a_end, b_start);
+            (void)spec_json_full_fmt_v2(g_out, sizeof g_out, bins, n, g_meta, meta_len, a_end, b_start, &g_ep_t, G_BOOT_T);
             int count = parse_out_bins(g_out, g_vals, 8192);
             NCHECK("fold_width", count == n);
             
             // Add 1 to every channel
             for (int k = 0; k < 8192; k++) g_bins2[k] = bins[k] + 1;
             
-            (void)spec_json_full_fmt_v2(g_out, sizeof g_out, g_bins2, n, g_meta, meta_len, a_end, b_start);
+            (void)spec_json_full_fmt_v2(g_out, sizeof g_out, g_bins2, n, g_meta, meta_len, a_end, b_start, &g_ep_t, G_BOOT_T);
             int count2 = parse_out_bins(g_out, g_vals2, 8192);
             
             if (count > 0 && count2 > 0) {
@@ -413,14 +383,14 @@ static void test_fold_origin(void) {
         
         for (int j = 0; j < 4; j++) {
             int n = ns[j];
-            (void)spec_json_full_fmt_v2(g_out, sizeof g_out, bins, n, g_meta, meta_len, a_end, b_start);
+            (void)spec_json_full_fmt_v2(g_out, sizeof g_out, bins, n, g_meta, meta_len, a_end, b_start, &g_ep_t, G_BOOT_T);
             int count_a = parse_out_bins(g_out, g_vals, 8192);
             
             // Add 1000 to channel 0 only
             for (int k = 0; k < 8192; k++) g_bins2[k] = bins[k];
             g_bins2[0] += 1000;
             
-            (void)spec_json_full_fmt_v2(g_out, sizeof g_out, g_bins2, n, g_meta, meta_len, a_end, b_start);
+            (void)spec_json_full_fmt_v2(g_out, sizeof g_out, g_bins2, n, g_meta, meta_len, a_end, b_start, &g_ep_t, G_BOOT_T);
             int count_b = parse_out_bins(g_out, g_vals2, 8192);
             
             int min_count = count_a < count_b ? count_a : count_b;
@@ -456,7 +426,7 @@ static void test_fold_saturate(void) {
         return;
     }
     
-    (void)spec_json_full_fmt_v2(g_out, sizeof g_out, g_bins, n, g_meta, meta_len, a_end, b_start);
+    (void)spec_json_full_fmt_v2(g_out, sizeof g_out, g_bins, n, g_meta, meta_len, a_end, b_start, &g_ep_t, G_BOOT_T);
     int count = parse_out_bins(g_out, g_vals, 8192);
     
     if (count > 0) {

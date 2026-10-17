@@ -53,6 +53,10 @@ static int                s_readers;
 // вторую параллельную сборку с того же tick).
 static spectrum_data_t   *s_sp_build;    // PSRAM, scratch для снимка при пересборке
 static bool               s_building;
+// D2 (K2): эпоха {dev_resets, spec_resets} живёт в кэше ПАРОЙ со снимком s_sp (снята в том же окне seqlock, spectrum_get_snapshot_epoch_seq)
+// и меняется swap-ом вместе с ним; v2 читает её копией под s_mtx в той же секции, где берёт bins. Живьём (через геттеры) - НЕ читать.
+static spec_epoch_t       s_ep;
+static spec_epoch_t       s_ep_build;
 // М5 (release-gate-firmware-v1.2.28-code.md): счётчик поколений — снимок в
 // finish_build() снимается ДО захвата s_mtx (:211), invalidate() может успеть
 // вклиниться между снимком и commit'ом и пометить его устаревшим уже ПОСЛЕ
@@ -126,7 +130,7 @@ void spectrum_http_cache_init(void)
 static bool spectrum_http_cache_finish_build(int64_t now, uint32_t gen_before)
 {
     int64_t t_build0 = esp_timer_get_time();   // 1.2.36 Commit 0: цена снимка+сборки (без ожидания s_mtx)
-    bool snap_ok = s_sp_build && spectrum_get_snapshot_seq(s_sp_build);   // 1.2.36 H1: без SPEC_LOCK (seqlock)
+    bool snap_ok = s_sp_build && spectrum_get_snapshot_epoch_seq(s_sp_build, &s_ep_build);   // 1.2.36 H1: без SPEC_LOCK (seqlock); D2: эпоха в том же окне
     size_t nml = 0, na = 0, nb = 0;
     bool build_ok = snap_ok && build_meta(s_sp_build, &s_meta_build, &s_meta_build_cap, &nml, &na, &nb);
     {
@@ -166,6 +170,9 @@ static bool spectrum_http_cache_finish_build(int64_t now, uint32_t gen_before)
     spectrum_data_t *tmp = s_sp;
     s_sp = s_sp_build;
     s_sp_build = tmp;
+    spec_epoch_t tmp_ep = s_ep;   // D2: эпоха уходит в кэш вместе со своим снимком
+    s_ep = s_ep_build;
+    s_ep_build = tmp_ep;
 
     // Swap meta buffers
     char *tmp_meta = s_meta;
@@ -303,13 +310,14 @@ static void snapshot_end(void)
 }
 
 // D1: параметр channels запроса. 0 - ключа нет (ответ версии 1, байты прежние), 1 - допустимое N в *n, -1 - ключ есть, значение недопустимо (400).
-// Запрос длиннее буфера приходит обрезанным (ESP_ERR_HTTPD_RESULT_TRUNC) и разбирается по уместившейся части.
+// Запрос длиннее буфера (95 символов) - 400 (D2): обрезанное значение могло бы прочитаться как другое допустимое N.
 static int spec_req_channels(httpd_req_t *req, int *n)
 {
     char q[96];
     if (httpd_req_get_url_query_len(req) == 0) return 0;
     esp_err_t qe = httpd_req_get_url_query_str(req, q, sizeof q);
-    if (qe != ESP_OK && qe != ESP_ERR_HTTPD_RESULT_TRUNC) return 0;
+    if (qe == ESP_ERR_HTTPD_RESULT_TRUNC) return -1;   // D2 (P3): запрос не уместился в q[] - разобрать нельзя (раньше "channels=20480" читалось как 2048) -> 400
+    if (qe != ESP_OK) return 0;
     return spec_channels_query_parse(q, n);
 }
 
@@ -460,14 +468,15 @@ static esp_err_t spectrum_http_send_json_v2(httpd_req_t *req, int n)
     const uint32_t *bins = s_sp->bins;
     const char *meta = s_meta;
     size_t mlen = s_meta_len, a_end = s_meta_a_end, b_start = s_meta_b_start;
+    spec_epoch_t ep = s_ep;   // D2 (K2): копия значением, пара с bins этого же поколения
     xSemaphoreGive(s_mtx);
     size_t len = 0;
     bool ok = buf_grow(&buf, &cap, (size_t)n * 6 + 2048, 2048);
     if (ok) {
-        len = spec_json_full_fmt_v2(buf, cap, bins, n, meta, mlen, a_end, b_start);
+        len = spec_json_full_fmt_v2(buf, cap, bins, n, meta, mlen, a_end, b_start, &ep, spectrum_boot_id());
         if (len >= cap) {
             ok = buf_grow(&buf, &cap, len + 1, 2048);
-            if (ok) len = spec_json_full_fmt_v2(buf, cap, bins, n, meta, mlen, a_end, b_start);
+            if (ok) len = spec_json_full_fmt_v2(buf, cap, bins, n, meta, mlen, a_end, b_start, &ep, spectrum_boot_id());
         }
     }
     xSemaphoreTake(s_mtx, portMAX_DELAY);

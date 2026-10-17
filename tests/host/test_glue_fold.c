@@ -102,7 +102,7 @@ int main(void) {
         // Compute expected body
         char *exp_buf = malloc(200000);
         if (exp_buf) {
-            size_t exp_len = spec_json_full_fmt_v2(exp_buf, 200000, g_spec.bins, N, rm.body, rm.body_len, a_end, b_start);
+            size_t exp_len = spec_json_full_fmt_v2(exp_buf, 200000, g_spec.bins, N, rm.body, rm.body_len, a_end, b_start, &g_live_ep, g_boot_id);
             NCHECK("glue_v2_body", r.body_len == exp_len && (exp_len == 0 || memcmp(r.body, exp_buf, exp_len) == 0));
             free(exp_buf);
         } else {
@@ -126,7 +126,7 @@ int main(void) {
         
         char *exp_buf = malloc(200000);
         if (exp_buf) {
-            size_t exp_len = spec_json_full_fmt_v2(exp_buf, 200000, g_spec.bins, 2048, rm.body, rm.body_len, a_end, b_start);
+            size_t exp_len = spec_json_full_fmt_v2(exp_buf, 200000, g_spec.bins, 2048, rm.body, rm.body_len, a_end, b_start, &g_live_ep, g_boot_id);
             NCHECK("glue_v2_body", r.body_len == exp_len && (exp_len == 0 || memcmp(r.body, exp_buf, exp_len) == 0));
             free(exp_buf);
         } else {
@@ -178,7 +178,7 @@ int main(void) {
         httpd_req_t rv2; glue_req_init(&rv2); rv2.query = q4096; spectrum_http_send_json(&rv2);
         char *exp4096 = malloc(200000);
         if (exp4096) {
-            size_t el = spec_json_full_fmt_v2(exp4096, 200000, g_spec.bins, 4096, rm.body, rm.body_len, a_end, b_start);
+            size_t el = spec_json_full_fmt_v2(exp4096, 200000, g_spec.bins, 4096, rm.body, rm.body_len, a_end, b_start, &g_live_ep, g_boot_id);
             NCHECK("glue_alternate", rv2.status == 200 && rv2.body_len == el && memcmp(rv2.body, exp4096, el) == 0);
             free(exp4096);
         }
@@ -194,7 +194,7 @@ int main(void) {
         httpd_req_t rv2b; glue_req_init(&rv2b); rv2b.query = q2048; spectrum_http_send_json(&rv2b);
         char *exp2048 = malloc(200000);
         if (exp2048) {
-            size_t el = spec_json_full_fmt_v2(exp2048, 200000, g_spec.bins, 2048, rm.body, rm.body_len, a_end, b_start);
+            size_t el = spec_json_full_fmt_v2(exp2048, 200000, g_spec.bins, 2048, rm.body, rm.body_len, a_end, b_start, &g_live_ep, g_boot_id);
             NCHECK("glue_alternate", rv2b.status == 200 && rv2b.body_len == el && memcmp(rv2b.body, exp2048, el) == 0);
             free(exp2048);
         }
@@ -210,7 +210,7 @@ int main(void) {
         httpd_req_t rv2c; glue_req_init(&rv2c); rv2c.query = q1024; spectrum_http_send_json(&rv2c);
         char *exp1024 = malloc(200000);
         if (exp1024) {
-            size_t el = spec_json_full_fmt_v2(exp1024, 200000, g_spec.bins, 1024, rm.body, rm.body_len, a_end, b_start);
+            size_t el = spec_json_full_fmt_v2(exp1024, 200000, g_spec.bins, 1024, rm.body, rm.body_len, a_end, b_start, &g_live_ep, g_boot_id);
             NCHECK("glue_alternate", rv2c.status == 200 && rv2c.body_len == el && memcmp(rv2c.body, exp1024, el) == 0);
             free(exp1024);
         }

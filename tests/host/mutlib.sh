@@ -50,7 +50,7 @@ mt_check() {
     
     rm -f test_runner
     local out mrc
-    out=$(make test 2>&1); mrc=$?   # pass2 З-4: код make test - бинарь мог упасть без строки FAIL после «ALL PASSED» test_runner
+    out=$(make ${MT_TARGET:-test} 2>&1); mrc=$?   # D2: MT_TARGET=test-keepgoing - все бинари без остановки на первом упавшем;   # pass2 З-4: код make test - бинарь мог упасть без строки FAIL после «ALL PASSED» test_runner
 
     # Проверка на успешную сборку
     if ! echo "$out" | grep -qE "ALL PASSED|CHECK\(S\) FAILED"; then
