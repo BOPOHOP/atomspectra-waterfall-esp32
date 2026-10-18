@@ -17,7 +17,7 @@ mt_mut MD2_never_expired "expired_over job_timeout" "$P" 's/> SPEC_GZ_DEADLINE_M
 mt_mut ME_epoch_outside epoch_atomic_k2 "$C" '/^    ep = s_ep;/d;s/^    size_t cap = (size_t)n \* 6 + 2048;/    ep = s_ep;\n&/'
 mt_mut MF1_no_grow acquire_big_bins "$C" 's|^    if (l >= cap) {   // F1|    if (0) {   // F1|'
 mt_mut MF2_no_close_gz job_send_err "$J" '\|o->close_session(c, j);   // F2|d'
-mt_mut MF2_no_close_plain job_plain_err "$J" '/^        o->close_session(c, j);$/d'
+mt_mut MF2_no_close_plain job_plain_err "$J" '/^        o->close_session(c, j);\r\?$/d'
 mt_mut MF7_no_have acquire_stale "$C" 's/if (!s_have || !s_sp/if (!s_sp/'
 mt_base
 mt_done
