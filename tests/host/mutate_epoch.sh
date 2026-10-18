@@ -14,7 +14,7 @@ M=../../main/main.c
 W=../../main/sweep_missed.h
 mt_init "$H" "$E" "$C" "$S" "$M" "$W"
 mt_mut KE1_fmt_d          epoch_fields    "$H" '/boot_id/s/%" PRIu32/%d"/g'
-mt_mut KE2_no_spec_resets epoch_fields    "$H" 's|",\\"spec_resets\\":%" PRIu32 ||;s|ep->dev_resets, ep->spec_resets,|ep->dev_resets,|'
+mt_mut KE2_no_spec_resets "epoch_atomic_k2 epoch_fields equiv_v2" "$H" 's|",\\"spec_resets\\":%" PRIu32 ||;s|ep->dev_resets, ep->spec_resets,|ep->dev_resets,|'
 mt_mut KE3_epoch_in_v1    v1_bytes        "$C" 's|size_t n = spec_json_full_fmt(buf, cap, bins, meta, mlen, a_end, b_start);|size_t n = spec_json_full_fmt(buf, cap, bins, meta, mlen, a_end, b_start); if (s_ep.spec_resets != 0 \&\& n >= 1 \&\& n + 40 < cap) { n--; n += (size_t)snprintf(buf + n, cap - n, ",\\"spec_resets\\":%u}", (unsigned)s_ep.spec_resets); }|'
 mt_mut KE4_read_after     epoch_atomic    "$E" 's|c->read_epoch(c->ep_dst);   /\* EPOCH_IN_WINDOW \*/||;s|return ok;   /\* EPOCH_RET \*/|if (ok) { read_epoch(ep_dst); } return ok;|'
 mt_mut KE5_read_before    epoch_atomic    "$E" 's|c->read_epoch(c->ep_dst);   /\* EPOCH_IN_WINDOW \*/||;s|bool ok = seq_copy(|read_epoch(ep_dst); bool ok = seq_copy(|'

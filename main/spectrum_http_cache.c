@@ -238,55 +238,6 @@ uint32_t spectrum_http_cache_render_count(void)
     return s_render_count;
 }
 
-// #GZ-T (1.2.37-rc90, ТЕСТ): крючки задачи сжатия (spectrum_gz.c ставит их в web_server_start до httpd_start; на хосте — NULL).
-static spectrum_http_gz_try_fn  s_gz_try;
-static spectrum_http_gz_note_fn s_gz_note;
-
-void spectrum_http_cache_set_gz_hooks(spectrum_http_gz_try_fn try_send, spectrum_http_gz_note_fn note)
-{
-    s_gz_try = try_send;
-    s_gz_note = note;
-}
-
-// #GZ-T: закрепление — те же счётчики, что у отправок: s_json_users (s_json не перезаписывается и не меняется местами) и
-// s_readers (s_sp не меняется местами с s_sp_build). Задача сжатия держит закрепление только на время сжатия.
-bool spectrum_http_cache_pin(int kind, const void **body, size_t *len, uint32_t *gen)
-{
-    if (!s_mtx || !body || !len || !gen) return false;
-    bool ok = false;
-    xSemaphoreTake(s_mtx, portMAX_DELAY);
-    if (s_have && s_sp) {
-        if (kind == SPECTRUM_HTTP_KIND_JSON) {
-            if (s_json && !spec_json_need_build(s_json_have, s_json_render, s_render_count)) {
-                s_json_users++;
-                *body = s_json;
-                *len = s_json_len;
-                *gen = s_json_render;
-                ok = true;
-            }
-        } else if (kind == SPECTRUM_HTTP_KIND_BINS) {
-            s_readers++;
-            *body = s_sp->bins;
-            *len = SPECTRUM_CHANNELS * sizeof(uint32_t);
-            *gen = s_render_count;
-            ok = true;
-        }
-    }
-    xSemaphoreGive(s_mtx);
-    return ok;
-}
-
-void spectrum_http_cache_unpin(int kind)
-{
-    if (!s_mtx) return;
-    xSemaphoreTake(s_mtx, portMAX_DELAY);
-    if (kind == SPECTRUM_HTTP_KIND_JSON) {
-        if (s_json_users > 0) s_json_users--;
-    } else if (kind == SPECTRUM_HTTP_KIND_BINS) {
-        if (s_readers > 0) s_readers--;
-    }
-    xSemaphoreGive(s_mtx);
-}
 uint32_t spectrum_http_cache_build_us_last(void) { return s_build_us_last; }
 uint32_t spectrum_http_cache_build_us_max(void) { return s_build_us_max; }
 uint32_t spectrum_http_cache_json_builds(void) { return s_json_builds; }
@@ -378,7 +329,11 @@ static int spec_req_channels(httpd_req_t *req, int *n)
 
 static esp_err_t spectrum_http_send_json_v2(httpd_req_t *req, int n);
 
-esp_err_t spectrum_http_send_json(httpd_req_t *req)
+// Ф4.2: крючок очереди сжатия (ставит spectrum_gz_init до httpd_start; на хосте NULL).
+static spectrum_http_gz_try_fn s_gz_try;
+void spectrum_http_cache_set_gz_hook(spectrum_http_gz_try_fn try_send) { s_gz_try = try_send; }
+
+static esp_err_t send_json_impl(httpd_req_t *req, bool gz)
 {
     int ch = 0;
     int qk = spec_req_channels(req, &ch);
@@ -392,10 +347,10 @@ esp_err_t spectrum_http_send_json(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "No spectrum data yet");
         return ESP_FAIL;
     }
-    if (qk > 0) return spectrum_http_send_json_v2(req, ch);   // D1: версия 2, кэш JSON версии 1 не трогаем
-    if (s_gz_try) {   // #GZ-T (1.2.37-rc90): готовое сжатое тело текущего поколения (сжимает задача spectrum_gz, не httpd)
+    if (qk > 0) {   // D1: версия 2, кэш JSON версии 1 не трогаем
         esp_err_t ge = ESP_OK;
-        if (s_gz_try(req, SPECTRUM_HTTP_KIND_JSON, &ge)) return ge;
+        if (gz && s_gz_try && s_gz_try(req, ch, &ge)) return ge;   // Ф4.2: gzip-запрос v2 уходит в очередь задачи
+        return spectrum_http_send_json_v2(req, ch);
     }
     // 1.2.36 H3: полный JSON (8192 канала текстом) строится ЛЕНИВО, только если его кто-то запросил, и из ТОЙ ЖЕ строки meta,
     // что отдаёт meta.json этого поколения. Сборка — ВНЕ s_mtx; s_readers держит s_sp/s_meta от смены.
@@ -487,7 +442,6 @@ esp_err_t spectrum_http_send_json(httpd_req_t *req)
             s_json_len = n;
             s_json_render = rc;
             s_json_have = true;
-            if (s_gz_note) s_gz_note(SPECTRUM_HTTP_KIND_JSON);   // #GZ-T: JSON поколения rc собран — уведомить задачу сжатия
         }
     }
     payload = buf;
@@ -569,10 +523,6 @@ esp_err_t spectrum_http_send_bins(httpd_req_t *req)
     const char *payload = NULL;
     size_t len = 0;
     char hdr[16];   // живёт до конца функции — дольше, чем httpd_resp_send()
-    if (s_gz_try) {   // #GZ-T (1.2.37-rc90): готовое сжатое тело текущего поколения (сжимает задача spectrum_gz, не httpd)
-        esp_err_t ge = ESP_OK;
-        if (s_gz_try(req, SPECTRUM_HTTP_KIND_BINS, &ge)) return ge;
-    }
     snapshot_begin(req, PAYLOAD_BINS, &payload, &len, hdr, sizeof(hdr));
     httpd_resp_set_type(req, "application/octet-stream");
     httpd_resp_set_hdr(req, "Content-Disposition", "inline");
@@ -686,3 +636,75 @@ esp_err_t spectrum_http_send_meta_sma(httpd_req_t *req, uint64_t sum_counts, uin
     snapshot_end();
     return e;
 }
+
+// Ф4.2: снимок v2 для задачи spec_gz (тело в PSRAM; s_readers снимается сразу после построения)
+bool spectrum_http_cache_v2_acquire(int n, char **out, size_t *len, uint32_t *gen) {
+    *out = NULL;
+    *len = 0;
+    spec_epoch_t ep;
+    uint32_t rc = 0;
+    const uint32_t *bins = NULL;
+    const char *meta = NULL;
+    size_t mlen = 0;
+    size_t a_end = 0;
+    size_t b_start = 0;
+
+    if (xSemaphoreTake(s_mtx, portMAX_DELAY) != pdTRUE) {
+        return false;
+    }
+    if (!s_have || !s_sp || !s_meta || s_meta_len == 0) {   // F7: после invalidate старый снимок не отдаём
+        xSemaphoreGive(s_mtx);
+        return false;
+    }
+    rc = s_render_count;
+    s_readers++;
+    bins = s_sp->bins;
+    meta = s_meta;
+    mlen = s_meta_len;
+    a_end = s_meta_a_end;
+    b_start = s_meta_b_start;
+    ep = s_ep;   // D2 (K2): копия значением, пара с bins этого же поколения
+    xSemaphoreGive(s_mtx);
+
+    size_t cap = (size_t)n * 6 + 2048;
+    char *buf = (char *)heap_caps_malloc(cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (buf == NULL) {
+        if (xSemaphoreTake(s_mtx, portMAX_DELAY) == pdTRUE) {
+            if (s_readers > 0) s_readers--;
+            xSemaphoreGive(s_mtx);
+        }
+        return false;
+    }
+
+    size_t l = spec_json_full_fmt_v2(buf, cap, bins, n, meta, mlen, a_end, b_start, &ep, spectrum_boot_id());
+    if (l >= cap) {   // F1: бины до 11 символов - буфер n*6+2048 мал; повтор с точным размером, PSRAM без отката на DRAM
+        heap_caps_free(buf);
+        cap = l + 1;
+        buf = (char *)heap_caps_malloc(cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        l = buf ? spec_json_full_fmt_v2(buf, cap, bins, n, meta, mlen, a_end, b_start, &ep, spectrum_boot_id()) : 0;
+    }
+    if (l == 0 || l >= cap) {
+        heap_caps_free(buf);
+        if (xSemaphoreTake(s_mtx, portMAX_DELAY) == pdTRUE) {
+            if (s_readers > 0) s_readers--;
+            xSemaphoreGive(s_mtx);
+        }
+        return false;
+    }
+
+    if (xSemaphoreTake(s_mtx, portMAX_DELAY) == pdTRUE) {   // readers отпускаются сразу: в теле уже копия bins и эпохи
+        if (s_readers > 0) s_readers--;
+        xSemaphoreGive(s_mtx);
+    }
+    *out = buf;
+    *len = l;
+    *gen = rc;
+    return true;
+}
+
+void spectrum_http_cache_v2_release(char *body) {   // тело - приватная копия, s_readers не держит
+    heap_caps_free(body);
+}
+
+esp_err_t spectrum_http_send_json(httpd_req_t *req) { return send_json_impl(req, true); }
+esp_err_t spectrum_http_send_json_plain(httpd_req_t *req) { return send_json_impl(req, false); }

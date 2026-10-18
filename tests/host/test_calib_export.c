@@ -436,7 +436,7 @@ void round2_wiring_sites_suite(void)
     /* М5 поколение кэша */
     w_site("../../main/spectrum_http_cache.c", "spectrum_http_cache_finish_build", "spec_cache_gen_stale(", NULL);
     /* 1.2.36 H3: полный JSON — лениво из send_json (решает spec_json_need_build); пересборка кэша его не строит */
-    w_site("../../main/spectrum_http_cache.c", "spectrum_http_send_json", "spec_json_need_build(", NULL);
+    w_site("../../main/spectrum_http_cache.c", "send_json_impl", "spec_json_need_build(", NULL);
     w_absent("../../main/spectrum_http_cache.c", "spectrum_http_cache_finish_build", "build_json_full(");
     w_absent("../../main/spectrum_http_cache.c", "spectrum_http_cache_finish_build", "spec_json_full_fmt(");
     /* М6 гейт OTA в автосохранении */

@@ -22,6 +22,8 @@
 #include "spectrum_fold.h"
 
 static int g_failures;
+static int g_k0_calls;
+static bool k0_hook(httpd_req_t *r, int ch, esp_err_t *o) { (void)r; (void)ch; (void)o; g_k0_calls++; return false; }
 #define NCHECK(name, cond) do { if (!(cond)) { printf("FAIL %s %s:%d: %s\n", name, __FILE__, __LINE__, #cond); g_failures++; } } while (0)
 
 static char *load_file(const char *path) {
@@ -178,6 +180,8 @@ int main(void) {
         glue_req_free(&r);
     }
 
+    // F4.2 K0: the gzip hook is installed during the frozen v1 check; v1 (no channels) must never reach it, bytes stay as in D2b
+    spectrum_http_cache_set_gz_hook(k0_hook);
     // TEST 2: v1_bytes
     for (int i = 1; i <= 5; i++) {
         char path[64];
@@ -276,6 +280,8 @@ int main(void) {
         free(f);
     }
 
+    NCHECK("v1_bytes", g_k0_calls == 0);   /* F4.2 K0: v1 never reaches the hook */
+    spectrum_http_cache_set_gz_hook(NULL);
     // TEST 3: glue_query_trunc
     glue_fill_stand(&g_spec, 1);
     g_live_ep = (spec_epoch_t){0, 0};

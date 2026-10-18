@@ -49,7 +49,7 @@ typedef struct {
     // dose_rate null — сразу, без перезагрузки (см. boot_config_dose_live_enabled); буферы освобождает monitor_task при записи
     // следующего сэмпла (при молчащем приборе — позже).
     bool     dose_live_enabled;
-    // #GZ-T (1.2.37-rc90, ТЕСТ): уровень сжатия gzip тел /api/spectrum.json и /api/spectrum (NVS "gz_lvl", u8): 0 — выкл
+    // #GZ-T (1.2.37-rc90, ТЕСТ): уровень сжатия gzip тела /api/spectrum.json?channels=N (v2; NVS "gz_lvl", u8): 0 — выкл
     // (умолчание; нет ключа = 0), 1 или 6; иное значение в NVS читается как 0. Действует сразу (spectrum_gz_sync).
     uint8_t  gzip_level;
 

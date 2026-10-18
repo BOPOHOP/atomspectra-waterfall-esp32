@@ -1,15 +1,16 @@
-// #GZ-T (1.2.37-rc90, ТЕСТ): сжатие gzip тел /api/spectrum.json и /api/spectrum ОТДЕЛЬНОЙ задачей "spec_gz".
+// #GZ-T (1.2.37-rc90, ТЕСТ): сжатие gzip ТОЛЬКО тел /api/spectrum.json (v2).
 // Почему не в httpd: в стеке httpd свободно 4,5-4,8 КБ, цепочка кадров ROM tdefl ~6,4 КБ (consilium-rest-tcp/02-embedded.md §3).
-// Задача: ядро 0, приоритет 3 (ниже httpd 5 и USB 6/7), стек 12 КБ в PSRAM (CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM),
+// Задача: ядро 0, приоритет 3 (ниже httpd 5 и USB 6/7), стек 16 КБ в PSRAM (CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM),
 // TCB во внутренней RAM (требование FreeRTOS). Создаётся при первом включении и не удаляется.
 // Компрессор tdefl (ROM, 167 744 Б, PSRAM) трогает ТОЛЬКО задача: выделяет при включении, освобождает при выключении.
-// Слоты (0 — spectrum.json, 1 — bins): метаданные под s_mtx, который НИКОГДА не держится во время сжатия или отправки.
-// Буфер слота пишет только задача и только при valid == false и readers == 0; httpd берёт буфер только при valid == true,
-// увеличив readers под s_mtx, и уменьшает readers после отправки. Буфер освобождается только при readers == 0
-// (иначе повтор через GZ_RETRY_MS). SPEC_LOCK не берётся: тело даёт кэш через spectrum_http_cache_pin()/unpin().
+// Слоты удалены: gzip только для v2, задача владеет компрессором.
+// Асинхронные запросы обрабатываются через очередь задач (глубина 2, дедлайн 1500 мс), чтобы не блокировать httpd.
 #include "spectrum_gz.h"
 #include "spectrum_gz_plan.h"
+#include "spectrum_gz_job.h"
 #include "spectrum_http_cache.h"
+#include "spectrogram.h"
+#include "atomspectra.h"
 #include "boot_config.h"
 #include "miniz.h"
 #include "cJSON.h"
@@ -17,6 +18,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_http_server.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -31,57 +33,34 @@
 
 _Static_assert(SPEC_GZ_TDEFL_GREEDY == TDEFL_GREEDY_PARSING_FLAG, "spectrum_gz_plan.h: SPEC_GZ_TDEFL_GREEDY != miniz");
 
-#define GZ_STACK_BYTES 12288   // кадры ROM tdefl ~6,4 КБ + свои; запас видно по gz_stack_hwm
+#define GZ_STACK_BYTES 16384   // кадры ROM tdefl ~6,4 КБ + свои; запас видно по gz_stack_hwm
 #define GZ_TASK_PRIO   3       // ниже httpd (5), usb_rxw (6), usb_lib (7)
 #define GZ_TASK_CORE   0
-#define GZ_RETRY_MS    50      // слот ещё отправляют — повтор
 
 static const char *TAG = "spec_gz";
 
-typedef struct {
-    uint8_t *buf;       // PSRAM
-    size_t   cap;
-    size_t   len;       // 0 — тело поколения gen не сжимается (короче порога или сжатое не короче несжатого)
-    uint32_t gen;       // поколение кэша спектра (render count), из которого сжато тело
-    bool     valid;
-    int      readers;   // отправок этого буфера прямо сейчас (httpd)
-} gz_slot_t;
-
 static SemaphoreHandle_t s_mtx;
-static gz_slot_t         s_slot[2];
 static TaskHandle_t      s_task;
 static tdefl_compressor *s_comp;
 static volatile uint8_t  s_level_req;    // запрошенный уровень; пишет httpd (spectrum_gz_sync)
 static volatile uint8_t  s_level_cur;    // применённый уровень; пишет только задача; 0 — сжатое не отдаётся
-static volatile bool     s_kick[2];
-static volatile uint32_t s_ok, s_hit, s_miss, s_nomem, s_fail;
+static volatile uint32_t s_ok, s_miss, s_nomem, s_h_nomem;   // s_h_nomem пишет только httpd
 static volatile uint32_t s_last_us, s_max_us, s_last_in, s_last_out;
 
-// Задача: освободить буферы слотов, которые никто не отправляет. true — освобождены оба.
-static bool gz_slots_release(void)
-{
-    uint8_t *drop[2] = { NULL, NULL };
-    bool all = true;
-    xSemaphoreTake(s_mtx, portMAX_DELAY);
-    for (int k = 0; k < 2; k++) {
-        s_slot[k].valid = false;
-        if (s_slot[k].readers > 0) {
-            all = false;
-            continue;
-        }
-        drop[k] = s_slot[k].buf;
-        s_slot[k].buf = NULL;
-        s_slot[k].cap = 0;
-        s_slot[k].len = 0;
-    }
-    xSemaphoreGive(s_mtx);
-    heap_caps_free(drop[0]);
-    heap_caps_free(drop[1]);
-    return all;
-}
+// Новое состояние для асинхронных задач
+static spec_gz_q_t s_q;
+static spec_gz_job_t s_jobs[SPEC_GZ_QUEUE_DEPTH];
+static bool s_job_ready[SPEC_GZ_QUEUE_DEPTH];
+static spec_gz_ring_t s_ring;
+static spec_gz_cnt_t s_cnt;
+static volatile uint32_t s_h_fallback, s_queue_full;
 
-// Задача: привести компрессор к запрошенному уровню. true — повторить позже (буфер слота ещё отправляют).
-static bool gz_apply_level(void)
+// Скретч-переменные только для задачи
+static char *s_v2buf;
+static uint32_t s_cur_gen;
+
+// Задача: привести компрессор к запрошенному уровню.
+static void gz_apply_level(void)
 {
     uint8_t want = s_level_req;
     if (want == 0) {
@@ -91,7 +70,7 @@ static bool gz_apply_level(void)
             s_comp = NULL;
             ESP_LOGI(TAG, "gzip off: compressor freed");
         }
-        return !gz_slots_release();
+        return;
     }
     if (!s_comp) {
         size_t need = sizeof(tdefl_compressor);
@@ -102,18 +81,13 @@ static bool gz_apply_level(void)
         if (!s_comp) {
             s_nomem++;
             ESP_LOGW(TAG, "gzip level %u: no PSRAM for compressor", (unsigned)want);
-            return false;
+            return;
         }
         ESP_LOGI(TAG, "gzip level %u: compressor %u B in PSRAM", (unsigned)want, (unsigned)need);
     }
     if (s_level_cur != want) {
-        xSemaphoreTake(s_mtx, portMAX_DELAY);
-        s_slot[0].valid = false;
-        s_slot[1].valid = false;
-        xSemaphoreGive(s_mtx);
         s_level_cur = want;
     }
-    return false;
 }
 
 // Задача: сырой deflate src в buf + SPEC_GZ_HDR_BYTES и рамка gzip. 1 — готово (*out_len), 0 — сжатое не короче
@@ -132,81 +106,200 @@ static int gz_deflate(uint8_t *buf, size_t cap, const void *src, size_t len, uin
     return *out_len ? 1 : -1;
 }
 
-// Задача: сжать тело вида k текущего поколения в слот. true — повторить позже (прежнее тело слота ещё отправляют).
-static bool gz_compress(int k)
+// TCP_NODELAY на сокете запроса — как spectrum_http_nodelay() (1.2.37, spectrum_http_cache.c): иначе хвост сжатого тела ждёт
+// ACK клиента (Nagle, +40 мс) и сравнение задержек со сжатием и без нечестно. Своя копия: проводка 1.2.37 требует ровно три
+// вызова хелпера в spectrum_http_cache.c.
+static void gz_nodelay(httpd_req_t *req)
 {
-    const void *src = NULL;
-    size_t len = 0;
-    uint32_t gen = 0;
-    if (!spectrum_http_cache_pin(k, &src, &len, &gen)) return false;   // тело текущего поколения ещё не собрано
-    gz_slot_t *sl = &s_slot[k];
+    int one = 1;
+    int fd = httpd_req_to_sockfd(req);
+    if (fd >= 0) (void)setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+}
+
+// Вспомогательная функция: получить текущее время в мс
+static uint32_t now_ms(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
+// Операции для spec_gz_job_run
+static uint32_t gz_ops_now_ms(void *c) { (void)c; return now_ms(); }
+static uint8_t gz_ops_level(void *c) { (void)c; return s_comp ? s_level_cur : 0; }
+
+static bool gz_ops_acquire(void *c, const spec_gz_job_t *j, const void **body, size_t *len)
+{
+    (void)c;
+    if (j->kind == 2) {
+        if (!spectrum_http_cache_v2_acquire(j->channels, &s_v2buf, len, &s_cur_gen)) return false;
+        *body = s_v2buf;
+        return true;
+    }
+    return false;
+}
+
+static void gz_ops_release(void *c, const spec_gz_job_t *j)
+{
+    (void)c;
+    if (j->kind == 2) {
+        spectrum_http_cache_v2_release(s_v2buf);
+        s_v2buf = NULL;
+    }
+}
+
+static uint8_t *gz_ops_out_alloc(void *c, size_t cap)
+{
+    (void)c;
+    if (spec_gz_mem_ok(cap, heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                       heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM))) {
+        return heap_caps_malloc(cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    return NULL;
+}
+
+static void gz_ops_out_free(void *c, uint8_t *out)
+{
+    (void)c;
+    heap_caps_free(out);
+}
+
+static int gz_ops_compress(void *c, uint8_t level, const void *body, size_t len, uint8_t *out, size_t cap, size_t *out_len)
+{
+    (void)c;
+    int64_t t0 = esp_timer_get_time();
+    int r = gz_deflate(out, cap, body, len, level, out_len);
+    uint32_t us = (uint32_t)(esp_timer_get_time() - t0);
+    if (r > 0) {
+        xSemaphoreTake(s_mtx, portMAX_DELAY);
+        spec_gz_ring_put(&s_ring, us);
+        s_last_us = us;
+        if (us > s_max_us) s_max_us = us;
+        s_last_in = len;
+        s_last_out = *out_len;
+        s_ok++;
+        xSemaphoreGive(s_mtx);
+    }
+    return r;
+}
+
+static bool gz_ops_send_gz(void *c, const spec_gz_job_t *j, const uint8_t *out, size_t out_len)
+{
+    (void)c;
+    httpd_req_t *req = (httpd_req_t *)j->req;
+    char rc[16];
+    snprintf(rc, sizeof rc, "%" PRIu32, s_cur_gen);
+    
+    httpd_resp_set_hdr(req, "X-Spectrum-Render-Count", rc);
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    
+    char age[16];
+    snprintf(age, sizeof age, "%" PRId32, usb_host_cdc_hist_age_ms());
+    httpd_resp_set_hdr(req, "X-Hist-Age-Ms", age);
+    httpd_resp_set_type(req, "application/json");
+    
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    httpd_resp_set_hdr(req, "Vary", "Accept-Encoding");
+    httpd_resp_set_hdr(req, "X-Spectrum-Gz", "1");
+    
+    gz_nodelay(req);
+    esp_err_t e = httpd_resp_send(req, (const char *)out, (ssize_t)out_len);
+    return e == ESP_OK;
+}
+
+static bool gz_ops_send_plain(void *c, const spec_gz_job_t *j)
+{
+    (void)c;
+    httpd_req_t *req = (httpd_req_t *)j->req;
+    return spectrum_http_send_json_plain(req) == ESP_OK;   // F2: код ошибки не теряем
+}
+
+// F2: ошибка отправки из задачи - закрыть сессию, как при возврате ошибки из синхронного обработчика; ДО complete
+static void gz_ops_close_session(void *c, const spec_gz_job_t *j)
+{
+    (void)c;
+    httpd_req_t *req = (httpd_req_t *)j->req;
+    httpd_sess_trigger_close(req->handle, httpd_req_to_sockfd(req));
+}
+
+static void gz_ops_complete(void *c, const spec_gz_job_t *j)
+{
+    (void)c;
+    httpd_req_async_handler_complete((httpd_req_t *)j->req);
+}
+
+static spec_gz_ops_t s_ops = {
+    .now_ms = gz_ops_now_ms,
+    .level = gz_ops_level,
+    .acquire = gz_ops_acquire,
+    .release = gz_ops_release,
+    .out_alloc = gz_ops_out_alloc,
+    .out_free = gz_ops_out_free,
+    .compress = gz_ops_compress,
+    .send_gz = gz_ops_send_gz,
+    .send_plain = gz_ops_send_plain,
+    .close_session = gz_ops_close_session,
+    .complete = gz_ops_complete
+};
+
+// Вспомогательная функция: извлечь задачу из очереди
+static bool gz_job_pop(spec_gz_job_t *out)
+{
     xSemaphoreTake(s_mtx, portMAX_DELAY);
-    bool done = sl->valid && sl->gen == gen;
-    bool busy = !done && sl->readers > 0;
-    if (!done && !busy) sl->valid = false;   // новых читателей не будет, старых нет: буфер только у задачи
-    xSemaphoreGive(s_mtx);
-    if (done || busy) {
-        spectrum_http_cache_unpin(k);
-        return busy;
-    }
-    size_t out_len = 0;
-    int r = 0;
-    if (spec_gz_worth(len)) {
-        size_t cap = spec_gz_slot_cap(len);
-        if (sl->cap < cap) {
-            uint8_t *nb = NULL;
-            if (spec_gz_mem_ok(cap, heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
-                               heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM))) {
-                nb = heap_caps_realloc(sl->buf, cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-            }
-            if (!nb) {
-                spectrum_http_cache_unpin(k);
-                s_nomem++;
-                return false;
-            }
-            sl->buf = nb;
-            sl->cap = cap;
-        }
-        int64_t t0 = esp_timer_get_time();
-        r = gz_deflate(sl->buf, sl->cap, src, len, s_level_cur, &out_len);
-        uint32_t us = (uint32_t)(esp_timer_get_time() - t0);
-        if (r > 0) {
-            s_last_us = us;
-            if (us > s_max_us) s_max_us = us;
-            s_last_in = (uint32_t)len;
-            s_last_out = (uint32_t)out_len;
-            s_ok++;
-        }
-    }
-    spectrum_http_cache_unpin(k);
-    if (r < 0) {
-        s_fail++;
+    if (s_q.count == 0 || !s_job_ready[s_q.head]) {
+        xSemaphoreGive(s_mtx);
         return false;
     }
-    xSemaphoreTake(s_mtx, portMAX_DELAY);
-    sl->len = (r > 0) ? out_len : 0;
-    sl->gen = gen;
-    sl->valid = true;
+    int idx = spec_gz_q_pop(&s_q);
+    *out = s_jobs[idx];
+    s_job_ready[idx] = false;
     xSemaphoreGive(s_mtx);
-    return false;
+    return true;
+}
+
+// Вспомогательная функция: добавить задачу в очередь
+static bool gz_enqueue(httpd_req_t *req, int channels)
+{
+    xSemaphoreTake(s_mtx, portMAX_DELAY);
+    int idx = spec_gz_q_reserve(&s_q);
+    if (idx < 0) {
+        s_queue_full++;
+        s_h_fallback++;
+        xSemaphoreGive(s_mtx);
+        return false;
+    }
+    xSemaphoreGive(s_mtx);
+    
+    httpd_req_t *ar = NULL;
+    esp_err_t be = httpd_req_async_handler_begin(req, &ar);
+    if (be != ESP_OK) {
+        xSemaphoreTake(s_mtx, portMAX_DELAY);
+        spec_gz_q_unreserve(&s_q);
+        s_h_fallback++;
+        xSemaphoreGive(s_mtx);
+        return false;
+    }
+    
+    xSemaphoreTake(s_mtx, portMAX_DELAY);
+    s_jobs[idx] = (spec_gz_job_t){2, channels, now_ms(), ar};
+    s_job_ready[idx] = true;
+    xSemaphoreGive(s_mtx);
+    
+    xTaskNotifyGive(s_task);
+    return true;
 }
 
 static void gz_task(void *arg)
 {
     (void)arg;
     for (;;) {
-        bool again = gz_apply_level();
-        if (s_level_cur != 0) {
-            for (int k = 0; k < 2; k++) {
-                if (!s_kick[k]) continue;
-                s_kick[k] = false;
-                if (gz_compress(k)) {
-                    s_kick[k] = true;
-                    again = true;
-                }
-            }
+        gz_apply_level();
+        
+        // Обработка асинхронных задач (даже если уровень 0, чтобы не зависали запросы)
+        spec_gz_job_t j;
+        while (gz_job_pop(&j)) {
+            spec_gz_job_run(&s_ops, NULL, &j, &s_cnt);
         }
-        ulTaskNotifyTake(pdTRUE, again ? pdMS_TO_TICKS(GZ_RETRY_MS) : portMAX_DELAY);
+        
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     }
 }
 
@@ -242,80 +335,58 @@ void spectrum_gz_sync(void)
     if (s_task) xTaskNotifyGive(s_task);
 }
 
-// TCP_NODELAY на сокете запроса — как spectrum_http_nodelay() (1.2.37, spectrum_http_cache.c): иначе хвост сжатого тела ждёт
-// ACK клиента (Nagle, +40 мс) и сравнение задержек со сжатием и без нечестно. Своя копия: проводка 1.2.37 требует ровно три
-// вызова хелпера в spectrum_http_cache.c.
-static void gz_nodelay(httpd_req_t *req)
-{
-    int one = 1;
-    int fd = httpd_req_to_sockfd(req);
-    if (fd >= 0) (void)setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
-}
-
 // Крючок обработчика (задача httpd). true — отправлено готовое сжатое тело; false — ответить как раньше.
-static bool gz_try_send(httpd_req_t *req, int kind, esp_err_t *out)
+static bool gz_try_send(httpd_req_t *req, int channels, esp_err_t *out)
 {
     spectrum_gz_sync();
     uint8_t lvl = s_level_cur;
-    if (lvl == 0 || kind < 0 || kind > 1) return false;
+    if (lvl == 0 || !s_task) return false;
+    
     char ae[128];
     ae[0] = '\0';
     esp_err_t hr = httpd_req_get_hdr_value_str(req, "Accept-Encoding", ae, sizeof ae);
     bool want = (hr == ESP_OK || hr == ESP_ERR_HTTPD_RESULT_TRUNC) && spec_gz_accepts(ae);
-    uint32_t cur = spectrum_http_cache_render_count();
-    const uint8_t *p = NULL;
-    size_t n = 0;
-    uint32_t gen = 0;
-    gz_slot_t *sl = &s_slot[kind];
-    xSemaphoreTake(s_mtx, portMAX_DELAY);
-    int pick = spec_gz_pick(lvl, want, sl->valid, sl->gen, sl->len, cur);
-    if (pick == SPEC_GZ_HIT) {
-        sl->readers++;
-        p = sl->buf;
-        n = sl->len;
-        gen = sl->gen;
-    }
-    xSemaphoreGive(s_mtx);
-    if (pick == SPEC_GZ_MISS) {
-        s_miss++;
-        s_kick[kind] = true;
-        xTaskNotifyGive(s_task);
+    
+    int pick = spec_gz_pick(lvl, want, false, 0, 0, spectrum_http_cache_render_count());
+    
+    if (pick != SPEC_GZ_MISS) {
         return false;
     }
-    if (pick != SPEC_GZ_HIT) return false;
-    char rc[16];   // живёт до httpd_resp_send (httpd хранит указатель)
-    snprintf(rc, sizeof rc, "%" PRIu32, gen);
-    httpd_resp_set_hdr(req, "X-Spectrum-Render-Count", rc);
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-    httpd_resp_set_hdr(req, "Vary", "Accept-Encoding");
-    if (kind == SPECTRUM_HTTP_KIND_BINS) {
-        httpd_resp_set_type(req, "application/octet-stream");
-        httpd_resp_set_hdr(req, "Content-Disposition", "inline");
-    } else {
-        httpd_resp_set_type(req, "application/json");
-    }
-    gz_nodelay(req);
-    esp_err_t e = httpd_resp_send(req, (const char *)p, (ssize_t)n);
+    
+    s_miss++;
+    bool recording = spectrogram_is_recording();
+    bool mem_ok = s_comp != NULL && spec_gz_mem_ok(SPEC_GZ_ASYNC_MEM_PROBE, 
+                                                   heap_caps_get_free_size(MALLOC_CAP_SPIRAM), 
+                                                   heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+    
     xSemaphoreTake(s_mtx, portMAX_DELAY);
-    if (sl->readers > 0) sl->readers--;
+    bool qfull = spec_gz_q_full(&s_q);
     xSemaphoreGive(s_mtx);
-    s_hit++;
-    *out = e;
-    return true;
-}
-
-// Крючок кэша: тело вида kind текущего поколения собрано (зовётся под мьютексом кэша — только уведомить, не ждать).
-static void gz_note(int kind)
-{
-    if (s_level_cur == 0 || !s_task || kind < 0 || kind > 1) return;
-    s_kick[kind] = true;
-    xTaskNotifyGive(s_task);
+    
+    int ok = spec_gz_decide(want, recording, lvl, mem_ok, qfull);
+    int route = spec_gz_route(pick, ok);
+    
+    if (route != SPEC_GZ_ASYNC) {
+        if (want && qfull && !recording && mem_ok) {
+            s_queue_full++;
+            s_h_fallback++;
+        } else if (want && !recording && !mem_ok) {
+            s_h_nomem++;   // F8: причина «нет PSRAM» видна в gz_nomem
+            s_h_fallback++;
+        }
+        return false;
+    }
+    
+    if (gz_enqueue(req, channels)) {
+        *out = ESP_OK;
+        return true;
+    }
+    return false;
 }
 
 void spectrum_gz_init(void)
 {
-    spectrum_http_cache_set_gz_hooks(gz_try_send, gz_note);
+    spectrum_http_cache_set_gz_hook(gz_try_send);
 }
 
 void spectrum_gz_add_metrics(struct cJSON *root)
@@ -324,13 +395,31 @@ void spectrum_gz_add_metrics(struct cJSON *root)
     cJSON_AddNumberToObject(root, "gz_level", (double)s_level_cur);
     cJSON_AddNumberToObject(root, "gz_comp_bytes", s_comp ? (double)sizeof(tdefl_compressor) : 0.0);
     cJSON_AddNumberToObject(root, "gz_ok", (double)s_ok);
-    cJSON_AddNumberToObject(root, "gz_hit", (double)s_hit);
     cJSON_AddNumberToObject(root, "gz_miss", (double)s_miss);
-    cJSON_AddNumberToObject(root, "gz_nomem", (double)s_nomem);
-    cJSON_AddNumberToObject(root, "gz_fail", (double)s_fail);
+    cJSON_AddNumberToObject(root, "gz_nomem", (double)(s_nomem + s_h_nomem + s_cnt.nomem));
+    cJSON_AddNumberToObject(root, "gz_fail", (double)s_cnt.fail);
     cJSON_AddNumberToObject(root, "gz_last_us", (double)s_last_us);
     cJSON_AddNumberToObject(root, "gz_max_us", (double)s_max_us);
     cJSON_AddNumberToObject(root, "gz_last_in", (double)s_last_in);
     cJSON_AddNumberToObject(root, "gz_last_out", (double)s_last_out);
     cJSON_AddNumberToObject(root, "gz_stack_hwm", s_task ? (double)uxTaskGetStackHighWaterMark(s_task) : 0.0);
+    
+    // Новые метрики
+    cJSON_AddNumberToObject(root, "gz_async_ok", (double)s_cnt.ok);
+    cJSON_AddNumberToObject(root, "gz_fallback", (double)(s_cnt.fallback + s_h_fallback));
+    cJSON_AddNumberToObject(root, "gz_async_timeout", (double)s_cnt.timeout);
+    cJSON_AddNumberToObject(root, "gz_queue_full", (double)s_queue_full);
+    cJSON_AddNumberToObject(root, "gz_send_err", (double)s_cnt.send_err);
+    
+    // Массив gz_ring_us
+    cJSON *a = cJSON_AddArrayToObject(root, "gz_ring_us");
+    if (s_mtx) {
+        xSemaphoreTake(s_mtx, portMAX_DELAY);
+        uint32_t tmp[SPEC_GZ_RING_N];
+        size_t count = spec_gz_ring_get(&s_ring, tmp);
+        xSemaphoreGive(s_mtx);
+        for (size_t i = 0; i < count; i++) {
+            cJSON_AddItemToArray(a, cJSON_CreateNumber(tmp[i]));
+        }
+    }
 }

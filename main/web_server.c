@@ -2134,7 +2134,7 @@ static esp_err_t handle_system(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "spectrum_build_us", (double)spectrum_http_cache_build_us_last());
     cJSON_AddNumberToObject(root, "spectrum_build_us_max", (double)spectrum_http_cache_build_us_max());
     cJSON_AddNumberToObject(root, "spectrum_json_builds", (double)spectrum_http_cache_json_builds());
-    spectrum_gz_add_metrics(root);   // #GZ-T (1.2.37-rc90): gz_level, gz_comp_bytes, gz_ok/hit/miss/nomem/fail, время, размеры, gz_stack_hwm
+    spectrum_gz_add_metrics(root);   // #GZ-T (1.2.37-rc90): gz_level, gz_comp_bytes, gz_ok/miss/nomem/fail, gz_async_ok/fallback/async_timeout/queue_full/send_err, gz_ring_us, время, размеры, gz_stack_hwm
     cJSON_AddNumberToObject(root, "heap_walk_n", (double)s_heap_walk_n);
     cJSON_AddNumberToObject(root, "autosave_writes", (double)spectrum_autosave_writes());
     cJSON_AddNumberToObject(root, "autosave_skips", (double)spectrum_autosave_skips());

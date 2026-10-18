@@ -1,5 +1,5 @@
 #pragma once
-// #GZ-T (1.2.37-rc90, ТЕСТ): чистые решения сжатия gzip тел /api/spectrum.json и /api/spectrum, без IDF.
+// #GZ-T (1.2.37-rc90, ТЕСТ): чистые решения сжатия gzip тела /api/spectrum.json?channels=N (v2), без IDF.
 // Host-тест: tests/host/test_spectrum_gz_plan.c (свой main, make test). Прошивка: main/spectrum_gz.c, boot_config.c, web_server.c.
 #include <stdbool.h>
 #include <stddef.h>
@@ -135,4 +135,70 @@ static inline size_t spec_gz_frame(uint8_t *buf, size_t cap, size_t deflate_len,
         t[4 + i] = (uint8_t)(isize >> (8 * i));
     }
     return total;
+}
+
+// ---- Ф4.2 (D3, 1.2.38-rc3): асинхронная отдача сжатого тела (задача spec_gz, очередь глубины 2) ----
+#define SPEC_GZ_ASYNC          3
+#define SPEC_GZ_QUEUE_DEPTH    2u
+#define SPEC_GZ_DEADLINE_MS    1500u
+#define SPEC_GZ_RING_N         16u
+#define SPEC_GZ_ASYNC_MEM_PROBE (64u * 1024u)
+
+static inline bool spec_gz_decide(bool accepts, bool recording, uint8_t level, bool mem_ok, bool queue_full) {
+    if (!accepts) return false;
+    if (recording) return false;
+    if (level != 1 && level != 6) return false;
+    if (!mem_ok) return false;
+    if (queue_full) return false;
+    return true;
+}
+
+static inline int spec_gz_route(int pick, bool decide_ok) {
+    if (pick == SPEC_GZ_HIT) return SPEC_GZ_HIT;
+    if (pick == SPEC_GZ_MISS && decide_ok) return SPEC_GZ_ASYNC;
+    return SPEC_GZ_PLAIN;
+}
+
+static inline bool spec_gz_expired(uint32_t now_ms, uint32_t enq_ms) {
+    return (uint32_t)(now_ms - enq_ms) > SPEC_GZ_DEADLINE_MS;
+}
+
+typedef struct { uint8_t head; uint8_t count; } spec_gz_q_t;
+
+static inline bool spec_gz_q_full(const spec_gz_q_t *q) {
+    return q->count >= SPEC_GZ_QUEUE_DEPTH;
+}
+
+static inline int spec_gz_q_reserve(spec_gz_q_t *q) {
+    if (q->count >= SPEC_GZ_QUEUE_DEPTH) return -1;
+    uint8_t idx = (q->head + q->count) % SPEC_GZ_QUEUE_DEPTH;
+    q->count++;
+    return idx;
+}
+
+static inline int spec_gz_q_pop(spec_gz_q_t *q) {
+    if (q->count == 0) return -1;
+    uint8_t idx = q->head;
+    q->head = (q->head + 1) % SPEC_GZ_QUEUE_DEPTH;
+    q->count--;
+    return idx;
+}
+
+static inline void spec_gz_q_unreserve(spec_gz_q_t *q) {
+    if (q->count > 0) q->count--;
+}
+
+typedef struct { uint32_t v[SPEC_GZ_RING_N]; uint32_t n; } spec_gz_ring_t;
+
+static inline void spec_gz_ring_put(spec_gz_ring_t *r, uint32_t us) {
+    r->v[r->n % SPEC_GZ_RING_N] = us;
+    r->n++;
+}
+
+static inline size_t spec_gz_ring_get(const spec_gz_ring_t *r, uint32_t *out) {
+    size_t cnt = r->n < SPEC_GZ_RING_N ? r->n : SPEC_GZ_RING_N;
+    for (size_t i = 0; i < cnt; i++) {
+        out[i] = r->v[(r->n - cnt + i) % SPEC_GZ_RING_N];
+    }
+    return cnt;
 }
