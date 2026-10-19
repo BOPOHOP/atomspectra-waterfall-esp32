@@ -14,6 +14,20 @@ void spectrum_add_commit_listener(void *freertos_binary_sem) { (void)freertos_bi
 void spectrum_get_totals(uint32_t *counts, uint32_t *time_sec, uint32_t *resync_seq) { *counts = 0; *time_sec = 0; *resync_seq = 0; }
 float spectrum_get_t1(void) { return NAN; }
 
+/* #DOSE-A: заглушки ядра дозы (spectrogram.c / spectrum.c не линкуются на хосте) */
+static int g_stub_mode;
+static float g_stub_k = 2.0f;
+int spectrogram_dose_mode(void) { return g_stub_mode; }
+uint32_t spectrogram_dose_gen(void) { return 0; }
+bool spectrogram_dose_delta_sum(const uint32_t *prev, const uint32_t *cur, float *out_wsum) { (void)prev; (void)cur; *out_wsum = 0.0f; return true; }
+float spectrogram_get_dose_k(void) { return g_stub_k; }
+static int g_snap_calls;   /* #DOSE-TOGGLE: сколько раз dose_sample() брал снимок спектра */
+bool spectrum_get_snapshot_wf(spectrum_data_t *out, uint32_t *resync_seq) { (void)out; *resync_seq = 0; g_snap_calls++; return false; }
+/* #DOSE-TOGGLE: заглушка кэша тумблера «Считать живую МД» (в плате — boot_config.c) */
+static bool g_stub_dose_en = true;
+bool boot_config_dose_live_enabled(void) { return g_stub_dose_en; }
+
+
 static int g_failures;
 #define NCHECK(name, cond) do { if (!(cond)) { printf("FAIL %s %s:%d: %s\n", name, __FILE__, __LINE__, #cond); g_failures++; } } while (0)
 
@@ -58,6 +72,86 @@ int main(void) {
   { uint64_t sc = 0; uint32_t sd = 0, n = 0; monitor_window(100000, &sc, &sd, &n); NCHECK("glue_mon_window", n == NS && sd == dsum); }
   /* w = 0 is clamped to 1 s: exactly the newest sample */
   { uint64_t sc = 0; uint32_t sd = 0, n = 0; monitor_window(0, &sc, &sd, &n); NCHECK("glue_mon_window", n == 1 && sc == g_cnt[NS - 1] && sd == g_dur[NS - 1]); }
+  /* #DOSE-A: кольцо доз - окно дозы берёт те же сэмплы, что SMA; NAN-сэмплы не входят ни в сумму доз, ни в Σdur_dose */
+  {
+    g_stub_mode = 2;
+    NCHECK("glue_mon_dose", dose_buffers_ready() && s_dose_ring != NULL && !s_dose_alloc_failed);
+    enum { ND = 300 };
+    static float dws[ND];
+    static uint16_t ddur[ND];
+    for (int i = 0; i < ND; i++) {
+      uint16_t d = (uint16_t)(1 + rnd() % 3);
+      float v = (i % 5 == 3) ? NAN : (float)d * 0.25f * (float)(1 + rnd() % 8);
+      dws[i] = v; ddur[i] = d; end += d;
+      ring_push_dose(end, d * STAND_CPS, d, MON_T_NONE, v);
+    }
+    const uint32_t wd[] = {1, 7, 10, 60, 150};
+    int dose_cases = 0;
+    for (int k = 0; k < 5; k++) {
+      float es = 0.0f, gs = 0.0f;
+      uint32_t td = 0, ed = 0, gd = 0, gn = 0;
+      for (int i = ND - 1; i >= 0 && td < wd[k]; i--) { td += ddur[i]; if (isfinite(dws[i])) { es += dws[i]; ed += ddur[i]; } }
+      monitor_window_dose(wd[k], &gs, &gd, &gn);
+      NCHECK("glue_mon_dose", gd == ed && fabsf(gs - es) <= 1e-3f * (1.0f + fabsf(es)));
+      spec_dose_t dz;
+      monitor_dose_live(wd[k], &dz);
+      NCHECK("glue_mon_dose", strcmp(dz.mode, "curve") == 0 && dz.w == ed && (ed > 0) == dz.have &&
+             (ed == 0 || fabsf(dz.rate - es / (float)ed) <= 1e-3f * (1.0f + dz.rate)));
+      dose_cases++;
+    }
+    g_stub_mode = 1;
+    {
+      uint64_t sc = 0; uint32_t sd = 0, n = 0; spec_dose_t dz;
+      monitor_window(60, &sc, &sd, &n);
+      monitor_dose_live(60, &dz);
+      NCHECK("glue_mon_dose", strcmp(dz.mode, "scalar") == 0 && dz.have && dz.w == sd &&
+             fabsf(dz.rate - ((float)sc / (float)sd) * 2.0f) <= 1e-3f * (1.0f + dz.rate));
+    }
+    g_stub_mode = 0;
+    { spec_dose_t dz; monitor_dose_live(60, &dz); NCHECK("glue_mon_dose", strcmp(dz.mode, "none") == 0 && !dz.have && dz.w == 0); }
+    /* ring_push() без дозы пишет NAN: сэмпл входит в окно, но не в Σdur_dose */
+    ring_push(end + 1, STAND_CPS, 1, MON_T_NONE);
+    { float gs = 1.0f; uint32_t gd = 7, gn = 7; monitor_window_dose(1, &gs, &gd, &gn); NCHECK("glue_mon_dose", gd == 0 && gn == 0 && gs == 0.0f); }
+    printf("INFO glue_mon_dose: cases=%d\n", dose_cases);
+  }
+  /* #DOSE-TOGGLE: тумблер dose_live_en = 0 -> monitor_dose_live() отдаёт режим "off" при ЛЮБОМ режиме МД, rate=null (have=false), w=0;
+     dose_sample() не берёт снимок и освобождает кольцо/снимок/предыдущие bins; обратное включение — снимок берётся, буферы выделены снова */
+  {
+    int off_cases = 0;
+    NCHECK("glue_mon_dose_off", s_dose_ring != NULL && s_dose_snap != NULL && s_dose_prev_bins != NULL);   /* буферы остались от блока выше */
+    for (int m = 0; m <= 2; m++) {
+      spec_dose_t dz;
+      g_stub_mode = m;
+      g_stub_dose_en = false;
+      monitor_dose_live(60, &dz);
+      NCHECK("glue_mon_dose_off", strcmp(dz.mode, "off") == 0 && !dz.have && dz.w == 0);
+      off_cases++;
+    }
+    g_stub_mode = 2;
+    g_stub_dose_en = false;
+    {
+      int c0 = g_snap_calls;
+      float v = dose_sample(1, 0, 0);
+      NCHECK("glue_mon_dose_off", isnan(v) && g_snap_calls == c0);
+      NCHECK("glue_mon_dose_off", s_dose_ring == NULL && s_dose_snap == NULL && s_dose_prev_bins == NULL && !s_dose_alloc_failed);
+    }
+    g_stub_dose_en = true;
+    {
+      int c0 = g_snap_calls;
+      float v = dose_sample(1, 0, 0);
+      NCHECK("glue_mon_dose_off", isnan(v) && g_snap_calls == c0 + 1);
+      NCHECK("glue_mon_dose_off", s_dose_ring != NULL && s_dose_snap != NULL && s_dose_prev_bins != NULL);
+    }
+    {
+      spec_dose_t dz;
+      g_stub_mode = 1;
+      monitor_dose_live(60, &dz);
+      NCHECK("glue_mon_dose_off", strcmp(dz.mode, "scalar") == 0);
+    }
+    g_stub_mode = 0;
+    printf("INFO glue_mon_dose_off: cases=%d\n", off_cases);
+  }
+
   NCHECK("glue_mon_window", glue_sem_depth == 0);
   printf("INFO glue_monitor: samples=%d dur_sum=%" PRIu32 " windows=%d differ_y5=%d\n", NS, dsum, nw, differ_y5);
   if (g_failures) { printf("test_glue_monitor: %d CHECK(S) FAILED\n", g_failures); return 1; }

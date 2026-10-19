@@ -210,6 +210,14 @@ static esp_err_t handle_status(httpd_req_t *req)
     // наблюдение 25.09: time=3611 неподвижно против растущего spectrum.json).
     cJSON_AddNumberToObject(root, "time", sp->total_time_sec);
     status_add_base_info(root);
+    {   // #DOSE-A: живая МД за окно 10 с (умолчание SMA главной); нет данных / режим none — dose_rate:null
+        spec_dose_t dz;
+        monitor_dose_live(10, &dz);
+        cJSON_AddStringToObject(root, "dose_mode", dz.mode);
+        if (dz.have && isfinite(dz.rate)) cJSON_AddNumberToObject(root, "dose_rate", (double)dz.rate);
+        else cJSON_AddNullToObject(root, "dose_rate");
+        cJSON_AddNumberToObject(root, "dose_w", (double)dz.w);
+    }
 
     if (di->valid) {
         cJSON_AddNumberToObject(root, "dev", di->dev);
@@ -828,7 +836,7 @@ static esp_err_t handle_boot_config_get(httpd_req_t *req)
         "{\"autostart_spectrum\":%s,\"autostart_waterfall\":%s,"
         "\"clear_spectrum\":%s,\"clear_waterfall\":%s,\"name_prefix\":\"%s\","
         "\"backup_keep\":%u,\"backup_hours\":%u,\"backup_test_minutes\":%s,"
-        "\"field_ap_fallback\":%s,\"calib_always\":%s,"
+        "\"field_ap_fallback\":%s,\"calib_always\":%s,\"dose_live\":%s,"
         "\"session\":%" PRIu32 "}",
         bc.autostart_spectrum  ? "true" : "false",
         bc.autostart_waterfall ? "true" : "false",
@@ -839,6 +847,8 @@ static esp_err_t handle_boot_config_get(httpd_req_t *req)
         bc.backup_test_minutes ? "true" : "false",
         bc.field_ap_fallback_enabled ? "true" : "false",
         bc.calib_always_from_device ? "true" : "false",
+        bc.dose_live_enabled ? "true" : "false",
+
         boot_config_get_session());
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, resp);
@@ -900,6 +910,9 @@ static esp_err_t handle_boot_config_set(httpd_req_t *req)
         bc.field_ap_fallback_enabled = cJSON_IsTrue(it);
     if ((it = cJSON_GetObjectItem(root, "calib_always")))     // #59 (1.2.30)
         bc.calib_always_from_device = cJSON_IsTrue(it);
+    if ((it = cJSON_GetObjectItem(root, "dose_live")))        // #DOSE-TOGGLE (1.2.37): «Считать живую МД»
+        bc.dose_live_enabled = cJSON_IsTrue(it);
+
     cJSON_Delete(root);
     int rc = boot_config_save(&bc);
     httpd_resp_set_type(req, "application/json");

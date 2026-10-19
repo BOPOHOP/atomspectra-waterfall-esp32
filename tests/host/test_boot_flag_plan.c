@@ -17,4 +17,14 @@ void test_boot_flag_plan(void)
     // Ключ есть, значение != 0 — включено.
     CHECK(boot_flag_from_nvs(true, 1));
     CHECK(boot_flag_from_nvs(true, 0xFF));
+
+    // #DOSE-TOGGLE: boot_flag_default_on_from_nvs() — флаг с умолчанием ВКЛ (живая МД, ключ dose_live_en):
+    // ключа нет (апгрейд, чистая NVS, ошибка чтения) — ВКЛ при любом raw; ключ есть — по значению.
+    CHECK(boot_flag_default_on_from_nvs(false, 0));
+    CHECK(boot_flag_default_on_from_nvs(false, 1));
+    CHECK(boot_flag_default_on_from_nvs(false, 0xFF));
+    CHECK(!boot_flag_default_on_from_nvs(true, 0));
+    CHECK(boot_flag_default_on_from_nvs(true, 1));
+    CHECK(boot_flag_default_on_from_nvs(true, 0xFF));
+
 }

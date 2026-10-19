@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "fixtures/stand_capture.h"
+#include "acq_watch.h"
 
 spectrum_data_t g_spec;
 bool g_spec_ok = true;
@@ -22,6 +23,13 @@ void spectrum_get_hist_stats(uint32_t *commits, uint32_t *drops) {
 
 bool usb_host_cdc_spectrometer_dead(void) {
     return STAND_DEAD != 0;
+}
+
+/* 1.2.37 X-Hist-Age-Ms: the stamp of the last histogram is set by the test (0 - none since boot); "now" is the glue clock (glue_now_us),
+   the age comes from the SAME pure acq_hist_age_ms() that usb_host_cdc_hist_age_ms() of the firmware uses */
+uint32_t glue_hist_ts_ms = 0;
+int32_t usb_host_cdc_hist_age_ms(void) {
+    return acq_hist_age_ms((uint32_t)(glue_now_us / 1000), glue_hist_ts_ms);
 }
 
 int spectrum_autosave_age_sec(void) {

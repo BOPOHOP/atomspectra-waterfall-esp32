@@ -262,7 +262,7 @@ var DICT={
   "log.del":"Удалено: #%1","log.rebootDev":"Команда перезагрузки прибора отправлена",
   "log.exportOk":"Выгружено: %1","log.exportErr":"Экспорт не удался: %1",
   "log.cal":"Калибровка: [%1]","log.calErr":"Ошибка калибровки: %1","log.calClear":"Калибровка очищена",
-  "cps.smaT":"SMA: скользящее среднее CPS за последние %1 с","st.lost":"Потеряно","st.counts":" Импульсов","st.real":"Реал.","st.live":"Живое","st.avg":"Ср. CPS (реал.)","st.avgT":"Средний CPS за набор: импульсы / реальное время набора, тот же знаменатель, что у SMA","st.dead":"Мёртв.","st.dose":"МД",
+  "cps.smaT":"SMA: скользящее среднее CPS за последние %1 с","dose.winT":"Мощность дозы: среднее за последние %1 с (окно как у SMA)","st.lost":"Потеряно","st.counts":" Импульсов","st.real":"Реал.","st.live":"Живое","st.avg":"Ср. CPS за набор","st.avgT":"Средний CPS за набор: импульсы / реальное время набора, тот же знаменатель, что у SMA","st.dead":"Мёртв.","st.dose":"МД",
   "err.prefix":"Ошибка: %1"
  },
  en:{
@@ -313,7 +313,7 @@ var DICT={
   "log.del":"Deleted #%1","log.rebootDev":"Reboot device sent",
   "log.exportOk":"Exported: %1","log.exportErr":"Export failed: %1",
   "log.cal":"Calibration: [%1]","log.calErr":"Calibration error: %1","log.calClear":"Calibration cleared",
-  "cps.smaT":"SMA: moving-average CPS over the last %1 s","st.lost":"Lost","st.counts":" counts","st.real":"Real","st.live":"Live","st.avg":"Avg CPS (real)","st.avgT":"Average CPS over the acquisition: counts / real acquisition time, the same denominator as SMA","st.dead":"Dead","st.dose":"DR",
+  "cps.smaT":"SMA: moving-average CPS over the last %1 s","dose.winT":"Dose rate: average over the last %1 s (same window as SMA)","st.lost":"Lost","st.counts":" counts","st.real":"Real","st.live":"Live","st.avg":"Avg CPS per run","st.avgT":"Average CPS over the acquisition: counts / real acquisition time, the same denominator as SMA","st.dead":"Dead","st.dose":"DR",
   "err.prefix":"Error: %1"
  }
 };
@@ -352,6 +352,18 @@ var devSeq=0;  /* #UI-1: курсор seq последнего показанн�
 var failStreak=0;  /* #UI-2: подряд-неудачи fetch спектра; гасим экран только после >=3 (одиночный 503 при конкуренции — не гасит) */
 var PL=65,PT=15,PW=1120,PH=340,PR=PL+PW,PB=PT+PH;
 var doseK=0;
+
+/* #DOSE-A: живая МД с платы (по кривой или коэффициенту; окно = окно SMA): поля dose_mode/dose_rate/dose_w приходят в meta.json?w=.
+   dose_mode curve|scalar - показываем dose_rate (null - прочерк), none и off (тумблер «Считать живую МД» выключен на плате) - блок скрыт. Нет поля dose_mode (старая прошивка) - прежний расчёт cps*doseK. */
+function showDose(d){
+ var wrap=document.getElementById("big-dose-wrap"),sep=document.getElementById("big-dose-sep"),el=document.getElementById("big-dose");
+ var show=false,txt="\u2014",ttl="";
+ if(typeof d.dose_mode==="string"){
+  if(d.dose_mode==="curve"||d.dose_mode==="scalar"){show=true;if(typeof d.dose_rate==="number"&&isFinite(d.dose_rate)){txt=d.dose_rate.toFixed(3);ttl=tr("dose.winT").replace("%1",Math.round(d.dose_w))}}
+ }else if(doseK>0){show=true;txt=(d.cps*doseK).toFixed(3)}
+ el.textContent=txt;wrap.title=ttl;
+ sep.style.display=show?"":"none";wrap.style.display=show?"":"none";
+}
 
 async function loadDoseK(){try{var r=await(await fetch("/api/waterfall/dose_k")).json();doseK=(typeof r.dose_k==="number"&&r.dose_k>0)?r.dose_k:0;}catch(e){}}
 async function loadPrefix(){try{var r=await(await fetch("/api/boot-config")).json();var e=document.getElementById("fx-prefix");if(e)e.value=r.name_prefix||"";}catch(_){}}
@@ -487,7 +499,7 @@ async function update(){
   /* #MX-14 (1.2.36): SMA и фактический охват окна (sma_w, с) приходят с платы в meta.json?w=; без собственной истории вкладки, после F5 не копится заново */
   var sma=(typeof d.sma==="number")?d.sma:null;var es=document.getElementById("big-sma"),W=(sma===null)?0:Math.round(d.sma_w);es.textContent=(sma===null)?"":" / "+sma.toFixed(2);es.title=(sma===null)?"":tr("cps.smaT").replace("%1",W);
   document.getElementById("big-total").textContent=d.total.toLocaleString(lcl());
-  if(doseK>0){var bigDr=(d.cps*doseK).toFixed(3);document.getElementById("big-dose").textContent=bigDr;document.getElementById("big-dose-sep").style.display="";document.getElementById("big-dose-wrap").style.display="";}else{document.getElementById("big-dose-sep").style.display="none";document.getElementById("big-dose-wrap").style.display="none";}
+  showDose(d);
   draw(d);
  }catch(e){acqStale();if(++failStreak>=3||!lastD){clearCanvas();setDeadBanner(false);document.getElementById("status").textContent=tfmt("err.prefix",e);}}  /* #UI-2: таймаут/сбой сети не гасит последний спектр; гасим лишь после >=3 подряд */
  finally{pollDevLog();}   /* #UI-2: devlog (#UI-1) теперь ПОСЛЕ спектра, не конкурентно — устраняет лишний сокет → меньше 503 */
