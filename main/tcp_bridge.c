@@ -37,8 +37,8 @@ static SemaphoreHandle_t s_fd_mutex = NULL;
 // (tcp_tx_task) блокирующе шлёт в сокет с SO_SNDTIMEO + partial-loop.
 #define TX_RING_BYTES   (256 * 1024)   // ~4.4 с потока @ 58 КБ/с — буфер на WiFi-джиттер
 #define TX_RING_TRIGGER 1              // будить consumer как только есть ≥1 байт
-#define TX_CHUNK_BYTES  4096           // сколько тянем из кольца за раз
-#define TX_SNDTIMEO_MS  1000           // потолок блокировки send() на застрявшем клиенте
+#define TX_CHUNK_BYTES  (70*1024)           // сколько тянем из кольца за раз
+#define TX_SNDTIMEO_MS  15000           // потолок блокировки send() на застрявшем клиенте
 
 static StreamBufferHandle_t s_tx_ring = NULL;
 static StaticStreamBuffer_t s_tx_ring_struct;   // во внутренней RAM (маленькая)
@@ -236,7 +236,7 @@ static void tcp_server_task(void *arg)
             continue;
         }
 
-        int nodelay = 1;
+        int nodelay = 0;	// BAG TEST
         if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay)) < 0)
             ESP_LOGW(TAG, "TCP_NODELAY failed: errno=%d", errno);
 
@@ -250,10 +250,11 @@ static void tcp_server_task(void *arg)
         // Н-5.1 (release-gate 1.2.29): клиент, пропавший без FIN (ноутбук уснул,
         // ушёл из зоны), при молчащем приборе держал слот моста вечно — данных нет,
         // повторов нет. Keepalive закрывает его за ~KA_IDLE + KA_INTVL*KA_CNT с.
-        int ka = 1, ka_idle = 30, ka_intvl = 10, ka_cnt = 3;
+        int ka = 1, ka_idle = 30, ka_intvl = 10, ka_cnt = 3, so_sndbuf = 1024*150;
         if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof(ka)) < 0 ||
             setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &ka_idle, sizeof(ka_idle)) < 0 ||
             setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &ka_intvl, sizeof(ka_intvl)) < 0 ||
+            setsockopt(fd, IPPROTO_TCP, SO_SNDBUF, &so_sndbuf, sizeof(so_sndbuf)) < 0 ||
             setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &ka_cnt, sizeof(ka_cnt)) < 0)
             ESP_LOGW(TAG, "TCP keepalive setup failed: errno=%d", errno);
         s_client_io_ms = now_ms32();
