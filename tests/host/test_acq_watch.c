@@ -21,4 +21,13 @@ void acq_watch_suite(void)
         if (got != c[i].exp) printf("acq_watch case %u: got %d\n", i, got);
         CHECK(got == c[i].exp);
     }
+    // 1.2.37: возраст гистограммы для X-Hist-Age-Ms: нет штампа -> -1; обычный; ноль мс; переполнение uint32 мс; потолок INT32_MAX
+    const struct { uint32_t now, ts; int32_t exp; } a[] = {
+        {977018, 0, -1}, {977018, 941539, 35479}, {941539, 941539, 0}, {0x00000100u, 0xFFFFFF00u, 0x200}, {0x90000000u, 1, INT32_MAX},
+    };
+    for (unsigned i = 0; i < sizeof a / sizeof a[0]; i++) {
+        int32_t got = acq_hist_age_ms(a[i].now, a[i].ts);
+        if (got != a[i].exp) printf("acq_hist_age case %u: got %d\n", i, (int)got);
+        CHECK(got == a[i].exp);
+    }
 }

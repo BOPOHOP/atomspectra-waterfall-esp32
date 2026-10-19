@@ -10,6 +10,8 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "lwip/sockets.h"           // 1.2.37: setsockopt(TCP_NODELAY) — спектральные ответы
+#include <errno.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -243,6 +245,32 @@ static void set_render_hdr(httpd_req_t *req, uint32_t render_count,
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 }
 
+// 1.2.37: X-Hist-Age-Ms — мс с приёма последней гистограммы ПЛАТОЙ на момент ответа (не кэширования тела: тело живёт до 2 с),
+// -1 — ни одной с загрузки. Только у spectrum.json. Буфер, как у render-заголовка, принадлежит кадру отправителя (указатель
+// хранится до httpd_resp_send). Вызывать вне s_mtx: геттер берёт DIAG_LOCK usb_host_cdc, вложенности замков нет.
+static void set_hist_age_hdr(httpd_req_t *req, char *hdr, size_t hdr_size)
+{
+    snprintf(hdr, hdr_size, "%" PRId32, usb_host_cdc_hist_age_ms());
+    httpd_resp_set_hdr(req, "X-Hist-Age-Ms", hdr);
+}
+
+// 1.2.37: ответы спектра (23 КБ JSON, 32 КБ бинарный) уходят десятком сегментов; без TCP_NODELAY lwIP придерживает последний
+// неполный сегмент до ACK клиента (Nagle) -> +40 мс при нечётном числе сегментов. Флаг НЕ снимаем: httpd_resp_send()
+// возвращается, когда данные скопированы в буфер отправки, а не когда они ушли, — снятие вернуло бы Nagle хвосту.
+// Ошибка не фатальна: ответ уйдёт, как раньше; WARN один раз.
+static void spectrum_http_nodelay(httpd_req_t *req)
+{
+    static bool s_warned;
+    int one = 1;
+    int fd = httpd_req_to_sockfd(req);
+    if (fd < 0 || setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one) < 0) {
+        if (!s_warned) {
+            s_warned = true;
+            ESP_LOGW(TAG, "TCP_NODELAY failed: fd=%d errno=%d", fd, errno);
+        }
+    }
+}
+
 typedef enum { PAYLOAD_META, PAYLOAD_BINS } payload_kind_t;
 
 // Зафиксировать снапшот кэша: заголовки и указатели берём под мьютексом, но сама
@@ -287,6 +315,7 @@ esp_err_t spectrum_http_send_json(httpd_req_t *req)
     const char *payload = NULL;
     size_t len = 0;
     char hdr[16];   // живёт до конца функции — дольше, чем httpd_resp_send()
+    char age_hdr[16];   // X-Hist-Age-Ms: то же требование к времени жизни
     uint32_t render_for_hdr = 0;
     bool claimed = false;
     char *buf = NULL;
@@ -305,7 +334,9 @@ esp_err_t spectrum_http_send_json(httpd_req_t *req)
         render_for_hdr = s_json_render;
         xSemaphoreGive(s_mtx);
         set_render_hdr(req, render_for_hdr, hdr, sizeof(hdr));
+        set_hist_age_hdr(req, age_hdr, sizeof(age_hdr));
         httpd_resp_set_type(req, "application/json");
+        spectrum_http_nodelay(req);
         esp_err_t e = httpd_resp_send(req, payload, len);
         xSemaphoreTake(s_mtx, portMAX_DELAY);
         if (s_json_users > 0) s_json_users--;
@@ -376,7 +407,9 @@ esp_err_t spectrum_http_send_json(httpd_req_t *req)
     xSemaphoreGive(s_mtx);
 
     set_render_hdr(req, render_for_hdr, hdr, sizeof(hdr));
+    set_hist_age_hdr(req, age_hdr, sizeof(age_hdr));
     httpd_resp_set_type(req, "application/json");
+    spectrum_http_nodelay(req);
     esp_err_t e = httpd_resp_send(req, payload, len);
 
     xSemaphoreTake(s_mtx, portMAX_DELAY);
@@ -407,6 +440,7 @@ esp_err_t spectrum_http_send_bins(httpd_req_t *req)
     snapshot_begin(req, PAYLOAD_BINS, &payload, &len, hdr, sizeof(hdr));
     httpd_resp_set_type(req, "application/octet-stream");
     httpd_resp_set_hdr(req, "Content-Disposition", "inline");
+    spectrum_http_nodelay(req);
     esp_err_t e = httpd_resp_send(req, payload, len);
     snapshot_end();
     return e;
@@ -433,6 +467,53 @@ esp_err_t spectrum_http_send_meta(httpd_req_t *req)
 // 1.2.36 #MX-14 (G1): meta + хвост SMA окна W (monitor_window.h), ответ ЧАНКАМИ: s_meta[0 .. len-1) + хвост + терминатор.
 // Заголовки (X-Spectrum-Render-Count, Cache-Control: no-store) ставит snapshot_begin() ДО первого чанка - httpd шлёт их с ним;
 // hdr[] живёт до конца функции (httpd хранит указатель). Без параметра w отправка прежняя (spectrum_http_send_meta).
+// #DOSE-A: meta + хвост SMA + хвост живой МД; хвосты собираются без промежуточных '}' (SMA-хвост теряет свою '}', дозовый её не имеет).
+esp_err_t spectrum_http_send_meta_sma_dose(httpd_req_t *req, uint64_t sum_counts, uint32_t sum_dur, uint32_t n, const spec_dose_t *dose)
+{
+    if (!dose) return spectrum_http_send_meta_sma(req, sum_counts, sum_dur, n);
+
+    if (!spectrum_http_cache_ensure()) {
+        httpd_resp_set_hdr(req, "X-Spectrometer-Dead", usb_host_cdc_spectrometer_dead() ? "1" : "0");
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "No spectrum data yet");
+        return ESP_FAIL;
+    }
+
+    const char *payload = NULL;
+    size_t len = 0;
+    char hdr[16];
+    char tail[320];
+
+    snapshot_begin(req, PAYLOAD_META, &payload, &len, hdr, sizeof(hdr));
+
+    size_t sl = 0;
+    size_t dl = 0;
+    sl = spec_meta_sma_tail(tail, 128, sum_counts, sum_dur, n);
+    if (sl > 1 && sl < 128 && tail[sl - 1] == '}') {
+        sl--;   // снять '}' SMA-хвоста: она встанет в самый конец
+        dl = spec_dose_tail(tail + sl, sizeof(tail) - sl - 1, dose);
+    }
+
+    if (len <= 1 || payload[len - 1] != '}' || dl == 0 || sl + dl + 1 >= sizeof(tail)) {
+        snapshot_end();
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "meta dose");
+        return ESP_FAIL;
+    }
+    tail[sl + dl] = '}';
+    size_t total = sl + dl + 1;
+
+    httpd_resp_set_type(req, "application/json");
+
+    esp_err_t er = httpd_resp_send_chunk(req, payload, (ssize_t)(len - 1));
+    if (er == ESP_OK) {
+        er = httpd_resp_send_chunk(req, tail, (ssize_t)total);
+    }
+    if (er == ESP_OK) {
+        er = httpd_resp_send_chunk(req, NULL, 0);
+    }
+
+    snapshot_end();
+    return er;
+}
 esp_err_t spectrum_http_send_meta_sma(httpd_req_t *req, uint64_t sum_counts, uint32_t sum_dur, uint32_t n)
 {
     if (!spectrum_http_cache_ensure()) {

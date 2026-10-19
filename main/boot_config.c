@@ -37,6 +37,11 @@ static void sanitize_prefix(char *dst, size_t cap, const char *src)
 static volatile bool s_calib_always;
 bool boot_config_calib_always(void) { return s_calib_always; }
 
+// #DOSE-TOGGLE: кэш «Считать живую МД»; умолчание ВКЛ (нет ключа = ВКЛ). Пишут boot_config_load/save, читают monitor_task и httpd.
+static volatile bool s_dose_live_en = true;
+bool boot_config_dose_live_enabled(void) { return s_dose_live_en; }
+
+
 void boot_config_load(boot_config_t *out)
 {
     if (!out) return;
@@ -50,9 +55,11 @@ void boot_config_load(boot_config_t *out)
     out->backup_hours        = 24;
     out->backup_test_minutes = false;
     out->field_ap_fallback_enabled = false;    // AWF-2a финал: по умолчанию ВЫКЛ
+    out->dose_live_enabled   = true;           // #DOSE-TOGGLE: по умолчанию ВКЛ (нет ключа = ВКЛ)
+
 
     nvs_handle_t h;
-    if (nvs_open(BOOT_NS, NVS_READONLY, &h) != ESP_OK) return;   // namespace ещё нет → все false / ""
+    if (nvs_open(BOOT_NS, NVS_READONLY, &h) != ESP_OK) { s_dose_live_en = out->dose_live_enabled; return; }   // namespace ещё нет → все false / ""
     out->autostart_spectrum  = get_flag(h, "as_spec");
     out->autostart_waterfall = get_flag(h, "as_wf");
     out->clear_spectrum      = get_flag(h, "clr_spec");
@@ -81,6 +88,13 @@ void boot_config_load(boot_config_t *out)
     out->field_ap_fallback_enabled = get_flag(h, "fap_en");
     out->calib_always_from_device = get_flag(h, "cal_al");
     s_calib_always = out->calib_always_from_device;
+    {   // #DOSE-TOGGLE: положительный флаг с умолчанием ВКЛ; нет ключа "dose_live_en" (апгрейд) = ВКЛ
+        uint8_t dv = 1;
+        esp_err_t drc = nvs_get_u8(h, "dose_live_en", &dv);
+        out->dose_live_enabled = boot_flag_default_on_from_nvs(drc == ESP_OK, dv);
+        s_dose_live_en = out->dose_live_enabled;
+    }
+
     nvs_close(h);
 }
 
@@ -112,8 +126,12 @@ int boot_config_save(const boot_config_t *in)
     }
     e |= nvs_set_u8(h, "fap_en", in->field_ap_fallback_enabled ? 1 : 0);
     e |= nvs_set_u8(h, "cal_al", in->calib_always_from_device ? 1 : 0);
+    e |= nvs_set_u8(h, "dose_live_en", in->dose_live_enabled ? 1 : 0);
+
     if (e == ESP_OK) e = nvs_commit(h);
     if (e == ESP_OK) s_calib_always = in->calib_always_from_device;
+    if (e == ESP_OK) s_dose_live_en = in->dose_live_enabled;
+
     nvs_close(h);
     if (e != ESP_OK) { ESP_LOGW(TAG, "save failed (0x%x)", (int)e); return -1; }
     return 0;

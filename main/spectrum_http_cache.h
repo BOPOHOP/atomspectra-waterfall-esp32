@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "esp_http_server.h"
 #include "atomspectra.h"
+#include "dose_api.h"       // #DOSE-A: spec_dose_t
 
 // Shared 2s spectrum snapshot for LIVE HTTP (JSON / binary / meta).
 // Single-flight refresh: N concurrent tabs share one render.
@@ -44,3 +45,7 @@ esp_err_t spectrum_http_send_meta(httpd_req_t *req);
 // 1.2.36 #MX-14: то же тело meta + хвост SMA ,"sma":..,"sma_w":..,"sma_n":..} (окно считает monitor_window(), вне мьютекса кэша).
 // Ответ чанками (httpd_resp_send_chunk): без Content-Length. Заголовки X-Spectrum-Render-Count / Cache-Control те же.
 esp_err_t spectrum_http_send_meta_sma(httpd_req_t *req, uint64_t sum_counts, uint32_t sum_dur, uint32_t n);
+
+// #DOSE-A: то же, что spectrum_http_send_meta_sma(), плюс хвост живой МД ,"dose_rate":<число|null>,"dose_mode":"curve|scalar|none","dose_w":<с>
+// после sma_n (один закрывающий '}' в конце). dose == NULL — поведение spectrum_http_send_meta_sma() байт-в-байт.
+esp_err_t spectrum_http_send_meta_sma_dose(httpd_req_t *req, uint64_t sum_counts, uint32_t sum_dur, uint32_t n, const spec_dose_t *dose);

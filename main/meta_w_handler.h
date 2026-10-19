@@ -30,7 +30,9 @@ static esp_err_t meta_w_handle(httpd_req_t *req)
         uint64_t sc = 0;
         uint32_t sd = 0, n = 0;
         monitor_window(w, &sc, &sd, &n);   // вне s_mtx кэша
-        return spectrum_http_send_meta_sma(req, sc, sd, n);
+        spec_dose_t dz;
+        monitor_dose_live(w, &dz);   // #DOSE-A: живая МД того же окна W, что SMA (вне s_mtx кэша)
+        return spectrum_http_send_meta_sma_dose(req, sc, sd, n, &dz);
     }
     return spectrum_http_send_meta(req);   // нет w / w не целое - прежний meta.json без SMA
 }

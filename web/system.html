@@ -87,6 +87,53 @@ header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
 .brand{ min-width:0; flex-wrap:wrap; gap:10px; }
 .chips{ min-width:0; justify-content:flex-start; }
 }
+/* sys-layout: строка состояния сверху, слева меню разделов с текущими значениями, справа один раздел (макет System 3) */
+.stat-strip{ display:flex; flex-wrap:wrap; gap:0 28px; padding:10px 20px; font-size:11px; background:#0c0e0d; border-bottom:1px solid #1c241c; color:var(--dim); }
+.stat-strip b{ color:#d8dcd9; font-weight:400; margin-left:4px; }
+.stat-strip b.ok{ color:var(--accent); }
+.stat-strip .sum-warn{ margin:0; }
+.sys-layout{ display:flex; flex-wrap:wrap; align-items:stretch; min-height:560px; }
+.sys-side{ flex:1 1 240px; max-width:280px; border-right:1px solid #1c241c; padding:12px 0; display:flex; flex-direction:column; box-sizing:border-box; }
+.sec-link{ display:flex; flex-direction:column; gap:3px; padding:10px 20px; border-left:2px solid transparent; color:#b3b9b5; font-size:12px; cursor:pointer; }
+.sec-link > span{ font-weight:600; }
+.sec-link small{ font-size:11px; color:#8a9686; font-weight:400; }
+.sec-link:hover{ background:#151816; }
+.sec-link.on{ background:#151816; border-left-color:var(--accent); color:#d8dcd9; }
+.sec-link.danger{ color:#e39a8a; }
+.sec-link.danger.on{ border-left-color:#e39a8a; }
+.sys-main{ flex:999 1 520px; min-width:0; padding:22px 28px; box-sizing:border-box; }
+.sys-sec{ display:none; flex-direction:column; gap:18px; }
+.sys-sec.on{ display:flex; }
+.sys-sec > .sec-h{ margin:0; font-size:16px; font-weight:700; color:#d8dcd9; }
+.sys-sec > .sec-h.danger{ color:#e39a8a; }
+/* плоский вид макета: карточки без рамки; заголовок карточки — мелкая подпись группы; в одно-карточных разделах он дублирует h2 и скрыт */
+.sys-main .panel{ background:transparent; border:none; padding:0; }
+.sys-main .grid3{ grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:28px; }
+.sys-main .ttl{ font-size:11px; font-weight:400; color:#8a9686; letter-spacing:.1em; text-transform:uppercase; }
+#sec-boot .ttl, #sec-dose .ttl, #sec-bk .ttl, #sec-fw .ttl, #sec-danger .ttl{ display:none; }
+.grp{ font-size:11px; color:#8a9686; letter-spacing:.1em; text-transform:uppercase; margin-bottom:6px; }
+.fld{ display:flex; flex-direction:column; gap:6px; font-size:12.5px; }
+.fld input{ width:120px; background:var(--panel); color:var(--txt); border:1px solid #2a2f2c; border-radius:4px; padding:8px 10px; font-family:inherit; }
+.boot-row input.sw{ -webkit-appearance:none; appearance:none; width:30px; height:16px; border-radius:8px; background:#2a2f2c; position:relative; flex:none; margin:0; cursor:pointer; }
+.boot-row input.sw::after{ content:""; position:absolute; top:2px; left:2px; width:12px; height:12px; border-radius:50%; background:#8a918d; transition:left .15s; }
+.boot-row input.sw:checked{ background:var(--accent); }
+.boot-row input.sw:checked::after{ left:16px; background:#0f1110; }
+#sec-danger .danger-card{ max-width:520px; }
+#sec-danger .danger-row .btn{ background:#1a1413; border:1px solid #4a2c27; color:#e39a8a; border-radius:6px; padding:12px 14px; }
+@media(max-width:700px){   /* узкий экран: список разделов сворачивается в горизонтальные вкладки */
+ .sys-layout{ display:block; min-height:0; }   /* без flex-wrap/min-height: иначе строка вкладок растягивается до 560px */
+ .sys-side{ display:flex; width:100%; max-width:none; flex-direction:row; align-items:stretch; overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; scrollbar-width:none; border-right:none; border-bottom:1px solid #1c241c; padding:0; }
+ .sys-side::-webkit-scrollbar{ display:none; }
+ .sec-link{ flex:0 0 auto; justify-content:center; white-space:nowrap; border-left:none; border-bottom:2px solid transparent; padding:0 14px; height:44px; box-sizing:border-box; }
+ .sec-link small{ display:none; }
+ .sec-link.on{ border-bottom-color:var(--accent); }
+ .sec-link.danger.on{ border-bottom-color:#e39a8a; }
+ .sys-main{ width:100%; padding:14px 12px; }
+ .stat-strip{ padding:8px 12px; gap:2px 14px; font-size:10.5px; }
+ .sys-main .fld input, .sys-main select, .sys-main .btn{ max-width:100%; box-sizing:border-box; }
+ .sys-main .fld input:not([type=checkbox]):not([type=radio]){ width:100%; }
+ .sys-sec{ min-width:0; }
+}
 </style>
 </head>
 <body>
@@ -108,40 +155,32 @@ header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
 <!-- #AWF-8: вкладка «Система» по макету оператора (мокап System 1a.dc.html):
      5 плиток-сводок сверху (клик раскрывает подробную карточку ниже), затем
      подписанные секции (СЕТЬ И ВРЕМЯ / ИЗМЕРЕНИЯ / ОБСЛУЖИВАНИЕ). -->
-<div class="sys-stack">
-<div class="sum-grid">
-<button type="button" class="sum-tile" id="tile-board" onclick="toggleDetail('board')">
-<span class="sum-lbl"><span data-i18n="board.title">Плата</span> · ESP32-S3</span>
-<span class="sum-big" id="sum-fw">—</span>
-<span class="sum-sub" id="sum-uptime">—</span>
-</button>
-<button type="button" class="sum-tile" id="tile-heap" onclick="toggleDetail('board')">
-<span class="sum-lbl" data-i18n="heap.title">Свободная память (heap)</span>
-<span class="sum-big" style="color:var(--accent)"><span id="sum-heap-kb">—</span> <span data-i18n="unit.kb">КБ</span></span>
-<div class="sum-bar deco"><i></i></div>
-<span class="sum-sub"><span data-i18n="sum.min">мин</span> <span id="sum-heap-min">—</span> <span data-i18n="unit.kb">КБ</span></span>
-</button>
-<button type="button" class="sum-tile" id="tile-flash" onclick="toggleDetail('board')">
-<span class="sum-lbl" data-i18n="flash.title">Flash (LittleFS)</span>
-<span class="sum-big" id="sum-flash-kb">—</span>
-<div class="sum-bar"><i id="sum-flash-bar" style="width:0%;background:var(--accent)"></i></div>
-<span class="sum-sub" id="sum-flash-sub">—</span>
-</button>
-<button type="button" class="sum-tile" id="tile-wifi" onclick="toggleDetail('wifi')">
-<span class="sum-lbl">WiFi · <span id="sum-wifi-ssid">—</span></span>
-<span class="sum-big" id="sum-wifi-rssi">—</span>
-<div class="sum-bar"><i id="sum-wifi-bar" style="width:0%;background:var(--accent)"></i></div>
-<span class="sum-sub" id="sum-wifi-sub">—</span>
-</button>
-<button type="button" class="sum-tile" id="tile-device" onclick="toggleDetail('device')">
-<span class="sum-lbl" data-i18n="dev.title">Прибор · AtomSpectra</span>
-<span class="sum-big" id="sum-cpu-temp" style="color:#f0c45a">—</span>
-<span class="sum-sub" id="sum-usb-ch">—</span>
+<div class="stat-strip" id="stat-strip">
+<span>fw <b id="sum-fw">—</b></span>
+<span>uptime <b id="sum-up">—</b></span>
+<span>heap <b class="ok"><span id="sum-heap-kb">—</span> <span data-i18n="unit.kb">КБ</span></b></span>
+<span>flash <b id="sum-flash-pct">—</b></span>
+<span>wifi <b id="sum-wifi-rssi">—</b></span>
+<span>CPU <b id="sum-cpu">—</b></span>
+<span>T1 <b id="sum-t1">—</b></span>
 <span class="sum-warn" id="sum-cal-warn" style="display:none"></span>
-</button>
+<span style="display:none"><b id="sum-uptime">—</b><b id="sum-flash-kb">—</b><b id="sum-flash-sub">—</b><b id="sum-heap-min">—</b><i id="sum-flash-bar"></i><b id="sum-wifi-ssid">—</b><i id="sum-wifi-bar"></i><b id="sum-wifi-sub">—</b><b id="sum-cpu-temp">—</b><b id="sum-usb-ch">—</b></span>
 </div>
+<div class="sys-layout">
+<div class="sys-side" id="sys-side">
+<a href="#ov" class="sec-link" data-sec="ov"><span data-i18n="sec.ov">Обзор</span><small data-i18n="sec.ov.sub">плата · wifi · прибор</small></a>
+<a href="#net" class="sec-link" data-sec="net"><span data-i18n="sec.net">Сеть и время</span><small id="nh-net">—</small></a>
+<a href="#boot" class="sec-link" data-sec="boot"><span data-i18n="sec.boot">Старт платы</span><small id="nh-boot">—</small></a>
+<a href="#dose" class="sec-link" data-sec="dose"><span data-i18n="sec.dose">Мощность дозы</span><small id="nh-dose">—</small></a>
+<a href="#bk" class="sec-link" data-sec="bk"><span data-i18n="sec.bk">Резервные копии</span><small id="nh-bk">—</small></a>
+<a href="#fw" class="sec-link" data-sec="fw"><span data-i18n="sec.fw">Прошивка</span><small id="nh-fw">—</small></a>
+<a href="#danger" class="sec-link danger" data-sec="danger"><span data-i18n="sec.danger">Опасные действия</span><small data-i18n="sec.danger.sub">перезагрузка · сброс WiFi</small></a>
+</div>
+<div class="sys-main">
 
-<div class="detail-wrap" id="detail-board">
+<div class="sys-sec" id="sec-ov">
+<h2 class="sec-h" data-i18n="sec.ov">Обзор</h2>
+<div class="grid3">
 <section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#9636;</span> <span data-i18n="board.title">Плата</span></div>
 <div class="kv"><span data-i18n="esp.chip">Чип</span><span>ESP32-S3 N16R8</span></div>
@@ -162,9 +201,17 @@ header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
 <div class="bar"><i id="flash-fi" style="width:0%;background:var(--accent)"></i></div>
 </div>
 </section>
+<section class="panel">
+<div class="ttl"><span style="color:var(--accent)">&#8779;</span> WiFi</div>
+<div class="kv"><span data-i18n="wifi.state">Состояние</span><span id="wifi-state">—</span></div>
+<div class="kv"><span>SSID</span><span id="wifi-ssid">—</span></div>
+<div class="kv"><span>IP</span><span id="wifi-ip">—</span></div>
+<div class="kv"><span>RSSI</span><span id="wifi-rssi">—</span></div>
+<div style="margin-top:12px">
+<div style="display:flex;justify-content:space-between;font-size:11px;color:#6b756a;margin-bottom:5px"><span data-i18n="wifi.signal">Уровень сигнала</span><span id="rssi-desc">—</span></div>
+<div class="bar"><i id="rssi-fi" style="width:0%;background:var(--accent)"></i></div>
 </div>
-
-<div class="detail-wrap" id="detail-device">
+</section>
 <section class="panel">
 <div class="ttl"><span style="color:var(--accent)">&#9678;</span> <span data-i18n="dev.title">Прибор · AtomSpectra</span></div>
 <div style="display:flex;justify-content:space-between;margin-bottom:6px">
@@ -181,22 +228,10 @@ header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
 <div class="kv"><span data-i18n="dev.mode">Режим</span><span id="dev-mode">—</span></div>
 </section>
 </div>
-
-<div class="detail-wrap" id="detail-wifi">
-<section class="panel">
-<div class="ttl"><span style="color:var(--accent)">&#8779;</span> WiFi</div>
-<div class="kv"><span data-i18n="wifi.state">Состояние</span><span id="wifi-state">—</span></div>
-<div class="kv"><span>SSID</span><span id="wifi-ssid">—</span></div>
-<div class="kv"><span>IP</span><span id="wifi-ip">—</span></div>
-<div class="kv"><span>RSSI</span><span id="wifi-rssi">—</span></div>
-<div style="margin-top:12px">
-<div style="display:flex;justify-content:space-between;font-size:11px;color:#6b756a;margin-bottom:5px"><span data-i18n="wifi.signal">Уровень сигнала</span><span id="rssi-desc">—</span></div>
-<div class="bar"><i id="rssi-fi" style="width:0%;background:var(--accent)"></i></div>
-</div>
-</section>
 </div>
 
-<div class="sect-lbl" data-i18n="sect.net">СЕТЬ И ВРЕМЯ</div>
+<div class="sys-sec" id="sec-net">
+<h2 class="sec-h" data-i18n="sec.net">Сеть и время</h2>
 <div class="grid3">
 <section class="panel" id="field-panel">
 <div class="ttl"><span style="color:var(--accent)">&#9788;</span> <span data-i18n="field.title">Полевой режим · Время</span></div>
@@ -207,8 +242,13 @@ header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
 <input id="manual-time-inp" type="datetime-local" step="1" style="width:100%;padding:9px;background:#0a0c0a;color:#e8efe2;border:1px solid var(--bd);border-radius:6px;box-sizing:border-box;font-family:inherit;font-size:15px;margin-bottom:6px">
 <button class="btn" onclick="setManualTime()" data-i18n="field.setTime">Установить время платы</button>
 <div class="mut" style="font-size:11px;line-height:1.5;margin-top:6px" data-i18n="field.timeHint">В полевом режиме (без интернета) время берётся с телефона автоматически. Поле выше — ручная коррекция (пусто = текущее время телефона).</div>
-<!-- #AWF-10: статус сохранения часового пояса — сюда, разброс высот ряда был 40px. -->
+<div style="margin-top:12px;padding-top:10px;border-top:1px solid #1c241c">
+<div class="kv"><span data-i18n="tz.label">Пояс отображения</span>
+<select id="tz-sel" onchange="saveTz()" style="background:var(--panel);color:var(--txt);border:1px solid #444;padding:4px 8px;border-radius:4px;font-family:inherit;font-size:12px"></select>
+</div>
+<div class="mut" style="font-size:11px;line-height:1.5;margin-top:6px" data-i18n="tz.hint">Влияет на ось времени, таблицу и CSV-экспорт вкладки «Мониторинг». Хранится в браузере.</div>
 <div class="mut" id="tz-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
+</div>
 </section>
 
 <section class="panel" id="ap-panel">
@@ -218,12 +258,11 @@ header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
 <input id="ap-pass-inp" type="text" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;" style="width:100%;padding:9px;background:#0a0c0a;color:#e8efe2;border:1px solid var(--bd);border-radius:6px;box-sizing:border-box;font-family:inherit;font-size:15px">
 <button class="btn" onclick="changeApPass()" data-i18n="field.apPassSave">Сменить пароль AP (перезагрузка)</button>
 <div id="ap-pass-status" class="mut" style="font-size:11px;margin-top:5px"></div>
-<!-- #AWF-9: часовой пояс перенесён сюда из отдельной карточки — балансировка высот ряда. -->
-<div style="margin-top:12px;padding-top:10px;border-top:1px solid #1c241c">
-<div class="kv"><span data-i18n="tz.label">Пояс отображения</span>
-<select id="tz-sel" onchange="saveTz()" style="background:var(--panel);color:var(--txt);border:1px solid #444;padding:4px 8px;border-radius:4px;font-family:inherit;font-size:12px"></select>
-</div>
-<div class="mut" style="font-size:11px;line-height:1.5;margin-top:6px" data-i18n="tz.hint">Влияет на ось времени, таблицу и CSV-экспорт вкладки «Мониторинг». Хранится в браузере.</div>
+<div style="margin-top:12px;padding-top:8px;border-top:1px solid #1c241c">
+<label class="boot-row" style="border-bottom:none"><input type="checkbox" class="sw" id="bc-ap-fallback" onchange="saveBootConfig('ap-fb-status')"><span data-i18n="boot.apFallback">Переходить в полевую точку доступа при потере Wi-Fi</span></label>
+<!-- «Действует сразу» верно только здесь: wifi_manager.c ap_fallback_enabled() читает NVS при каждом решении -->
+<div class="mut" style="font-size:10.5px;line-height:1.4" data-i18n="boot.apFallbackApply">Действует сразу, без перезагрузки платы.</div>
+<div class="mut" id="ap-fb-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
 </div>
 </section>
 
@@ -233,74 +272,83 @@ header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
 <div class="kv"><span data-i18n="wifi.state">Состояние</span><span id="tcp-state">—</span></div>
 <div class="mut" style="font-size:11px;line-height:1.5;margin-top:11px" data-i18n-html="tcp.hint">BecqMoni / AtomSpectra на ПК подключаются к <span id="tcp-addr" style="color:#aeb6a8">—</span> вместо COM-порта.</div>
 <button class="btn green" style="margin-top:13px" onclick="location.reload()" data-i18n="btn.refresh">Обновить</button>
-<!-- #AWF-9/10: чекбокс fallback перенесён сюда из карточки AP — балансировка высот ряда. -->
-<div style="margin-top:6px;padding-top:6px;border-top:1px solid #1c241c">
-<label class="boot-row" style="border-bottom:none"><input type="checkbox" id="bc-ap-fallback"><span data-i18n="boot.apFallback">Переходить в полевую точку доступа при потере Wi-Fi</span></label>
-<div class="mut" style="font-size:10.5px;line-height:1.4" data-i18n="boot.apFallbackApply">Действует сразу, без перезагрузки платы.</div>
-<label class="boot-row" style="border-bottom:none"><input type="checkbox" id="bc-calib-always"><span data-i18n="boot.calibAlways">Всегда читать калибровку из прибора при старте набора</span></label>
-<div class="mut" style="font-size:10.5px;line-height:1.4" data-i18n="boot.calibAlwaysNote">Калибровка прибора заменяет заданную на плате (удобно при смене прибора). Выключено: плата читает её, только если своя не задана.</div>
-</div>
 </section>
 </div>
+</div>
 
-<div class="sect-lbl" data-i18n="sect.meas">ИЗМЕРЕНИЯ</div>
+<div class="sys-sec" id="sec-boot">
+<h2 class="sec-h" data-i18n="sec.boot">Старт платы</h2>
+<div class="mut" style="font-size:11px" data-i18n="boot.hint">Спектр и Водопад выше — применяются один раз при включении / перезагрузке платы, по умолчанию выключены.</div>
 <div class="grid3">
 <section class="panel">
-<div class="ttl"><span style="color:var(--accent)">&#9654;</span> <span data-i18n="boot.titleBoot">Старт платы</span></div>
-<label class="boot-row"><input type="checkbox" id="bc-as-spec"><span data-i18n="boot.asSpec">Автозапуск набора спектра</span></label>
-<label class="boot-row"><input type="checkbox" id="bc-as-wf"><span data-i18n="boot.asWf">Автозапуск записи водопада</span></label>
-<label class="boot-row"><input type="checkbox" id="bc-clr-spec"><span data-i18n="boot.clrSpec">Очищать спектр при старте</span></label>
-<label class="boot-row" style="border-bottom:none"><input type="checkbox" id="bc-clr-wf"><span data-i18n="boot.clrWf">Очищать водопад при старте</span></label>
-<div class="mut" style="font-size:11px;line-height:1.5;margin-top:10px" data-i18n="boot.hint">Спектр и Водопад выше — применяются один раз при включении / перезагрузке платы, по умолчанию выключены.</div>
-<button class="btn green" onclick="saveBootConfig('bc-status')" data-i18n="boot.save">Сохранить</button>
-<div class="mut" id="bc-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
+<div class="ttl"><span data-i18n="boot.titleBoot">Старт платы</span></div>
+<div class="grp" data-i18n="boot.secSpec">Спектр</div>
+<label class="boot-row"><input type="checkbox" class="sw" id="bc-as-spec" onchange="saveBootConfig('bc-status')"><span data-i18n="boot.asSpec">Автозапуск набора спектра</span></label>
+<label class="boot-row"><input type="checkbox" class="sw" id="bc-clr-spec" onchange="saveBootConfig('bc-status')"><span data-i18n="boot.clrSpec">Очищать спектр при старте</span></label>
 </section>
-
 <section class="panel">
-<div class="ttl"><span style="color:var(--accent)">&#9654;</span> <span data-i18n="dose.title">Мощность дозы</span></div>
-<div class="kv"><span data-i18n="dose.label">Коэффициент k (µSv·h⁻¹/cps)</span>
-<input type="number" id="dose-k-val" min="0" step="any" style="width:130px;background:var(--panel);color:var(--txt);border:1px solid #444;padding:3px 6px;border-radius:4px">
-</div>
-<!-- #AWF-11: min-height — текст короче в EN (1 строка вместо 2), без резерва высоты ряд «ИЗМЕРЕНИЯ» разъезжается при переключении языка. -->
-<div class="mut" style="font-size:11px;line-height:1.5;margin-top:6px;min-height:33px" data-i18n="dose.hint">0 — мощность дозы не записывается (NaN в файле). Сохраняется в NVS.</div>
-<button class="btn green" onclick="saveDoseK('dose-k-status')" data-i18n="dose.save">Сохранить</button>
-<div class="mut" id="dose-k-status" style="font-size:11px;margin-top:5px;text-align:center;min-height:14px"></div>
-<div style="margin-top:12px;padding-top:11px;border-top:1px solid #1c241c">
-<div style="font-size:12px;color:#8a9686;margin-bottom:7px" data-i18n="dose.curveLabel">Кривая мощности дозы</div>
-<div class="mut" id="dose-curve-stat" style="font-size:11px;margin-bottom:7px" data-i18n="dose.curveNone">Кривая не загружена (scalar k)</div>
-<div class="mut" style="font-size:11px;line-height:1.5" data-i18n="dose.curveHint">CSV: channel,k_factor (до 512 точек, без заголовка). Приоритет над scalar k.</div>
-<!-- #AWF-10: результат загрузки/сброса кривой — сюда же, к её описанию. -->
-<div class="mut" id="dose-curve-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
-</div>
+<div class="grp" data-i18n="boot.secWf">Водопад</div>
+<label class="boot-row"><input type="checkbox" class="sw" id="bc-as-wf" onchange="saveBootConfig('bc-status')"><span data-i18n="boot.asWf">Автозапуск записи водопада</span></label>
+<label class="boot-row"><input type="checkbox" class="sw" id="bc-clr-wf" onchange="saveBootConfig('bc-status')"><span data-i18n="boot.clrWf">Очищать водопад при старте</span></label>
 </section>
-
-<!-- #AWF-9: загрузка/сброс CSV-кривой перенесены сюда — карточка «Мощность дозы»
-     была заметно выше соседей, а «Резервные копии» короче с пустым местом снизу. -->
 <section class="panel">
-<div class="ttl"><span style="color:var(--accent)">&#9654;</span> <span data-i18n="bk.title">Резервные копии спектра</span></div>
-<div class="kv"><span data-i18n="bk.keep">Хранить снимков (0 — выключено)</span>
- <input type="number" id="bk-keep" min="0" max="20" step="1" style="width:80px"></div>
-<div class="kv"><span data-i18n="bk.hours">Снимать каждые, часов</span>
- <input type="number" id="bk-hours" min="1" max="168" step="1" style="width:80px"></div>
-<div class="mut" style="font-size:11px;margin-top:6px"><span data-i18n="bk.session">Текущая сессия платы</span>: <b id="bk-session">—</b></div>
-<div id="bk-testmode" style="display:none;margin-top:8px;padding:8px;border:1px solid rgba(240,180,60,.45);border-radius:6px;background:rgba(240,180,60,.07);font-size:11px;color:#f0c45a">
-<span data-i18n="bk.testOn">Включён стендовый режим: период считается в МИНУТАХ, не в часах.</span>
-<button class="btn" style="margin-top:6px" onclick="clearBackupTestMode()" data-i18n="bk.testOff">Выключить стендовый режим</button>
+<div class="grp" data-i18n="boot.secCalib">Калибровка</div>
+<label class="boot-row" style="border-bottom:none"><input type="checkbox" class="sw" id="bc-calib-always" onchange="saveBootConfig('bc-status')"><span data-i18n="boot.calibAlways">Всегда читать калибровку из прибора при старте набора</span></label>
+<div class="mut" style="font-size:10.5px;line-height:1.4" data-i18n="boot.calibAlwaysNote">Калибровка прибора заменяет заданную на плате (удобно при смене прибора). Выключено: плата читает её, только если своя не задана.</div>
+<div class="mut" style="font-size:10.5px;line-height:1.4" data-i18n="boot.calibAlwaysApply">Применяется при следующем старте набора.</div>
+</section>
 </div>
-<button class="btn green" onclick="saveBackupConfig()" data-i18n="boot.save">Сохранить</button>
-<div class="mut" id="bk-status" style="font-size:11px;margin-top:7px;text-align:center;min-height:14px"></div>
-<div style="margin:4px 0 7px;padding-top:4px;border-top:1px solid #1c241c;font-size:12px;color:#8a9686" data-i18n="dose.curveLabel">Кривая мощности дозы</div>
+<div class="mut" id="bc-status" style="font-size:11px;min-height:14px"></div>
+</div>
+
+<div class="sys-sec" id="sec-dose">
+<h2 class="sec-h" data-i18n="dose.title">Мощность дозы</h2>
+<section class="panel">
+<div class="ttl"><span data-i18n="dose.title">Мощность дозы</span></div>
+<label class="boot-row"><input type="checkbox" class="sw" id="dose-live-en" checked onchange="autoSave('doselive',function(){saveDoseLive('dose-live-status')},300)"><span data-i18n="dose.liveEn">Считать живую МД</span></label>
+<div class="mut" style="font-size:10.5px;line-height:1.4" data-i18n="dose.liveNote">Выключено: плата не снимает спектр для расчёта, блок мощности дозы на главной скрыт; это действует сразу, без перезагрузки. Память под кольцо доз освобождается не в момент сохранения, а когда монитор запишет следующий сэмпл; если прибор молчит или отключён, она остаётся занятой до следующего сэмпла.</div>
+<div class="mut" id="dose-live-status" style="font-size:11px;margin:5px 0 12px;min-height:14px"></div>
+
+<div class="fld"><span data-i18n="dose.label">Коэффициент k (µSv·h⁻¹/cps)</span>
+<input type="number" id="dose-k-val" min="0" step="any" oninput="autoSave('dosek',function(){saveDoseK('dose-k-status')},700)"></div>
+<div class="mut" style="font-size:11px;line-height:1.5;margin-top:6px" data-i18n="dose.hint">0 — мощность дозы не записывается (NaN в файле). Сохраняется в NVS.</div>
+<div class="mut" id="dose-k-status" style="font-size:11px;margin-top:5px;min-height:14px"></div>
+<div style="margin-top:14px;padding-top:12px;border-top:1px solid #1c241c;max-width:520px">
+<div style="font-size:12.5px;margin-bottom:6px" data-i18n="dose.curveLabel">Кривая мощности дозы</div>
+<div class="mut" id="dose-curve-stat" style="font-size:11px;margin-bottom:7px">Кривая не загружена (scalar k)</div>
+<div class="mut" style="font-size:11px;line-height:1.5;margin-bottom:8px" data-i18n="dose.curveHint">CSV: channel,k_factor (до 512 точек, без заголовка). Приоритет над scalar k.</div>
 <input type="file" id="dose-curve-file" accept=".csv,.txt" style="font-size:11px;color:var(--txt);background:var(--panel);border:1px solid #444;border-radius:4px;padding:3px 6px;width:100%;margin-bottom:8px">
 <div style="display:flex;gap:8px">
 <button class="btn green" style="margin-top:0" onclick="loadDoseCurveFile('dose-curve-status')" data-i18n="dose.curveLoad">Загрузить CSV</button>
 <button class="btn" style="margin-top:0" onclick="clearDoseCurve('dose-curve-status')" data-i18n="dose.curveClear">Сбросить</button>
 </div>
+<div class="mut" id="dose-curve-status" style="font-size:11px;margin-top:7px;min-height:14px"></div>
+</div>
 </section>
-
 </div>
 
-<div class="sect-lbl" data-i18n="sect.maint">ОБСЛУЖИВАНИЕ</div>
-<div class="ota-danger-row">
+<div class="sys-sec" id="sec-bk">
+<h2 class="sec-h" data-i18n="bk.title">Резервные копии спектра</h2>
+<section class="panel">
+<div class="ttl"><span data-i18n="bk.title">Резервные копии спектра</span></div>
+<div class="mut" style="font-size:11px;line-height:1.5;max-width:640px;margin-bottom:12px" data-i18n="bk.hint">Плата сама сохраняет спектр на flash с заданным периодом и держит только указанное число последних снимков. После пропадания питания и после Сброса спектра счётчик сессии растёт, и новые снимки не смешиваются со старыми. Снимки видны на вкладке «Сохранённые»; ручные сохранения ротацией не удаляются.</div>
+<div style="display:flex;flex-wrap:wrap;gap:24px">
+<div class="fld"><span data-i18n="bk.keep">Хранить снимков (0 — выключено)</span>
+ <input type="number" id="bk-keep" min="0" max="20" step="1" oninput="autoSave('bk',saveBackupConfig,900)"></div>
+<div class="fld"><span data-i18n="bk.hours">Снимать каждые, часов</span>
+ <input type="number" id="bk-hours" min="1" max="168" step="1" oninput="autoSave('bk',saveBackupConfig,900)"></div>
+</div>
+<div class="mut" style="font-size:11px;margin-top:10px"><span data-i18n="bk.session">Текущая сессия платы</span>: <b id="bk-session">—</b></div>
+<div id="bk-testmode" style="display:none;margin-top:8px;padding:8px;border:1px solid rgba(240,180,60,.45);border-radius:6px;background:rgba(240,180,60,.07);font-size:11px;color:#f0c45a">
+<span data-i18n="bk.testOn">Включён стендовый режим: период считается в МИНУТАХ, не в часах.</span>
+<button class="btn" style="margin-top:6px" onclick="clearBackupTestMode()" data-i18n="bk.testOff">Выключить стендовый режим</button>
+</div>
+<div class="mut" id="bk-status" style="font-size:11px;margin-top:7px;min-height:14px"></div>
+</section>
+</div>
+
+<div class="sys-sec" id="sec-fw">
+<h2 class="sec-h" data-i18n="ota.title">Обновление прошивки</h2>
 <section class="panel ota-card">
 <div class="ota-grid">
 <div>
@@ -334,7 +382,10 @@ header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
 </div>
 </div>
 </section>
+</div>
 
+<div class="sys-sec" id="sec-danger">
+<h2 class="sec-h danger" data-i18n="danger.title">Опасные действия</h2>
 <section class="panel danger-card">
 <div class="ttl"><span style="color:var(--accent)">&#9888;</span> <span data-i18n="danger.title">Опасные действия</span></div>
 <div class="danger-row">
@@ -343,6 +394,8 @@ header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
 <button class="btn red" onclick="resetWifi()" data-i18n="wifi.reset">Сбросить WiFi (режим настройки)</button>
 </div>
 </section>
+</div>
+
 </div>
 </div>
 </div>
@@ -416,7 +469,7 @@ var DICT={
   "bk.hint":"Плата сама сохраняет спектр на flash с заданным периодом и держит только указанное число последних снимков. После пропадания питания и после Сброса спектра счётчик сессии растёт, и новые снимки не смешиваются со старыми. Снимки видны на вкладке «Сохранённые»; ручные сохранения ротацией не удаляются.",
   "boot.exportHint":"Добавляется в начало имени всех выгрузок (спектр, водопад, backup). Пусто — обычные имена. Разрешены латиница, цифры, «_» и «-».",
   "dose.title":"Мощность дозы","dose.label":"Коэффициент k (µSv·h⁻¹/cps)","dose.hint":"0 — мощность дозы не записывается (NaN в файле). Сохраняется в NVS.","dose.save":"Сохранить","dose.saved":"Сохранено","dose.saveErr":"Ошибка",
-  "dose.curveLabel":"Кривая мощности дозы","dose.curveNone":"Кривая не загружена (scalar k)","dose.curveHint":"CSV: channel,k_factor (до 512 точек, без заголовка). Приоритет над scalar k.","dose.curveLoad":"Загрузить CSV","dose.curveClear":"Сбросить кривую","dose.curveLoaded":"Кривая загружена (%1 точек)","dose.curveOk":"Загружено: %1 точек","dose.curveClearOk":"Кривая сброшена","dose.curveErr":"Ошибка загрузки","dose.curveNoFile":"Выберите CSV файл",
+  "dose.curveLabel":"Кривая мощности дозы","dose.curveNone":"Кривая не загружена (scalar k)","dose.curveHint":"CSV: channel,k_factor (до 512 точек, без заголовка). Приоритет над scalar k.","dose.curveLoad":"Загрузить CSV","dose.curveClear":"Сбросить кривую","dose.curveLoaded":"Кривая загружена (%1 точек)","dose.curveOk":"Загружено: %1 точек","dose.curveClearOk":"Кривая сброшена","dose.curveErr":"Ошибка загрузки","dose.curveNoFile":"Выберите CSV файл","dose.curveEmpty":"Файл не содержит допустимых точек; прежняя кривая перезаписана","dose.kBad":"Введите число ≥ 0 (значение не сохранено)","dose.kNone":"k = 0: без кривой мощность дозы отключена (режим none)","dose.liveEn":"Считать живую МД","dose.liveNote":"Выключено: плата не снимает спектр для расчёта, блок мощности дозы на главной скрыт; это действует сразу, без перезагрузки. Память под кольцо доз освобождается не в момент сохранения, а когда монитор запишет следующий сэмпл; если прибор молчит или отключён, она остаётся занятой до следующего сэмпла.",
   "cal.set":"Задана (%1 коэфф., порядок %2)","cal.unset":"Не задана",
   "tz.title":"Часовой пояс","tz.label":"Пояс отображения","tz.hint":"Влияет на ось времени, таблицу и CSV-экспорт вкладки «Мониторинг». Хранится в браузере.","tz.auto":"Авто (браузер, %1)","tz.saved":"Сохранено: %1",
   "confirm.rebootDev":"Перезагрузить прибор?","confirm.rebootEsp":"Перезагрузить ESP32?","confirm.resetWifi":"Сбросить WiFi и войти в режим настройки?",
@@ -425,7 +478,18 @@ var DICT={
   "sect.net":"Сеть и время","sect.meas":"Измерения","sect.maint":"Обслуживание",
   "ap.title":"Точка доступа (AP)","sum.min":"мин","sum.of":"из","sum.ch":"кан.",
   "sum.calOk":"калибровка задана","sum.calWarn":"калибровка не задана",
-  "ota.dropHint":"Перетащите файл или выберите"
+  "ota.dropHint":"Перетащите файл или выберите",
+  "sec.ov":"Обзор","sec.ov.sub":"плата · wifi · прибор",
+  "sec.net":"Сеть и время","sec.boot":"Старт платы","sec.dose":"Мощность дозы",
+  "sec.bk":"Резервные копии","sec.fw":"Прошивка",
+  "sec.danger":"Опасные действия","sec.danger.sub":"перезагрузка · сброс WiFi",
+  "nav.tcp":"TCP","nav.tcpFree":"свободен","nav.tcpBusy":"клиент подключён",
+  "nav.bootOn":"автозапуск спектра вкл","nav.bootOff":"автозапуск спектра выкл",
+  "nav.dose":"k = %1 · %2","nav.curveNo":"кривая не загружена","nav.curveYes":"кривая загружена",
+  "nav.bk":"%1 снимков / %2 ч","nav.prerel":"предрелизы",
+  "boot.secCalib":"Калибровка",
+  "boot.saveErrDet":"ошибка: %1",
+  "boot.calibAlwaysApply":"Применяется при следующем старте набора."
  },
  en:{
   "page.title":"AtomSpectra · System",
@@ -492,7 +556,7 @@ var DICT={
   "bk.hint":"The board saves the spectrum to flash on the given period and keeps only that many latest snapshots. After a power loss or a spectrum Reset the session counter increases, so new snapshots do not mix with the old ones. Snapshots appear on the Saved tab; manual saves are never removed by rotation.",
   "boot.exportHint":"Prepended to every export filename (spectrum, waterfall, backup). Empty — default names. Allowed: Latin letters, digits, «_» and «-».",
   "dose.title":"Dose rate","dose.label":"Coefficient k (µSv·h⁻¹/cps)","dose.hint":"0 — dose rate not recorded (NaN in file). Stored in NVS.","dose.save":"Save","dose.saved":"Saved","dose.saveErr":"Error",
-  "dose.curveLabel":"Dose rate curve","dose.curveNone":"No curve loaded (scalar k)","dose.curveHint":"CSV: channel,k_factor (up to 512 points, no header). Priority over scalar k.","dose.curveLoad":"Load CSV","dose.curveClear":"Clear curve","dose.curveLoaded":"Curve loaded (%1 points)","dose.curveOk":"Loaded: %1 points","dose.curveClearOk":"Curve cleared","dose.curveErr":"Load error","dose.curveNoFile":"Select a CSV file",
+  "dose.curveLabel":"Dose rate curve","dose.curveNone":"No curve loaded (scalar k)","dose.curveHint":"CSV: channel,k_factor (up to 512 points, no header). Priority over scalar k.","dose.curveLoad":"Load CSV","dose.curveClear":"Clear curve","dose.curveLoaded":"Curve loaded (%1 points)","dose.curveOk":"Loaded: %1 points","dose.curveClearOk":"Curve cleared","dose.curveErr":"Load error","dose.curveNoFile":"Select a CSV file","dose.curveEmpty":"The file has no valid points; the previous curve was overwritten","dose.kBad":"Enter a number >= 0 (value not saved)","dose.kNone":"k = 0: without a curve, dose rate is disabled (mode none)","dose.liveEn":"Compute live dose rate","dose.liveNote":"Off: the board takes no spectrum snapshots for the calculation and the dose-rate block on the main page is hidden; this takes effect at once, no reboot. The dose-ring memory is freed not when the setting is saved but when the monitor records its next sample; if the instrument is silent or disconnected, it stays allocated until the next sample.",
   "cal.set":"Set (%1 coef., order %2)","cal.unset":"Not set",
   "tz.title":"Time zone","tz.label":"Display zone","tz.hint":"Affects the time axis, table and CSV export of the Monitoring tab. Stored in the browser.","tz.auto":"Auto (browser, %1)","tz.saved":"Saved: %1",
   "confirm.rebootDev":"Reboot device?","confirm.rebootEsp":"Reboot ESP32?","confirm.resetWifi":"Reset WiFi and enter setup mode?",
@@ -502,7 +566,18 @@ var DICT={
   "sect.net":"Network and time","sect.meas":"Measurements","sect.maint":"Maintenance",
   "ap.title":"Access point (AP)","sum.min":"min","sum.of":"of","sum.ch":"ch",
   "sum.calOk":"calibration set","sum.calWarn":"calibration not set",
-  "ota.dropHint":"Drop a file or choose one"
+  "ota.dropHint":"Drop a file or choose one",
+  "sec.ov":"Overview","sec.ov.sub":"board · wifi · device",
+  "sec.net":"Network and time","sec.boot":"Board start","sec.dose":"Dose rate",
+  "sec.bk":"Backups","sec.fw":"Firmware",
+  "sec.danger":"Dangerous actions","sec.danger.sub":"reboot · WiFi reset",
+  "nav.tcp":"TCP","nav.tcpFree":"free","nav.tcpBusy":"client connected",
+  "nav.bootOn":"spectrum autostart on","nav.bootOff":"spectrum autostart off",
+  "nav.dose":"k = %1 · %2","nav.curveNo":"no curve loaded","nav.curveYes":"curve loaded",
+  "nav.bk":"%1 snapshots / %2 h","nav.prerel":"pre-releases",
+  "boot.secCalib":"Calibration",
+  "boot.saveErrDet":"error: %1",
+  "boot.calibAlwaysApply":"Applied at the next acquisition start."
  }
 };
 /* #OPT-13: LANG/t/tfmt/applyI18n/setLang - общий каркас в common-time.js; здесь только страничные хвосты */
@@ -510,8 +585,9 @@ i18nInit(DICT,{
  onApply:function(){
   // tcp.hint innerHTML re-inserts a fresh <span id="tcp-addr"> — restore its value
   var ta=document.getElementById("tcp-addr"); if(ta)ta.textContent=location.hostname+":8234";
+  [["dose-k-val","dose.label"],["dose-curve-file","dose.curveLabel"],["bk-keep","bk.keep"],["bk-hours","bk.hours"]].forEach(function(p){var e=document.getElementById(p[0]);if(e)e.setAttribute("aria-label",t(p[1]));});
  },
- onLang:function(){try{refreshSystem();refreshDevice();refreshSpectrum();initTz();}catch(e){}}
+ onLang:function(){try{refreshSystem();refreshDevice();refreshSpectrum();initTz();renderDoseCurveStat();navHints();}catch(e){}}
 });
 
 var heap=[],cpu=[],flash=[];
@@ -713,6 +789,7 @@ async function refreshSystem(){
   // #AWF-8: плитки-сводки (новые id, дублируют уже посчитанные значения).
   var sf=document.getElementById("sum-fw"); if(sf)sf.textContent=curFwVer||"—";
   var su=document.getElementById("sum-uptime"); if(su)su.textContent="uptime "+fmtDur(r.uptime_sec||0)+" · IDF v5.4";
+  var su2=document.getElementById("sum-up"); if(su2)su2.textContent=fmtDur(r.uptime_sec||0);
   var shm=document.getElementById("sum-heap-min"); if(shm)shm.textContent=Math.round((r.min_free_heap||0)/1024);
   var ft=r.flash_total||0, fu=r.flash_used||0;
   var pct=ft>0?(fu/ft*100):0;
@@ -725,6 +802,7 @@ async function refreshSystem(){
   if(sfk)sfk.textContent=fmtKB(fu)+" "+t("unit.kb");
   if(sfb){sfb.style.width=pct.toFixed(1)+"%";sfb.style.background=ffi.style.background;}
   if(sfs)sfs.textContent=t("sum.of")+" "+fmtKB(ft)+" "+t("unit.kb")+" ("+pct.toFixed(1)+"%)";
+  var sfp=document.getElementById("sum-flash-pct"); if(sfp)sfp.textContent=pct.toFixed(1)+"%";
   // #UI-30: график Flash (стиль как у памяти)
   var fuKB=Math.round(fu/1024);
   flash.push(fuKB); if(flash.length>80)flash.shift();
@@ -802,6 +880,7 @@ async function refreshDevice(){
    document.getElementById("dev-t").textContent=tt;
    var sct=document.getElementById("sum-cpu-temp");
    if(sct){var cpuTxt=document.getElementById("cpu-cur").textContent;sct.textContent=(cpuTxt!=="—"?cpuTxt+"% · ":"")+fmtT(r.t1)+"°C";}
+   var sc2=document.getElementById("sum-cpu"),st1=document.getElementById("sum-t1"),cpuT2=document.getElementById("cpu-cur").textContent; if(sc2)sc2.textContent=(cpuT2!=="—")?cpuT2+"%":"—"; if(st1)st1.textContent=fmtT(r.t1)+"°C";
   }else{
    document.getElementById("dev-ver").textContent="—";
    document.getElementById("dev-mode").textContent="—";
@@ -847,52 +926,39 @@ async function loadBootConfig(){
   var fb=document.getElementById("bc-ap-fallback");
   if(fb)fb.checked=(r.field_ap_fallback===true);    /* нет ключа (апгрейд) = ВЫКЛ */
   var ca=document.getElementById("bc-calib-always"); if(ca)ca.checked=(r.calib_always===true);   /* #59: нет ключа = ВЫКЛ */
-  /* issue #52: те же данные несут настройки резервных снимков. */
+  var dl=document.getElementById("dose-live-en"); if(dl)dl.checked=(r.dose_live!==false);   /* #DOSE-TOGGLE: нет поля (старая прошивка) = ВКЛ */
+
+  /* issue #52: те же данные несут настройки резервных снимков. Поле, которое сейчас
+     набирают (фокус или ждёт автосохранения), не перезаписываем. */
   var k=document.getElementById("bk-keep"),h=document.getElementById("bk-hours"),
       se=document.getElementById("bk-session");
-  if(k)k.value=(typeof r.backup_keep==="number")?r.backup_keep:0;
-  if(h)h.value=(typeof r.backup_hours==="number")?r.backup_hours:24;
+  var busy=function(el){return el&&(document.activeElement===el||secTimers.bk);};
+  if(k&&!busy(k))k.value=(typeof r.backup_keep==="number")?r.backup_keep:0;
+  if(h&&!busy(h))h.value=(typeof r.backup_hours==="number")?r.backup_hours:24;
   if(se)se.textContent=(typeof r.session==="number")?("#"+r.session):"—";
   var tm=document.getElementById("bk-testmode");
   if(tm)tm.style.display=r.backup_test_minutes?"":"none";
+  bcReady=true;
  }catch(e){}
 }
 /* issue #52: выключение стендового режима. Он ставится только через API и
    переживает перезагрузку — без этой кнопки его нельзя было бы снять из UI. */
 async function clearBackupTestMode(){
- var s=document.getElementById("bk-status");
- try{
-  var r=await post("/api/boot-config",{headers:{"Content-Type":"application/json"},
-       body:JSON.stringify({backup_test_minutes:false})});
-  var j=r.ok?await r.json():{ok:false};
-  s.textContent=j.ok?t("boot.saved"):t("boot.saveErr");
-  s.style.color=j.ok?"var(--accent)":"#ff8a82";
-  if(j.ok)await loadBootConfig();
- }catch(e){ s.textContent=t("boot.saveErr"); s.style.color="#ff8a82"; }
- setTimeout(function(){s.textContent="";},2500);
+ await bootPost({backup_test_minutes:false},"bk-status");
 }
-/* issue #52. Отдельная кнопка, а не общая с «Стартом платы»: разные разделы, и
-   ошибка диапазона должна показываться рядом со своим полем. Плата отвечает 400
-   на выход за пределы — здесь ловим до отправки, чтобы человек увидел причину. */
+/* issue #52. Автосохранение (debounce из oninput): ошибка диапазона показывается
+   рядом со своим полем; плата отвечает 400 на выход за пределы — ловим до отправки. */
 async function saveBackupConfig(){
- var s=document.getElementById("bk-status");
  var keep=parseInt(document.getElementById("bk-keep").value,10);
  var hours=parseInt(document.getElementById("bk-hours").value,10);
  if(!(keep>=0&&keep<=20)||!(hours>=1&&hours<=168)){
-  s.textContent=t("bk.range"); s.style.color="#ff8a82";
-  setTimeout(function(){s.textContent="";},3500); return;
+  setSt("bk-status",false,t("bk.range")); return;
  }
- try{
-  var r=await post("/api/boot-config",{headers:{"Content-Type":"application/json"},
-       body:JSON.stringify({backup_keep:keep,backup_hours:hours})});
-  var j=r.ok?await r.json():{ok:false};
-  s.textContent=j.ok?t("boot.saved"):t("boot.saveErr");
-  s.style.color=j.ok?"var(--accent)":"#ff8a82";
- }catch(e){ s.textContent=t("boot.saveErr"); s.style.color="#ff8a82"; }
- setTimeout(function(){s.textContent="";},2500);
+ await bootPost({backup_keep:keep,backup_hours:hours},"bk-status");
 }
 async function saveBootConfig(statusId){
- var s=document.getElementById(statusId||"bc-status-spec");
+ var sid=statusId||"bc-status";
+ if(!bcReady){setSt(sid,false,"?");return false;}   /* пока плата не вернула значения — тело из пустых галок затёрло бы настройки */
  var body={
   autostart_spectrum:document.getElementById("bc-as-spec").checked,
   autostart_waterfall:document.getElementById("bc-as-wf").checked,
@@ -901,12 +967,7 @@ async function saveBootConfig(statusId){
   field_ap_fallback:document.getElementById("bc-ap-fallback").checked,
   calib_always:document.getElementById("bc-calib-always").checked
  };
- try{
-  var r=await(await post("/api/boot-config",{headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();
-  s.textContent=r.ok?t("boot.saved"):t("boot.saveErr");
-  s.style.color=r.ok?"var(--accent)":"#ff8a82";
- }catch(e){ s.textContent=t("boot.saveErr"); s.style.color="#ff8a82"; }
- setTimeout(function(){s.textContent="";},2500);
+ return await bootPost(body,sid);
 }
 // #UI-38: часовой пояс отображения (localStorage aswf-tz: "auto" | смещение от UTC в минутах).
 // Читается вкладкой «Мониторинг» (ось X, таблица, CSV). На плату не уходит — чисто клиентская настройка.
@@ -955,32 +1016,56 @@ async function loadDoseK(){
  try{
   var r=await(await fetch("/api/waterfall/dose_k")).json();
   var v=r.dose_k;
-  document.getElementById("dose-k-val").value=(typeof v==="number"&&isFinite(v)&&v>0)?v:0;
+  var el=document.getElementById("dose-k-val");
+  if(el&&document.activeElement!==el)el.value=(typeof v==="number"&&isFinite(v)&&v>0)?v:0;
  }catch(e){}
 }
 async function saveDoseK(statusId){
- var s=document.getElementById(statusId||"dose-k-status");
- var k=parseFloat(document.getElementById("dose-k-val").value)||0;
+ var sid=statusId||"dose-k-status";
+ var raw=String(document.getElementById("dose-k-val").value).trim();
+ var k=parseFloat(raw);
+ if(raw===""||!isFinite(k)||k<0){
+  /* пустое/нечисловое/отрицательное значение на плату не отправляется: прежнее k остаётся */
+  var bs=document.getElementById(sid);
+  if(bs){bs.textContent=t("dose.kBad");bs.style.color="#f0c45a";clearTimeout(stTimers[sid]);stTimers[sid]=setTimeout(function(){bs.textContent="";},6000);}
+  return;
+ }
  try{
-  var r=await(await post("/api/waterfall/dose_k",{headers:{"Content-Type":"application/json"},body:JSON.stringify({dose_k:k})})).json();
-  s.textContent=r.ok?t("dose.saved"):t("dose.saveErr");
-  s.style.color=r.ok?"var(--accent)":"#ff8a82";
- }catch(e){ s.textContent=t("dose.saveErr"); s.style.color="#ff8a82"; }
- setTimeout(function(){s.textContent="";},2500);
+  var resp=await post("/api/waterfall/dose_k",{headers:{"Content-Type":"application/json"},body:JSON.stringify({dose_k:k})});
+  var r=await resp.json();
+  setSt(sid,!!r.ok,r.ok?"":("HTTP "+resp.status));
+  if(r.ok&&k===0&&doseCurveN===0){var zs=document.getElementById(sid);if(zs)zs.textContent+=" · "+t("dose.kNone");}
+  await loadDoseK();
+ }catch(e){ setSt(sid,false,t("ota.netErr")); }
 }
 
+/* #DOSE-TOGGLE: «Считать живую МД» — NVS-ключ dose_live_en через POST /api/boot-config, ключ dose_live (плата сохраняет остальные ключи сама).
+   Отдельная функция, а не saveBootConfig: тело saveBootConfig (6 ключей) не меняется. После POST bootPost перечитывает конфиг — галка = значение платы. */
+async function saveDoseLive(statusId){
+ var el=document.getElementById("dose-live-en");
+ if(!el)return false;
+ return await bootPost({dose_live:el.checked},statusId||"dose-live-status");
+}
+
+
+/* Состояние кривой хранится в переменной, а не в тексте элемента: applyI18n/смена языка перерисовывают статус. */
+var doseCurveN=0;
+function renderDoseCurveStat(){
+ var el=document.getElementById("dose-curve-stat");
+ if(!el)return;
+ if(doseCurveN>0){
+  el.textContent=tfmt("dose.curveLoaded",doseCurveN);
+  el.style.color="var(--accent)";
+ }else{
+  el.textContent=t("dose.curveNone");
+  el.style.color="";
+ }
+}
 async function loadDoseCurveStatus(){
  try{
   var r=await(await fetch("/api/waterfall/dose_curve")).json();
-  var el=document.getElementById("dose-curve-stat");
-  if(!el)return;
-  if(r.n>0){
-   el.textContent=tfmt("dose.curveLoaded",r.n);
-   el.style.color="var(--accent)";
-  }else{
-   el.textContent=t("dose.curveNone");
-   el.style.color="";
-  }
+  doseCurveN=(typeof r.n==="number"&&r.n>0)?r.n:0;
+  renderDoseCurveStat();
  }catch(e){}
 }
 async function loadDoseCurveFile(statusId){
@@ -991,10 +1076,17 @@ async function loadDoseCurveFile(statusId){
  try{
   var text=await file.text();
   var r=await(await post("/api/waterfall/dose_curve",{headers:{"Content-Type":"text/plain"},body:text})).json();
-  if(r.ok){
+  if(r.ok&&r.n>0){
    s.textContent=tfmt("dose.curveOk",r.n);
    s.style.color="var(--accent)";
    await loadDoseCurveStatus();
+  }else if(r.ok){
+   /* плата отвечает ok:true,n:0, но файл уже перезаписан до разбора: это ошибка, не успех */
+   s.textContent=t("dose.curveEmpty");
+   s.style.color="#ff8a82";
+   await loadDoseCurveStatus();
+   setTimeout(function(){s.textContent="";},6000);
+   return;
   }else{
    s.textContent=t("dose.curveErr");
    s.style.color="#ff8a82";
@@ -1018,20 +1110,58 @@ async function clearDoseCurve(statusId){
  setTimeout(function(){s.textContent="";},2500);
 }
 
-// #AWF-8: плитки-сводки раскрывают подробную карточку (Плата/Прибор/WiFi).
-// Плитки Плата/Heap/Flash делят одну карточку detail-board.
-var TILE_MAP={board:["tile-board","tile-heap","tile-flash"],device:["tile-device"],wifi:["tile-wifi"]};
-function toggleDetail(key){
- var dw=document.getElementById("detail-"+key); if(!dw)return;
- var willOpen=!dw.classList.contains("open");
- ["board","device","wifi"].forEach(function(k){
-  var el=document.getElementById("detail-"+k); if(el)el.classList.remove("open");
-  (TILE_MAP[k]||[]).forEach(function(tid){var t2=document.getElementById(tid); if(t2)t2.classList.remove("open");});
- });
- if(willOpen){
-  dw.classList.add("open");
-  (TILE_MAP[key]||[]).forEach(function(tid){var t2=document.getElementById(tid); if(t2)t2.classList.add("open");});
- }
+/* Разделы страницы: список слева, один раздел справа; выбор хранится в location.hash (#ov #net #boot #dose #bk #fw #danger). */
+var SECS=["ov","net","boot","dose","bk","fw","danger"];
+var secTimers={},stTimers={},bcReady=false;
+function showSec(name){
+ if(SECS.indexOf(name)<0)name="ov";
+ SECS.forEach(function(k){var s=document.getElementById("sec-"+k);if(s)s.classList.toggle("on",k===name);});
+ var ls=document.querySelectorAll(".sec-link");
+ for(var i=0;i<ls.length;i++){var on=ls[i].getAttribute("data-sec")===name;ls[i].classList.toggle("on",on);
+  if(on){var sd=ls[i].parentNode;if(sd&&sd.scrollWidth>sd.clientWidth)sd.scrollLeft=ls[i].offsetLeft-(sd.clientWidth-ls[i].offsetWidth)/2;}}
+ try{if(location.hash!=="#"+name)history.replaceState(null,"","#"+name);}catch(e){}
+}
+function initSections(){
+ var ls=document.querySelectorAll(".sec-link");
+ for(var i=0;i<ls.length;i++)ls[i].addEventListener("click",function(e){e.preventDefault();showSec(this.getAttribute("data-sec"));});
+ window.addEventListener("hashchange",function(){showSec((location.hash||"").slice(1));});
+ showSec((location.hash||"").slice(1));
+ navHints();
+}
+/* Автосохранение: key — имя таймера, fn — что вызвать, ms — задержка (debounce для текстовых полей). */
+function autoSave(key,fn,ms){clearTimeout(secTimers[key]);secTimers[key]=setTimeout(function(){secTimers[key]=0;fn();},ms);}
+/* Статус рядом с полем: «Сохранено» / «ошибка: …». */
+function setSt(id,ok,detail){
+ var s=document.getElementById(id); if(!s)return;
+ s.textContent=ok?t("boot.saved"):tfmt("boot.saveErrDet",detail||"?");
+ s.style.color=ok?"var(--accent)":"#ff8a82";
+ clearTimeout(stTimers[id]);
+ stTimers[id]=setTimeout(function(){s.textContent="";},ok?2500:6000);
+}
+/* Подписи-подсказки пунктов меню с ТЕКУЩИМИ значениями (макет System 3); вызывается раз в 2 с и при смене раздела. */
+function navHints(){
+ var g=function(id){return document.getElementById(id);},set=function(id,v){var e=g(id);if(e)e.textContent=v;};
+ var nm=g("net-mode")?g("net-mode").textContent:"—",m=/\(([^)]+)\)/.exec(nm);
+ var ts=g("time-src")?g("time-src").textContent:"—",tc=g("tcp-state")?g("tcp-state").textContent:"—";
+ set("nh-net",(m?m[1]:nm)+" · "+ts+" · "+t("nav.tcp")+" "+tc);
+ set("nh-boot",g("bc-as-spec")&&g("bc-as-spec").checked?t("nav.bootOn"):t("nav.bootOff"));
+ var cur=doseCurveN>0?t("nav.curveYes"):t("nav.curveNo");
+ set("nh-dose",tfmt("nav.dose",g("dose-k-val")?(g("dose-k-val").value||"0"):"0",cur));
+ set("nh-bk",tfmt("nav.bk",g("bk-keep")?g("bk-keep").value:"0",g("bk-hours")?g("bk-hours").value:"0"));
+ var pr=g("gh-prerel");
+ set("nh-fw",(g("fw-ver-ota")?g("fw-ver-ota").textContent:"—")+(pr&&pr.checked?" · "+t("nav.prerel"):""));
+}
+/* POST /api/boot-config, затем loadBootConfig(): на экране — значение, которое вернула плата (при ошибке галка откатывается). */
+async function bootPost(body,statusId){
+ var ok=false,det="";
+ try{
+  var r=await post("/api/boot-config",{headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  var j=null; try{j=await r.json();}catch(e){}
+  ok=!!(r.ok&&j&&j.ok); det=ok?"":("HTTP "+r.status);
+ }catch(e){ det=t("ota.netErr"); }
+ await loadBootConfig();
+ setSt(statusId,ok,det);
+ return ok;
 }
 // Drag&drop поверх существующего input[type=file] id="ota-file" — id/логика не меняются.
 function initOtaDropzone(){
@@ -1048,6 +1178,7 @@ function initOtaDropzone(){
 (async function(){
  applyI18n();
  initTz();
+ initSections();
  document.getElementById("langBtn").onclick=function(){setLang(LANG==="ru"?"en":"ru");};
  document.getElementById("ip-chip").textContent=location.hostname;
  initOtaDropzone();
@@ -1062,6 +1193,7 @@ function initOtaDropzone(){
  (window.pollWhileVisible||setInterval)(refreshSystem,2000);
  (window.pollWhileVisible||setInterval)(refreshDevice,5000);
  (window.pollWhileVisible||setInterval)(refreshSpectrum,2000);
+ (window.pollWhileVisible||setInterval)(navHints,2000);
 })();
 </script>
 </body>
