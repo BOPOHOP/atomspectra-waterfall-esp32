@@ -300,7 +300,7 @@ header{ flex-wrap:wrap; gap:10px; padding:12px 12px; }
 <label class="boot-row" style="border-bottom:none"><input type="checkbox" class="sw" id="bc-gz-en" onchange="autoSave('gz',function(){saveGzip('gz-status')},300)"><span data-i18n="boot.gzEn">Сжимать спектр (тест)</span></label>
 <div class="fld"><span data-i18n="boot.gzLevel">Уровень сжатия</span>
 <select id="bc-gz-lvl" onchange="autoSave('gz',function(){saveGzip('gz-status')},300)" style="background:var(--panel);color:var(--txt);border:1px solid #444;padding:4px 8px;border-radius:4px;font-family:inherit;font-size:12px"><option value="1">1</option><option value="6">6</option></select></div>
-<div class="mut" style="font-size:10.5px;line-height:1.4" data-i18n="boot.gzNote">Тест: /api/spectrum.json?channels=N уходит сжатым (gzip), если клиент принимает gzip: запрос обрабатывает отдельная задача платы (очередь 2, дедлайн 1,5 с); при отказе — несжатый ответ. Без channels и /api/spectrum не сжимаются. Пока включено, постоянно занято ≈ 184 КБ PSRAM (компрессор и стек задачи), на время каждого задания — ещё буферы тела и сжатого результата. Действует сразу.</div>
+<div class="mut" style="font-size:10.5px;line-height:1.4" data-i18n="boot.gzNote">Тест: /api/spectrum.json?channels=N уходит сжатым (gzip), если клиент принимает gzip: запрос обрабатывает отдельная задача платы (очередь 2, дедлайн 1,5 с); при отказе — несжатый ответ. Без channels и /api/spectrum не сжимаются. Пока включено, постоянно занято ≈ 180 КиБ PSRAM (компрессор и стек задачи), на время каждого задания — ещё буферы тела и сжатого результата. Действует сразу.</div>
 <div class="mut" id="gz-status" style="font-size:11px;min-height:14px"></div>
 </section>
 </div>
@@ -497,7 +497,7 @@ var DICT={
   "boot.saveErrDet":"ошибка: %1",
   "boot.calibAlwaysApply":"Применяется при следующем старте набора.",
   "boot.secGz":"Сжатие спектра (тест)","boot.gzEn":"Сжимать спектр (тест)","boot.gzLevel":"Уровень сжатия",
-  "boot.gzNote":"Тест: /api/spectrum.json?channels=N уходит сжатым (gzip), если клиент принимает gzip: запрос обрабатывает отдельная задача платы (очередь 2, дедлайн 1,5 с); при отказе — несжатый ответ. Без channels и /api/spectrum не сжимаются. Пока включено, постоянно занято ≈ 184 КБ PSRAM (компрессор и стек задачи), на время каждого задания — ещё буферы тела и сжатого результата. Действует сразу."
+  "boot.gzNote":"Тест: /api/spectrum.json?channels=N уходит сжатым (gzip), если клиент принимает gzip: запрос обрабатывает отдельная задача платы (очередь 2, дедлайн 1,5 с); при отказе — несжатый ответ. Без channels и /api/spectrum не сжимаются. Пока включено, постоянно занято ≈ 180 КиБ PSRAM (компрессор и стек задачи), на время каждого задания — ещё буферы тела и сжатого результата. Действует сразу."
  },
  en:{
   "page.title":"AtomSpectra · System",
@@ -587,7 +587,7 @@ var DICT={
   "boot.saveErrDet":"error: %1",
   "boot.calibAlwaysApply":"Applied at the next acquisition start.",
   "boot.secGz":"Spectrum compression (test)","boot.gzEn":"Compress the spectrum (test)","boot.gzLevel":"Compression level",
-  "boot.gzNote":"Test: /api/spectrum.json?channels=N is sent gzip-compressed when the client accepts gzip: the request is handled by a separate board task (queue 2, deadline 1.5 s); on failure the response is sent uncompressed. Without channels, and /api/spectrum, are not compressed. While on, about 184 KB of PSRAM is held permanently (compressor and task stack), plus the body and compressed-result buffers for the duration of each job. Takes effect immediately."
+  "boot.gzNote":"Test: /api/spectrum.json?channels=N is sent gzip-compressed when the client accepts gzip: the request is handled by a separate board task (queue 2, deadline 1.5 s); on failure the response is sent uncompressed. Without channels, and /api/spectrum, are not compressed. While on, about 180 KiB of PSRAM is held permanently (compressor and task stack), plus the body and compressed-result buffers for the duration of each job. Takes effect immediately."
  }
 };
 /* #OPT-13: LANG/t/tfmt/applyI18n/setLang - общий каркас в common-time.js; здесь только страничные хвосты */
