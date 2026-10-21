@@ -1,5 +1,5 @@
 // D1 (feat/d1-channels): host-тесты К1 - свёртка bins для GET /api/spectrum.json?channels=N (main/spectrum_fold.h).
-// Образцы боевого вида (#SA-3a): 5 снимков spectrum.json с платы .146 (fixtures/frozen_146/, sha256 в frozen MANIFEST Codeaudit).
+// Образцы боевого вида (#SA-3a): 5 снимков spectrum.json с платы .146 (fixtures/frozen_146/, sha256 в frozen MANIFEST внешнего аудита).
 #include "spectrum_fold.h"
 #include "test_util.h"
 #include <inttypes.h>

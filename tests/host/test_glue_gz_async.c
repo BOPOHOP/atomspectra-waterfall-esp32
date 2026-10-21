@@ -171,7 +171,7 @@ static bool op_send_gz(void *c, const spec_gz_job_t *j, const uint8_t *out, size
     job_ctx_t *ctx = (job_ctx_t*)c;
     (void)j; (void)out; (void)out_len;
     ctx->sent_gz++;
-    /* Codeaudit: во время отправки s_readers == 0 и запись свипа (пересборка кэша) не блокируется */
+    /* Ревью: во время отправки s_readers == 0 и запись свипа (пересборка кэша) не блокируется */
     uint32_t rc0 = s_render_count;
     g_send_readers_bad += (s_readers != 0);
     g_spec.bins[0] += 1;
