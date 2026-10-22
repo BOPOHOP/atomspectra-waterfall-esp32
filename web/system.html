@@ -1061,7 +1061,7 @@ async function saveDoseLive(statusId){
 }
 
 
-/* #GZ-T (1.2.38-rc3, тест): сжатие /api/spectrum.json?channels=N (v2, асинхронно) — NVS gz_lvl через POST /api/boot-config, ключ gzip_level
+/* #GZ-T (1.2.38, тест): сжатие /api/spectrum.json?channels=N (v2, асинхронно) — NVS gz_lvl через POST /api/boot-config, ключ gzip_level
    (0 — выкл, 1 или 6). Отдельная функция, а не saveBootConfig: тело saveBootConfig (6 ключей) не меняется. */
 async function saveGzip(statusId){
  var en=document.getElementById("bc-gz-en"),sel=document.getElementById("bc-gz-lvl");

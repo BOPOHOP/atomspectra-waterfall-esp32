@@ -137,7 +137,7 @@ static inline size_t spec_gz_frame(uint8_t *buf, size_t cap, size_t deflate_len,
     return total;
 }
 
-// ---- Ф4.2 (D3, 1.2.38-rc3): асинхронная отдача сжатого тела (задача spec_gz, очередь глубины 2) ----
+// ---- Ф4.2 (D3, 1.2.38): асинхронная отдача сжатого тела (задача spec_gz, очередь глубины 2) ----
 #define SPEC_GZ_ASYNC          3
 #define SPEC_GZ_QUEUE_DEPTH    2u
 #define SPEC_GZ_DEADLINE_MS    1500u
