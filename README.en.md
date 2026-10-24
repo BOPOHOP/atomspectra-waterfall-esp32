@@ -498,6 +498,8 @@ A transparent serial-over-WiFi bridge. BecqMoni or AtomSpectra on a PC connect t
 - `TCP_NODELAY` for minimal latency
 - The bridge forwards the analyzer's raw stream transparently: a PC client only sees the analyzer's own acquisition since its last reset, WITHOUT the Web UI's base (AWF-3) — after a power cut the counter in BecqMoni/AtomSpectra starts over even though the web UI already shows a continuous spectrum.
 - The **Reset** button in BecqMoni/AtomSpectra sends `-rst` over the bridge — the board catches that command the same way it catches its own Web UI Reset button, and **clears the base too**: the web UI reading zeroes out in sync with the PC app, no "ghost" of the old spectrum is left behind.
+- Since 1.2.39 the bridge also recognises `-rst` in a frame without a trailing NUL byte (the five-byte frame `03 2D 72 73 74`): such a reset clears the web UI base as well.
+- Since 1.2.39 the board advertises the mDNS service `_atomspectra._tcp` on the bridge port (8234). TXT records: `sn` - the instrument serial number (absent while unknown; refreshed every 5 s), `fw` - firmware version, `rest` - REST port (80), `proto` - TXT format version (`1`). Boards on one network are told apart by `sn`; before the instrument first answers, `sn` may hold the serial number saved from the previous session.
 
 ## Waterfall (spectrogram)
 
