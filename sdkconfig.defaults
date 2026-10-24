@@ -68,8 +68,12 @@ CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
 CONFIG_ESP_WIFI_RX_BA_WIN=6
 CONFIG_LWIP_TCP_OOSEQ_MAX_PBUFS=4
 CONFIG_ESP_WIFI_STATIC_TX_BUFFER=y
-CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=16
+# t1c: 16->8 (экономия внутренней RAM под cdc_acm_host_open); было 16
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=8
 CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=32
+# t1c: mDNS (задача и память) в SPIRAM; Kconfig espressif/mdns, зависит от SPIRAM_USE_MALLOC (+FREERTOS_TASK_CREATE_ALLOW_EXT_MEM)
+CONFIG_MDNS_TASK_CREATE_FROM_SPIRAM=y
+CONFIG_MDNS_MEMORY_ALLOC_SPIRAM=y
 
 # WebSocket support для /ws/waterfall (live-стрим строк спектрограммы)
 CONFIG_HTTPD_WS_SUPPORT=y
@@ -147,3 +151,8 @@ CONFIG_MBEDTLS_HARDWARE_AES=n
 
 # AWF-5 (2026-09-27): 3584 мало, если включён журнал платы (перехватчик кладёт 512 Б на стек каждой задачи)
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# D1 (feat/d1-channels): загрузка CPU по задачам/ядрам в /api/status. Run-time stats FreeRTOS: GENERATE_RUN_TIME_STATS в Kconfig IDF 5.4 сам
+# выбирает USE_TRACE_FACILITY и USE_STATS_FORMATTING_FUNCTIONS; источник счётчика - esp_timer (RUN_TIME_STATS_USING_ESP_TIMER, умолчание), мкс, uint32.
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y

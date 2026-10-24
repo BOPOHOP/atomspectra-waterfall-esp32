@@ -1,0 +1,861 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>REST-интерфейс AtomSpectra-водопад</title><style>body{font:15px/1.5 system-ui,sans-serif;max-width:1000px;margin:2em auto;padding:0 1em}table{border-collapse:collapse;width:100%;margin:1em 0}td,th{border:1px solid #bbb;padding:4px 8px;vertical-align:top;font-size:13px}th{background:#eee}code{background:#f2f2f2;padding:0 3px;word-break:break-word}</style></head><body><h1>REST-интерфейс платы AtomSpectra-водопад — черновик спецификации для клиентов спектра</h1>
+<p>Версия документа: 0.2 (на рассмотрении), дата: 2026-10-22.
+Объект: прошивка <code>1.2.38</code> (<code>version.txt:1</code>), коммит <code>29ad4d7</code>, тег <code>firmware-v1.2.38</code>.
+Метод: только чтение исходников (<code>main/*.c|h</code>, <code>tests/host/</code>, <code>README.md</code>, <code>web/</code>). Плата и сеть не трогались, поведение на живом приборе НЕ проверялось.
+Ссылки <code>file:line</code> — относительно корня дерева исходников прошивки в указанном теге. «Не нашёл» = в указанных файлах факта нет. Пометка <strong>[вывод]</strong> — умозаключение из кода, не прямая строка.</p>
+<h2>1. Общие сведения</h2>
+<table>
+<thead>
+<tr>
+<th>Пункт</th>
+<th>Факт</th>
+<th>Источник</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Версия прошивки в API</td>
+<td><code>fw_version</code> в <code>/api/status</code> и <code>/api/system</code> = <code>version</code> из app-descriptor</td>
+<td><code>main/web_server.c:208</code>, <code>:2027</code></td>
+</tr>
+<tr>
+<td>Базовый URL</td>
+<td><code>http://&lt;IP-платы&gt;/</code>, порт не задаётся в коде проекта (берётся умолчание <code>HTTPD_DEFAULT_CONFIG()</code>); в документации адрес без порта</td>
+<td><code>main/web_server.c:2966</code>, <code>README.md:72</code></td>
+</tr>
+<tr>
+<td>Порт 80</td>
+<td>умолчание IDF, в репозитории числом не записано</td>
+<td>не нашёл</td>
+</tr>
+<tr>
+<td>TCP-мост</td>
+<td>порт 8234</td>
+<td><code>main/atomspectra.h:19</code></td>
+</tr>
+<tr>
+<td>Аутентификация</td>
+<td>пользовательской нет; README: «не имеет аутентификации»</td>
+<td><code>README.md:~467-470</code> (раздел «Безопасность и модель доверия»); проверка Authorization/Basic/Bearer в <code>main/web_server.c</code> не найдена (поиск без учёта регистра — 0 совпадений); пароль относится к точке доступа Wi-Fi (<code>handle_ap_pass</code>)</td>
+</tr>
+<tr>
+<td>CSRF</td>
+<td>заголовок <code>X-CSRF-Token</code> обязателен на мутирующих POST (и на нескольких «тяжёлых» GET: <code>/api/debug/log</code>, <code>/api/ota/github/check</code>, выборочно другие)</td>
+<td><code>main/web_server.c:111-122</code>, <code>:400</code>, <code>:594</code></td>
+</tr>
+<tr>
+<td>Выдача токена</td>
+<td><code>GET /api/csrf-token</code> → <code>{"token":"&lt;32 hex&gt;"}</code>, без CSRF; токен генерируется заново при каждом старте платы</td>
+<td><code>main/web_server.c:93-100</code>, <code>:131-137</code>, <code>:2961</code></td>
+</tr>
+<tr>
+<td>Неверный/нет токена</td>
+<td><code>403</code>, текст <code>Bad or missing CSRF token</code></td>
+<td><code>main/web_server.c:121</code></td>
+</tr>
+<tr>
+<td>Токен на GET спектра</td>
+<td>не требуется для <code>spectrum.json</code>, <code>spectrum</code>, <code>meta.json</code>, <code>status</code>, <code>system</code>, <code>device</code>, <code>devlog</code></td>
+<td>отсутствие <code>csrf_check</code> в <code>handle_status:190</code>, <code>handle_spectrum:250</code>, <code>handle_spectrum_meta:256</code>, <code>handle_spectrum_json:331</code>, <code>handle_system:2016</code>, <code>handle_device:1927</code>, <code>handle_devlog:362</code></td>
+</tr>
+<tr>
+<td>Формат тел</td>
+<td>JSON (<code>application/json</code>) у ручек спектра, <code>status</code>, <code>system</code>; <code>/api/spectrum</code> — <code>application/octet-stream</code>; у <code>POST /api/command</code> и <code>POST /api/reset</code> тип не задан явно (<code>httpd_resp_sendstr</code>, умолчание IDF) — клиенту не следует опираться на <code>Content-Type</code> этих ответов</td>
+<td><code>main/spectrum_http_cache.c:381,527</code></td>
+</tr>
+<tr>
+<td>Целые</td>
+<td>беззнаковые десятичные без экспоненты (<code>PRIu32</code>)</td>
+<td><code>main/json_uint_fmt.h:11-19</code>, <code>main/spectrum_meta_fmt.h:106-111</code></td>
+</tr>
+<tr>
+<td>Дробные</td>
+<td><code>live</code> — <code>%.1f</code>; <code>t1..t3</code> — <code>%.1f</code> либо <code>null</code>; <code>calib[]</code> — <code>%.15g</code></td>
+<td><code>main/spectrum_meta_fmt.h:107,126-128</code>, <code>main/spectrum_t1.c:41-44</code></td>
+</tr>
+<tr>
+<td>Время</td>
+<td>в живом <code>spectrum.json</code> метки времени (epoch) НЕТ; <code>time</code> — целые секунды набора с учётом базы. <code>saved_at</code> (epoch, <code>%ld</code>) есть только в JSON сохранённых спектров</td>
+<td><code>main/spectrum_meta_fmt.h:107</code>; <code>main/web_server.c:313-314</code></td>
+</tr>
+<tr>
+<td>Единицы</td>
+<td><code>bins</code> — отсчёты; <code>time</code>, <code>live</code> — с; <code>cps</code> — имп/с (значение прибора); <code>cpu</code> — %</td>
+<td><code>README.md:~411-430</code> (таблица полей)</td>
+</tr>
+<tr>
+<td>Порядок полей JSON</td>
+<td>значим только для конструкций «ключ ищется подстрокой»; фиксирован кодом (см. п. 2.2)</td>
+<td><code>main/spectrum_fold.h:61-88</code></td>
+</tr>
+</tbody>
+</table>
+<h2>2. Эндпоинты для клиента спектра</h2>
+<p>Таблица маршрутов: <code>main/web_server.c:3009-3076</code> (+ водопад <code>main/web_waterfall.c:1277,1399</code>).</p>
+<h3>2.1. <code>GET /api/spectrum.json</code> без параметров (версия 1)</h3>
+<ul>
+<li>Тело: <code>{"bins":[8192 целых],"total":…,"cpu":…,"cps":…,"lost":…,"time":…,"live":…,"bridge_drop":…,"usb_rx_err":…,"rx_ring_drops":…,"hist_ok":…,"hist_drop":…,"autosave_age_sec":…,"autosave_fail_streak":…,"t1":…,"t2":…,"t3":…,"serial":"…","dead":0|1,"calib":[…],"calib_set":true|false,"reset_unconfirmed":…}</code> — <code>main/spectrum_meta_fmt.h:105-135</code>, склейка <code>:144-170</code>.</li>
+<li>Поля <code>channels</code> в версии 1 НЕТ: склейка берёт <code>meta[1..a_end)</code> и <code>meta[b_start..]</code>, пропуская <code>,"channels":8192</code> (<code>main/spectrum_meta_fmt.h:121,161-163</code>). README (<code>README.md:~413</code>) пишет «длину повторяет поле <code>channels</code>» — для v1 по коду неверно <strong>[вывод]</strong>; поле есть в <code>meta.json</code> и в v2.</li>
+<li><code>calib</code> присутствует только при <code>calib_valid</code> (<code>main/spectrum_meta_fmt.h:125-131</code>); <code>calib_set:false</code> — калибровка не задана (<code>main/calib_autoread.h</code>, использование <code>main/spectrum_meta_fmt.h:66</code>).</li>
+<li>Эпоха (<code>boot_id</code>, <code>dev_resets</code>, <code>spec_resets</code>, <code>calib_channels</code>) в v1 отсутствует; тест это проверяет побайтно (<code>tests/host/test_glue_epoch.c:262-271</code>).</li>
+<li>Заголовки ответа: <code>Content-Type: application/json</code>, <code>X-Spectrum-Render-Count</code> (номер поколения кэша), <code>Cache-Control: no-store</code>, <code>X-Hist-Age-Ms</code> (мс с последнего принятого фрагмента гистограммы на момент ответа, <code>-1</code> — ни одного с загрузки) — <code>main/spectrum_http_cache.c:248-263,379-383,452-456</code>.</li>
+<li>Кэш: тело живёт 2 с (<code>main/spectrum_http_cache.h:11</code>, проверка <code>main/spectrum_http_cache.c:203</code>); полный текст v1 строится лениво и общий для запросов поколения (<code>:371-388</code>); при смене калибровки кэш сбрасывается раньше (<code>main/spectrum.c:688,741,1467,1507</code>).</li>
+<li>Сжатие v1: нет (п. 4).</li>
+</ul>
+<h3>2.2. <code>GET /api/spectrum.json?channels=N</code> (версия 2)</h3>
+<ul>
+<li>Допустимые N: <code>8192</code>, <code>4096</code>, <code>2048</code>, <code>1024</code> (<code>main/spectrum_fold.h:7-9</code>).</li>
+<li>Разбор параметра (<code>main/spectrum_fold.h:11-44</code>; обёртка <code>main/spectrum_http_cache.c:314-328</code>): ключ ищется в начале строки запроса или после <code>&amp;</code>; значение — 1–5 десятичных цифр, без ведущего <code>0</code>; повтор ключа <code>channels</code> → ошибка; <code>channels</code> без <code>=</code> → ошибка; чужой ключ <code>channelsx=</code> не считается. Тест неверных строк: <code>tests/host/test_glue_fold.c:156</code> (<code>channels=3</code>, <code>channels=</code>, <code>channels=abc</code>, <code>channels=16384</code>, <code>channels=0</code>, <code>channels</code>, <code>channels=04096</code>).</li>
+<li>Строка запроса длиннее буфера (96 Б, т.е. ≥96 символов): <code>400</code>, если <code>channels</code> виден в уместившейся части или на её границе; иначе ответ как v1 (<code>main/spectrum_http_cache.c:316-325</code>).</li>
+<li>Свёртка: <code>m = 8192 / N</code>; k-й элемент <code>bins</code> = сумма <code>m</code> соседних исходных каналов <code>[k·m .. k·m+m-1]</code>; сумма считается в 64 бит и <strong>насыщается</strong> до <code>4294967295</code> (<code>UINT32_MAX</code>) (<code>main/spectrum_fold.h:46-57,69-76</code>). Для N=8192 свёртки нет (<code>m=1</code>).</li>
+<li>Состав v2, порядок ключей (<code>main/spectrum_fold.h:67-82</code>): <code>bins</code> (N целых) → поля meta от <code>total</code> до <code>dead</code> → <code>"channels":N</code> → хвост meta: <code>calib</code> (если есть), <code>calib_set</code>, <code>reset_unconfirmed</code> → <code>boot_id</code>, <code>dev_resets</code>, <code>spec_resets</code>, <code>calib_channels</code>. Хвост <code>meta[b_start .. len-1)</code> без закрывающей <code>}</code> (<code>:80</code>).</li>
+<li><code>calib</code> в v2 копируется из meta без пересчёта (<code>main/spectrum_fold.h:80</code>): коэффициенты НЕ масштабируются под N. <code>calib_channels</code> всегда <code>8192</code> (<code>SPECTRUM_CHANNELS</code>, <code>main/spectrum_fold.h:81-82</code>, <code>main/atomspectra.h:8</code>; тест <code>tests/host/test_spectrum_epoch.c:204</code>). <strong>[вывод]</strong> Коэффициенты относятся к шкале 8192 каналов; для свёрнутого спектра номер канала k в формуле <code>E(ch)</code> надо пересчитать клиенту (в коде формулы пересчёта нет). Центр группы k в исходной шкале — вывод клиента, не прошивки.</li>
+<li>Тело строится при каждом запросе заново в приватном буфере из того же поколения кэша (<code>s_sp</code>, <code>s_meta</code>, <code>s_ep</code>), кэш v1 не трогается (<code>main/spectrum_http_cache.c:470-511</code>). Буфер <code>N·6+2048</code> байт, при нехватке — повторное построение (<code>:488-495</code>).</li>
+<li>Эпоха берётся парой со снимком (<code>main/spectrum_http_cache.c:56-58,485</code>), снимок и эпоха читаются в одном окне seqlock (<code>main/spectrum.c:964-977</code>).</li>
+<li>Заголовки v2: <code>Content-Type</code>, <code>X-Spectrum-Render-Count</code>, <code>Cache-Control: no-store</code>, <code>X-Hist-Age-Ms</code> — ровно три прикладных, проверено тестом (<code>tests/host/test_glue_fold.c:112</code>).</li>
+<li>Порядок проверок в обработчике: сначала параметр (400), затем наличие данных (404), затем сборка (<code>main/spectrum_http_cache.c:336-354</code>).</li>
+</ul>
+<h3>2.3. <code>GET /api/spectrum</code> (бинарный)</h3>
+<ul>
+<li>Тело — массив <code>8192 × uint32</code> без обрамления, 32768 байт, <code>application/octet-stream</code>, <code>Content-Disposition: inline</code> (<code>main/spectrum_http_cache.c:513-533</code>, <code>main/spectrum_http_cache.h:39</code>). Параметры не принимаются.</li>
+<li>Порядок байт кодом не задан: шлётся память массива (<code>:296-297</code>); <code>main/spectrum_http_cache.h:39</code> называет формат «uint32 LE». Метаданных (время, калибровка) в теле нет — они в <code>meta.json</code>.</li>
+<li>Заголовки: <code>X-Spectrum-Render-Count</code>, <code>Cache-Control: no-store</code> (<code>snapshot_begin</code>, <code>:248-254,288-303</code>). <code>X-Hist-Age-Ms</code> у бинарного ответа НЕТ (ставится только у <code>.json</code>, <code>:256-263</code>).</li>
+<li>404 с <code>X-Spectrometer-Dead</code> — как у <code>.json</code> (<code>:515-521</code>).</li>
+<li>Не сжимается (<code>main/spectrum_gz.h:2</code>).</li>
+</ul>
+<h3>2.4. <code>GET /api/spectrum/meta.json[?w=N]</code></h3>
+<ul>
+<li>Без <code>w</code> — meta без <code>bins</code> (<code>main/spectrum_http_cache.c:535-551</code>): те же поля от <code>total</code> до <code>dead</code>, затем <code>channels</code> (=8192), <code>calib</code> (если есть), <code>calib_set</code>, <code>reset_unconfirmed</code> (<code>main/spectrum_meta_fmt.h:105-135</code>). Эпохи (<code>boot_id</code>, <code>dev_resets</code>, <code>spec_resets</code>) в meta НЕТ.</li>
+<li>С <code>w</code> (целое, цифры): добавляются <code>sma</code>, <code>sma_w</code>, <code>sma_n</code> (<code>sma:null</code> при пустом кольце) и хвост живой мощности дозы <code>dose_rate</code>, <code>dose_mode</code>, <code>dose_w</code> (<code>main/spectrum_meta_fmt.h:174-180</code>, <code>main/spectrum_http_cache.c:557-602</code>, <code>main/meta_w_handler.h:29-36</code>). Ответ чанками, без <code>Content-Length</code>.</li>
+<li><code>w</code> не целое (<code>1e+21</code>, <code>-5</code>, <code>12.5</code>, пусто) → ответ без SMA, <code>200</code> (<code>main/meta_w_parse.h:22-40</code>); значение &gt; <code>UINT32_MAX</code> насыщается (<code>meta_w_parse.h:33,38</code>).</li>
+<li><code>414</code> с текстом <code>w: query too long</code> — строка запроса длиннее буфера (128 Б) и значение <code>w</code> упирается в обрез (<code>main/meta_w_handler.h:28</code>, <code>main/meta_w_parse.h:22-40</code>).</li>
+<li>Заголовки: <code>X-Spectrum-Render-Count</code>, <code>Cache-Control: no-store</code> (<code>main/spectrum_http_cache.c:248-254</code>).</li>
+</ul>
+<h3>2.5. <code>GET /api/status</code></h3>
+<p>Без CSRF. Поля (<code>main/web_server.c:168-246</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Поле</th>
+<th>Тип</th>
+<th>Смысл по коду</th>
+<th>Строка</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>analyzer_connected</code></td>
+<td>bool</td>
+<td>USB-связь с прибором</td>
+<td><code>:197</code></td>
+</tr>
+<tr>
+<td><code>wifi_connected</code></td>
+<td>bool</td>
+<td></td>
+<td><code>:198</code></td>
+</tr>
+<tr>
+<td><code>total_counts</code></td>
+<td>число</td>
+<td>суммарные отсчёты текущего спектра</td>
+<td><code>:199</code></td>
+</tr>
+<tr>
+<td><code>cpu_load</code></td>
+<td>число</td>
+<td>загрузка CPU прибора</td>
+<td><code>:200</code></td>
+</tr>
+<tr>
+<td><code>tcp_client</code></td>
+<td>bool</td>
+<td>подключён ли клиент TCP-моста</td>
+<td><code>:201</code></td>
+</tr>
+<tr>
+<td><code>fs_formatted</code></td>
+<td>bool</td>
+<td>ФС отформатирована при этой загрузке</td>
+<td><code>:203</code></td>
+</tr>
+<tr>
+<td><code>fw_version</code>, <code>running_partition</code></td>
+<td>строки</td>
+<td></td>
+<td><code>:208-210</code></td>
+</tr>
+<tr>
+<td><code>time</code></td>
+<td>число, с</td>
+<td><code>total_time_sec</code> текущего спектра</td>
+<td><code>:216</code></td>
+</tr>
+<tr>
+<td><code>reset_reason</code>, <code>reset_reason_code</code></td>
+<td>строка, число</td>
+<td>причина последнего перезапуска ESP32: <code>POWERON/EXT/SW/PANIC/INT_WDT/TASK_WDT/WDT/DEEPSLEEP/BROWNOUT/SDIO/UNKNOWN/OTHER</code></td>
+<td><code>:171-174</code>, <code>:134-148</code></td>
+</tr>
+<tr>
+<td><code>boot_count</code></td>
+<td>число</td>
+<td>номер сессии платы, зафиксированный на загрузке (значение счётчика <code>sess</code> после первого успешного приращения)</td>
+<td><code>:175</code>, <code>main/boot_config.c:156,186-195</code></td>
+</tr>
+<tr>
+<td><code>session</code></td>
+<td>число</td>
+<td>текущее значение счётчика <code>sess</code> из NVS, читается при каждом запросе; растёт на загрузке и на Сбросе</td>
+<td><code>:176</code>, <code>main/boot_config.c:197-203</code></td>
+</tr>
+<tr>
+<td><code>uptime_s</code></td>
+<td>число, с</td>
+<td>с момента старта ESP32</td>
+<td><code>:177</code></td>
+</tr>
+<tr>
+<td><code>elf_sha</code></td>
+<td>строка</td>
+<td>начало SHA256 ELF (буфер 17 Б)</td>
+<td><code>:178-180</code></td>
+</tr>
+<tr>
+<td><code>base_time</code>, <code>base_counts</code></td>
+<td>числа</td>
+<td>база, сложенная при сбросах прибора</td>
+<td><code>:181-184</code></td>
+</tr>
+<tr>
+<td><code>dev_resets</code></td>
+<td>число</td>
+<td>см. п. 5</td>
+<td><code>:185</code></td>
+</tr>
+<tr>
+<td><code>reset_unconfirmed</code></td>
+<td>число</td>
+<td>Сбросы, которые прибор не выполнил</td>
+<td><code>:186-187</code></td>
+</tr>
+<tr>
+<td><code>sweep_missed</code>, <code>load</code></td>
+<td>число, объект</td>
+<td>диагностика</td>
+<td><code>:223-225</code></td>
+</tr>
+<tr>
+<td><code>dose_mode</code>, <code>dose_rate</code>, <code>dose_w</code></td>
+<td>строка, число/<code>null</code>, число</td>
+<td>живая МД за окно 10 с</td>
+<td><code>:226-235</code></td>
+</tr>
+<tr>
+<td><code>dev</code>, <code>version</code>, <code>mode</code>, <code>freq</code>, <code>t1..t3</code>, <code>noise</code>, <code>max</code></td>
+<td>числа</td>
+<td>только при <code>di-&gt;valid</code> (после ответа прибора на <code>-inf</code>)</td>
+<td><code>:238-249</code></td>
+</tr>
+</tbody>
+</table>
+<p>При нехватке памяти — код <code>503</code> и тело <code>{"ok":false,"err":"oom"}</code>; при невозможности создать объект — <code>500</code> <code>oom</code> (<code>:193-195,252-255</code>).</p>
+<h3>2.6. <code>GET /api/system</code></h3>
+<p>Без CSRF. Поля (<code>main/web_server.c:2016-2147</code>): <code>fw_version</code> (<code>:2027</code>), <code>free_heap</code> (<code>:2028</code>), <code>min_free_heap</code> (<code>:2029</code>, минимум свободной кучи за время работы — <code>esp_get_minimum_free_heap_size</code>), <code>heap_walk_us</code>, <code>heap_walk_age_ms</code>, <code>psram_total</code>, <code>psram_free</code>, <code>psram_largest</code> (<code>:2063</code>; обновляется не чаще раза в 10 с — <code>:2040-2047,2050-2052</code>), <code>int_free</code>, <code>int_largest</code>, <code>int_min</code>, <code>int_dflt_free</code>, <code>int_dflt_largest</code>, <code>cjson_spill</code>, <code>alloc_fail*</code>, <code>stack_min_free{}</code>, <code>uptime_sec</code> (<code>:2085</code>), <code>usb_connected</code>, <code>wifi_connected</code>, <code>tcp_client</code>, <code>flash_total</code>, <code>flash_used</code> (кэш 30 с), <code>rssi</code> и <code>ssid</code> (только если STA подключена к AP, <code>:2108-2112</code>), <code>net_mode</code>, <code>ap_*</code>, <code>return_block_reason</code>, <code>http_idle_s</code>, <code>time_source</code>, <code>sntp_synced</code>, <code>spectrum_render_count</code>, <code>spectrum_build_us</code>, <code>spectrum_build_us_max</code>, <code>spectrum_json_builds</code> (<code>:2133-2136</code>), поля <code>gz_*</code> (<code>:2137</code>, формирует <code>spectrum_gz_add_metrics</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Поле <code>gz_*</code></th>
+<th>Источник</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gz_level</code>, <code>gz_comp_bytes</code>, <code>gz_ok</code>, <code>gz_miss</code>, <code>gz_nomem</code>, <code>gz_fail</code>, <code>gz_last_us</code>, <code>gz_max_us</code>, <code>gz_last_in</code>, <code>gz_last_out</code>, <code>gz_stack_hwm</code></td>
+<td><code>main/spectrum_gz.c:395-405</code></td>
+</tr>
+<tr>
+<td><code>gz_async_ok</code>, <code>gz_fallback</code>, <code>gz_async_timeout</code>, <code>gz_queue_full</code>, <code>gz_send_err</code></td>
+<td><code>main/spectrum_gz.c:408-412</code></td>
+</tr>
+<tr>
+<td><code>gz_ring_us</code> (массив ≤16 последних времён сжатия, мкс)</td>
+<td><code>main/spectrum_gz.c:415-424</code>, <code>main/spectrum_gz_plan.h:163,210-223</code></td>
+</tr>
+</tbody>
+</table>
+<p>Далее: <code>heap_walk_n</code>, <code>autosave_writes</code>, <code>autosave_skips</code>, <code>spec_seq_retry</code>, <code>spec_seq_fallback</code>, <code>http_heavy_busy</code>, <code>http_heavy_rejects</code> (<code>:2138-2144</code>). Единицы <code>gz_*</code> в коде не оговорены, кроме <code>*_us</code> (мкс) и <code>gz_stack_hwm</code> (байты по <code>uxTaskGetStackHighWaterMark</code>, IDF — вне репо).</p>
+<h3>2.7. <code>POST /api/reset</code></h3>
+<ul>
+<li>Требует <code>X-CSRF-Token</code>; тело не читается (<code>main/web_server.c:564-587</code>).</li>
+<li>Действие: сбрасывает хвост водопада (<code>spectrogram_flush_tail</code>), шлёт прибору <code>-rst</code>; при успешной отправке — <code>spectrum_reset()</code>, иначе <code>spectrum_reset_undelivered()</code> и отложенная досылка <code>-rst</code> (<code>:566-583</code>).</li>
+<li>Ответ: <code>200</code>, <code>{"ok":true,"sent":true}</code> либо <code>{"ok":true,"sent":false}</code> (<code>:586</code>); <code>sent:false</code> — прибору <code>-rst</code> не доставлен.</li>
+<li>Последствия (оба пути идут через <code>reset_state_zero</code>, <code>main/spectrum.c:845-865,872-885</code>): <code>spec_resets</code> +1 (<code>:849</code>), <code>s_spectrum.valid=false</code>, бины/<code>total</code>/<code>time</code> обнуляются (<code>:853-863</code>), удаляются <code>current.bin</code>, <code>current.bin.tmp</code>, <code>base.bin</code>, <code>base.bin.tmp</code> (<code>:897-921</code>), создаётся метка <code>reset.mark</code> (<code>:884</code>). Новая сессия платы открывается, только если сбрасывалось непустое (<code>main/session_plan.h:6-9</code>, <code>main/spectrum.c:848</code>).</li>
+<li><strong>Первый ответ после сброса — не обязательно 404.</strong> <code>reset_impl</code> кэш не инвалидирует (вызовы <code>spectrum_http_cache_invalidate</code> в <code>main/spectrum.c</code> только для калибровки: <code>:688,741,1467,1507</code>; в <code>reset_impl:872-926</code> нет). В пределах TTL 2 с <code>spectrum.json</code> может вернуть <code>200</code> со спектром ДО сброса и со СТАРОЙ эпохой (кэш хранит снимок и эпоху парой, <code>main/spectrum_http_cache.c:56-58,203</code>). <code>404 No spectrum data yet</code> появляется после истечения кэша и пока не опубликована новая гистограмма (<code>valid=false</code> → снимок отвергнут, <code>main/spectrum.c:971,977</code>; <code>main/spectrum_http_cache.c:144-148</code>). README подтверждает (<code>README.md:~437-440</code>). Если кэш к моменту сброса уже истёк, первый же запрос даёт <code>404</code>; случай «200 со старым спектром в пределах 2 с после сброса» на живой плате не наблюдался <strong>[не проверено вживую]</strong>.</li>
+<li>Эпоха: новое значение <code>spec_resets</code> клиент увидит только в <code>200</code>, собранном после сброса. Ответ из кэша в пределах TTL несёт старую пару «снимок+эпоха»; пока <code>valid=false</code>, новая пара не собирается (<code>main/spectrum.c:967-977</code>) <strong>[вывод]</strong>.</li>
+<li>Другие пути, вызывающие <code>spectrum_reset()</code> и, следовательно, <code>spec_resets</code>+1: <code>POST /api/command</code> с <code>-rst</code> или <code>-sta … -r</code> (<code>main/usb_host_cdc.c:996</code>, <code>main/acq_intent.h:45-59</code>), <code>-rst</code>/<code>-sta … -r</code> от клиента TCP-моста (<code>main/tcp_bridge.c:178-186</code>), загрузка с <code>clear_spectrum</code> или меткой <code>reset.mark</code> (<code>main/main.c:120-126</code>, вызывается <code>spectrum_reset_undelivered</code>).</li>
+</ul>
+<h3>2.8. <code>GET /api/csrf-token</code>, <code>POST /api/reboot-esp</code>, <code>GET/POST /api/boot-config</code></h3>
+<table>
+<thead>
+<tr>
+<th>Эндпоинт</th>
+<th>Что делает</th>
+<th>Строки</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /api/csrf-token</code></td>
+<td><code>{"token":"…"}</code> (32 hex), без CSRF</td>
+<td><code>main/web_server.c:131-138</code></td>
+</tr>
+<tr>
+<td><code>POST /api/reboot-esp</code></td>
+<td>CSRF; отвечает <code>{"ok":true}</code>, затем <code>spectrogram_prepare_reboot()</code>, пауза 500 мс, <code>esp_restart()</code> — перезагрузка ESP32, меняет <code>boot_id</code>, обнуляет RAM-счётчики; прибор не перезагружается</td>
+<td><code>:2669-2678</code></td>
+</tr>
+<tr>
+<td><code>POST /api/reboot-device</code></td>
+<td>CSRF; шлёт прибору <code>CMD_REBOOT</code>; ответ <code>{"ok":true\|false}</code></td>
+<td><code>:2001-2013</code></td>
+</tr>
+<tr>
+<td><code>GET /api/boot-config</code></td>
+<td>без CSRF: <code>autostart_spectrum</code>, <code>autostart_waterfall</code>, <code>clear_spectrum</code>, <code>clear_waterfall</code>, <code>name_prefix</code>, <code>backup_keep</code>, <code>backup_hours</code>, <code>backup_test_minutes</code>, <code>field_ap_fallback</code>, <code>calib_always</code>, <code>dose_live</code>, <code>session</code>, <code>gzip_level</code> (последним)</td>
+<td><code>:833-870</code>, <code>:863</code></td>
+</tr>
+<tr>
+<td><code>POST /api/boot-config</code></td>
+<td>CSRF; JSON до 255 Б; отсутствующие ключи сохраняют значение; ошибки: <code>400 Empty body</code>, <code>400 Bad JSON</code>, <code>400 backup_keep out of range</code>, <code>400 backup_hours out of range</code>, <code>400 gzip_level must be 0, 1 or 6</code>; ответ <code>{"ok":true\|false}</code>; уровень сжатия применяется сразу</td>
+<td><code>:872-950</code>, <code>:931</code></td>
+</tr>
+</tbody>
+</table>
+<h3>2.9. Прочие эндпоинты, полезные клиенту спектра</h3>
+<table>
+<thead>
+<tr>
+<th>Эндпоинт</th>
+<th>Назначение</th>
+<th>Строки</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POST /api/command</code></td>
+<td>CSRF; тело — сырой текст команды прибору (напр. <code>-sta</code>, <code>-sto</code>, <code>-sho</code>); <code>400 Empty body</code>, <code>400 Command too long</code> (&gt;480 Б); ответ <code>{"ok":true\|false}</code> (запись в USB, подтверждения от прибора нет)</td>
+<td><code>main/web_server.c:338-358</code>; <code>README.md:~443-450</code></td>
+</tr>
+<tr>
+<td><code>GET /api/devlog?since=N</code></td>
+<td>текстовые ответы прибора, без CSRF; журнал хранит последние 8 строк (по README)</td>
+<td><code>main/web_server.c:362-377</code>; <code>README.md:~445</code></td>
+</tr>
+<tr>
+<td><code>GET /api/device</code></td>
+<td>параметры прибора, <code>calibration[]</code>, <code>calib_order</code>, <code>calib_set</code>, <code>calib_reject_seq</code>, <code>serial</code></td>
+<td><code>main/web_server.c:1927-1999</code></td>
+</tr>
+<tr>
+<td><code>POST /api/calibration</code></td>
+<td>CSRF; JSON <code>{"coeffs":[…]}</code> (до 5), ошибки <code>400</code>: <code>Empty body</code>, <code>Invalid JSON</code>, <code>Missing coeffs</code>, <code>Empty coeffs</code>, <code>Bad coeff</code> (не число / не конечное); коэффициенты сверх 5 отбрасываются молча (<code>main/web_server.c:2268</code>)</td>
+<td><code>main/web_server.c:2244-2290</code></td>
+</tr>
+<tr>
+<td><code>GET /api/export.xml|csv|n42|spe</code></td>
+<td>экспорт живого спектра (BecqMoni XML, InterSpec CSV, N42, ЛСРМ SPE)</td>
+<td><code>main/web_server.c:3034-3037</code>; <code>README.md:~380</code></td>
+</tr>
+<tr>
+<td><code>GET /healthcheck</code></td>
+<td><code>200</code>, если USB и Wi-Fi в порядке, иначе <code>503</code>; поля <code>status</code>, <code>analyzer_connected</code>, <code>wifi_connected</code>, <code>uptime_sec</code>, <code>spectrum_valid</code></td>
+<td><code>main/web_server.c:2680-2706</code></td>
+</tr>
+<tr>
+<td><code>POST /api/save</code>, <code>GET /api/list</code>, <code>/api/saved/*</code>, <code>/api/backup/*</code></td>
+<td>сохранённые спектры/автоснимки</td>
+<td><code>main/web_server.c:3032-3042</code></td>
+</tr>
+</tbody>
+</table>
+<p>Остальные маршруты (OTA, Wi-Fi, время, водопад) для клиента спектра не разбирались.</p>
+<h2>3. Коды ответов и тексты ошибок</h2>
+<table>
+<thead>
+<tr>
+<th>Ситуация</th>
+<th>Код</th>
+<th>Текст/тело</th>
+<th>Источник</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>channels</code> недопустим/дубль/без значения</td>
+<td><code>400</code></td>
+<td><code>channels must be 8192, 4096, 2048 or 1024</code></td>
+<td><code>main/spectrum_http_cache.c:340-343</code></td>
+</tr>
+<tr>
+<td>Данных ещё нет (после загрузки или сброса, до новой гистограммы); <code>spectrum.json</code>, <code>spectrum</code>, <code>meta.json</code></td>
+<td><code>404</code></td>
+<td><code>No spectrum data yet</code>, заголовок <code>X-Spectrometer-Dead: 1\|0</code></td>
+<td><code>main/spectrum_http_cache.c:344-349,515-521,537-542,561-565,605-609</code></td>
+</tr>
+<tr>
+<td>Нет памяти под полный JSON v1</td>
+<td><code>500</code></td>
+<td><code>oom</code></td>
+<td><code>main/spectrum_http_cache.c:416,429</code></td>
+</tr>
+<tr>
+<td>Нет памяти / сбой построения v2</td>
+<td><code>500</code></td>
+<td><code>oom</code></td>
+<td><code>main/spectrum_http_cache.c:499-503</code></td>
+</tr>
+<tr>
+<td>Сбой сборки SMA/дозового хвоста</td>
+<td><code>500</code></td>
+<td><code>meta sma</code> / <code>meta dose</code></td>
+<td><code>main/spectrum_http_cache.c:582-585,620-623</code></td>
+</tr>
+<tr>
+<td><code>meta.json?w=</code> слишком длинная строка запроса</td>
+<td><code>414</code></td>
+<td><code>w: query too long</code></td>
+<td><code>main/meta_w_handler.h:28</code></td>
+</tr>
+<tr>
+<td>Нет/неверный CSRF-токен</td>
+<td><code>403</code></td>
+<td><code>Bad or missing CSRF token</code></td>
+<td><code>main/web_server.c:121</code></td>
+</tr>
+<tr>
+<td>Неизвестный URI</td>
+<td><code>404</code></td>
+<td><code>Not Found</code></td>
+<td><code>main/web_server.c:2924-2928,3101</code></td>
+</tr>
+<tr>
+<td>Нет памяти для JSON <code>status</code>/<code>system</code>/<code>device</code></td>
+<td><code>503</code> с <code>{"ok":false,"err":"oom"}</code> либо <code>500 oom</code></td>
+<td></td>
+<td><code>main/web_server.c196,242-244,2020,2143-2145</code></td>
+</tr>
+<tr>
+<td>«Тяжёлый» слот занят (сохранённые спектры, экспорт и пр.)</td>
+<td><code>503</code>, заголовки <code>Retry-After: 1</code>, <code>Connection: close</code>; тело <code>{"ok":false,"class":"heavy",…}</code></td>
+<td></td>
+<td><code>main/http_io_gate.c:89</code></td>
+</tr>
+<tr>
+<td>Таймаут сокета httpd</td>
+<td>recv/send 3 с</td>
+<td></td>
+<td><code>main/web_server.c:2990-2991</code></td>
+</tr>
+</tbody>
+</table>
+<p>Не нашёл: клиентских таймаутов и политики повторов в коде прошивки (она — сервер). Точное оформление тела <code>400/404/500</code> (<code>httpd_resp_send_err</code>) определяется ESP-IDF; в репозитории не проверено, хост-тесты тело ошибок не сравнивают (<code>tests/host/test_glue_fold.c:163</code> — <code>body_len == 0</code>).</p>
+<h2>4. Сжатие gzip (только v2)</h2>
+<table>
+<thead>
+<tr>
+<th>Условие</th>
+<th>Факт</th>
+<th>Источник</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Что сжимается</td>
+<td>только <code>GET /api/spectrum.json?channels=N</code> (v2); v1 и <code>/api/spectrum</code> — нет</td>
+<td><code>main/spectrum_http_cache.c:350-353</code>, <code>main/spectrum_gz.h:2</code>, <code>main/spectrum_http_cache.h:42</code></td>
+</tr>
+<tr>
+<td>Запрос клиента</td>
+<td><code>Accept-Encoding</code> содержит элемент <code>gzip</code> (регистр не важен) без <code>q=0</code>; <code>*</code>, <code>x-gzip</code>, <code>deflate</code> не считаются; читается первые 127 символов заголовка</td>
+<td><code>main/spectrum_gz_plan.h:73-106</code>, <code>main/spectrum_gz.c:345-348</code></td>
+</tr>
+<tr>
+<td>Уровень</td>
+<td><code>gz_level</code> ∈ {0, 1, 6}; по умолчанию <strong>0 (выкл.)</strong>; нет ключа NVS <code>gz_lvl</code> или иное значение → 0</td>
+<td><code>main/spectrum_gz_plan.h:41-50</code>, <code>main/boot_config.c:64,97-101</code></td>
+</tr>
+<tr>
+<td>Где настраивается</td>
+<td><code>POST /api/boot-config</code> <code>{"gzip_level":0\|1\|6}</code> (CSRF), чтение — <code>GET /api/boot-config</code>, страница «Система» → «Старт платы»</td>
+<td><code>main/web_server.c:928-935</code>, <code>:863</code>; <code>web/system.html:303</code></td>
+</tr>
+<tr>
+<td>Включение</td>
+<td>сразу, без перезагрузки; задача <code>spec_gz</code> создаётся при первом включении (ядро 0, приоритет 3, стек 16 КБ в PSRAM)</td>
+<td><code>main/spectrum_gz.c:36-38,306-336</code></td>
+</tr>
+<tr>
+<td>При записи спектрограммы</td>
+<td>сжатие НЕ делается, ответ несжатый</td>
+<td><code>main/spectrum_gz_plan.h:166-168</code>, <code>main/spectrum_gz.c:357,366</code></td>
+</tr>
+<tr>
+<td>Очередь</td>
+<td>глубина 2, срок задания 1500 мс; просроченное — несжатый ответ</td>
+<td><code>main/spectrum_gz_plan.h:160-163,181-183</code>, <code>main/spectrum_gz_job.h:44-49</code></td>
+</tr>
+<tr>
+<td>Нет PSRAM под буферы / компрессор</td>
+<td>несжатый ответ (в пробе нужно ≥64 КБ и остаток ≥192 КБ)</td>
+<td><code>main/spectrum_gz_plan.h:28-31,137-141,164</code>, <code>main/spectrum_gz.c:358-360</code></td>
+</tr>
+<tr>
+<td>Тело короче 1024 Б, сжатое не короче несжатого, ошибка tdefl</td>
+<td>несжатый ответ</td>
+<td><code>main/spectrum_gz_plan.h:28,120-129</code>, <code>main/spectrum_gz_job.h:69-73,89-102</code></td>
+</tr>
+<tr>
+<td>Каждый gzip-запрос идёт в очередь</td>
+<td><code>slot_valid=false</code> в <code>spec_gz_pick</code> → всегда «промах», готовых сжатых тел в кэше нет</td>
+<td><code>main/spectrum_gz.c:350</code> <strong>[вывод]</strong></td>
+</tr>
+<tr>
+<td>Заголовки сжатого ответа</td>
+<td><code>Content-Encoding: gzip</code>, <code>Vary: Accept-Encoding</code>, <code>X-Spectrum-Gz: 1</code>, а также <code>X-Spectrum-Render-Count</code>, <code>Cache-Control: no-store</code>, <code>X-Hist-Age-Ms</code>, <code>Content-Type: application/json</code></td>
+<td><code>main/spectrum_gz.c:188-204</code></td>
+</tr>
+<tr>
+<td>Заголовки несжатого ответа v2 при включённом gzip</td>
+<td>как в п. 2.2: без <code>Vary</code> и без <code>X-Spectrum-Gz</code></td>
+<td><code>main/spectrum_http_cache.c:504-508</code>, <code>main/spectrum_gz.c:208-213</code></td>
+</tr>
+<tr>
+<td>Формат сжатого тела</td>
+<td>gzip-кадр: заголовок 10 Б (<code>1f 8b 08 00 …</code>, OS=255), raw deflate (ROM tdefl), хвост CRC32+ISIZE; уровень 1 — жадный разбор, 6 — 128 проб</td>
+<td><code>main/spectrum_gz_plan.h:52-59,143-157</code></td>
+</tr>
+</tbody>
+</table>
+<p>Тест включён как «тест, по умолчанию выключен» (<code>README.md:371</code>; <code>main/spectrum_gz.h:2-4</code>). Реальный выигрыш по размеру/времени на приборе не измерялся в рамках этого разбора.</p>
+<h2>5. Эпоха и сбросы</h2>
+<table>
+<thead>
+<tr>
+<th>Величина</th>
+<th>Определение по коду</th>
+<th>Когда меняется</th>
+<th>Живёт в</th>
+<th>Источник</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>boot_id</code></td>
+<td>случайное ненулевое <code>uint32</code> (<code>fmix32(rnd ^ MAC_lo32 ^ timer_lo32)</code>; 0 заменяется на 1)</td>
+<td>один раз за загрузку платы (после старта Wi-Fi)</td>
+<td>RAM, не NVS</td>
+<td><code>main/spectrum.c:980-992</code>, <code>main/spectrum_epoch.h:9-23</code>, <code>main/main.c:86</code></td>
+</tr>
+<tr>
+<td><code>dev_resets</code></td>
+<td>число «сворачиваний»: плата обнаружила, что накопление ПРИБОРА началось заново (по счёту отсчётов — всегда; по времени STAT — если STAT свежий), и добавила прежний спектр в базу. Показанный спектр при этом <strong>не обнуляется</strong>, <code>total</code> продолжает расти</td>
+<td>+1 на каждое обнаруженное сворачивание; других инкрементов нет</td>
+<td>RAM с загрузки платы</td>
+<td><code>main/spectrum.c:152,301</code>, <code>main/spectrum_epoch.h:25-29</code>, <code>main/spectrum_base_plan.h:112-130</code></td>
+</tr>
+<tr>
+<td><code>spec_resets</code></td>
+<td>счётчик Сбросов СПЕКТРА (<code>s_reset_gen</code>): показанный спектр и база обнуляются</td>
+<td>+1 в <code>reset_state_zero</code> при каждом Сбросе (кнопка/<code>/api/reset</code>/<code>-rst</code>/<code>-sta -r</code> из любого канала/автоочистка на старте); других инкрементов нет</td>
+<td>RAM, после загрузки может быть ≥1 (автоочистка на старте)</td>
+<td><code>main/spectrum.c:154,849</code>, <code>main/spectrum_epoch.h:31-35</code>, <code>main/main.c:120-126</code></td>
+</tr>
+<tr>
+<td><code>boot_count</code></td>
+<td>значение счётчика сессий NVS на первом успешном приращении после старта (обычно — загрузочное; при отказе записи NVS на загрузке — позднее)</td>
+<td>+1 на загрузке (<code>boot_config_bump_session</code>); не меняется до перезагрузки</td>
+<td>NVS (ключ <code>sess</code>) + RAM-копия <code>s_boot_sess</code></td>
+<td><code>main/boot_config.c:156-190,195</code>; <code>main/main.c:109</code></td>
+</tr>
+<tr>
+<td><code>session</code></td>
+<td>то же NVS-значение, читается живьём</td>
+<td>+1 на загрузке и +1 на Сброс непустого спектра (задача main, не чаще одной записи за такт; при отказе записи NVS не меняется)</td>
+<td>NVS</td>
+<td><code>main/boot_config.c:197-203</code>, <code>main/main.c:359-366</code>, <code>main/session_plan.h:6-18</code></td>
+</tr>
+<tr>
+<td><code>calib_channels</code></td>
+<td>число каналов, в шкале которых заданы <code>calib</code> — всегда <code>8192</code></td>
+<td>не меняется</td>
+<td>константа</td>
+<td><code>main/spectrum_fold.h:81-82</code></td>
+</tr>
+</tbody>
+</table>
+<p>Как клиенту отличить событие (<strong>[вывод]</strong> из определений выше; на живой плате не проверялось):</p>
+<table>
+<thead>
+<tr>
+<th>Событие</th>
+<th>Признак</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Перезагрузка платы</td>
+<td>сменился <code>boot_id</code> (и <code>boot_count</code>, и <code>/api/status.uptime_s</code>/<code>reset_reason</code>); <code>dev_resets</code> и <code>spec_resets</code> начинаются с нуля (возможно, <code>spec_resets</code>=1 из-за автоочистки). Токен CSRF тоже новый (<code>main/web_server.c:2961</code>)</td>
+</tr>
+<tr>
+<td>Сброс/перезапуск ПРИБОРА (плата работает)</td>
+<td><code>dev_resets</code> вырос; <code>boot_id</code>, <code>spec_resets</code> те же; спектр не обнуляется, <code>total</code> не падает (прежний набор сложен в базу)</td>
+</tr>
+<tr>
+<td>Сброс СПЕКТРА (кнопка, <code>/api/reset</code>, <code>-rst</code>)</td>
+<td><code>spec_resets</code> вырос, <code>boot_id</code> тот же; спектр обнулён — <code>total</code>/<code>time</code> падают; <code>session</code> +1 (если сбрасывалось непустое), <code>boot_count</code> не меняется</td>
+</tr>
+<tr>
+<td>«Пустой» промежуток</td>
+<td><code>404 No spectrum data yet</code> пока нет новой гистограммы</td>
+</tr>
+</tbody>
+</table>
+<p>Предупреждение: из-за кэша 2 с после Сброса клиент может получить до одного-двух ответов со старым спектром и старой эпохой (п. 2.7). Совпадает ли <code>dev_resets</code>+1 с одновременным Сбросом спектра, из кода однозначно не следует (база после Сброса обнуляется, <code>main/spectrum.c:862-863</code>; прямого теста не нашёл).</p>
+<h2>6. TCP-мост (порт 8234)</h2>
+<table>
+<thead>
+<tr>
+<th>Пункт</th>
+<th>Факт</th>
+<th>Источник</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Порт, адрес</td>
+<td><code>INADDR_ANY:8234</code></td>
+<td><code>main/atomspectra.h:19</code>, <code>main/tcp_bridge.c:204-208</code></td>
+</tr>
+<tr>
+<td>Клиентов</td>
+<td>один; второй принимается и сразу закрывается (<code>listen(fd,1)</code>, лог «Rejecting second client»)</td>
+<td><code>main/tcp_bridge.c:215,230-237</code>, <code>main/socket_budget.h:12</code></td>
+</tr>
+<tr>
+<td>Вход (от клиента)</td>
+<td>байты идут СЫРЫМ проходом в <code>usb_host_cdc_send</code>, без преобразования; буфер приёма 1024 Б</td>
+<td><code>main/tcp_bridge.c:149,165,179</code></td>
+</tr>
+<tr>
+<td>Любой входящий байт</td>
+<td>намерение набора → UNKNOWN (сторож набора перестаёт повторять <code>-sta</code>)</td>
+<td><code>main/tcp_bridge.c:176</code>, <code>main/usb_host_cdc.c:822-826</code></td>
+</tr>
+<tr>
+<td>Распознаётся платой в потоке клиента</td>
+<td>только <code>CMD_TEXT</code> с командой сброса: <code>-rst</code> (точно) и <code>-sta</code> с токеном <code>-r</code></td>
+<td><code>main/tcp_bridge.c:112-143</code>, <code>main/acq_intent.h:45-59</code></td>
+</tr>
+<tr>
+<td>Реакция на <code>-rst</code>/<code>-sta … -r</code></td>
+<td>сброс хвоста водопада; после успешной передачи прибору (<code>rc==0</code>) — <code>spectrum_reset()</code> (база платы очищается, <code>spec_resets</code>+1); при ошибке отправки — база сохраняется</td>
+<td><code>main/tcp_bridge.c:178-187</code></td>
+</tr>
+<tr>
+<td>Команды <code>-cal</code>, <code>-sto</code>, <code>-inf</code>, <code>-sta</code> без <code>-r</code> от клиента</td>
+<td>плата их НЕ интерпретирует, пересылает прибору как есть; запрос калибровки перед <code>-sta</code> (авточтение <code>-cal</code>) для TCP-моста не делается (намеренно)</td>
+<td><code>main/usb_host_cdc.c:1001-1020</code>; обработчика <code>-cal</code>/<code>-sto</code> в <code>tcp_bridge.c</code> нет</td>
+</tr>
+<tr>
+<td>Список команд протокола прибора</td>
+<td><code>-sta [xx] [-r] [-s]</code>, <code>-sto</code>, <code>-sho</code>, <code>-stt</code>, <code>-rst</code> и др. — описаны в <code>PROTOCOL.md</code>, а не в коде моста</td>
+<td><code>PROTOCOL.md:~26-45</code></td>
+</tr>
+<tr>
+<td>Выход (прибор→клиент)</td>
+<td>сырой поток прибора через PSRAM-кольцо 256 КБ; блок <code>send</code> 4096 Б; <code>SO_SNDTIMEO</code> 1000 мс — при таймауте остаток куска отбрасывается и считается в <code>bridge_drop</code>; также <code>bridge_drop</code> растёт при переполнении кольца (<code>main/tcp_bridge.c:61</code>)</td>
+<td><code>main/tcp_bridge.c:38-41,69-110</code>, <code>:245-248</code></td>
+</tr>
+<tr>
+<td>Нет клиента</td>
+<td>поток не копится</td>
+<td><code>main/tcp_bridge.c:57</code></td>
+</tr>
+<tr>
+<td>Параметры сокета</td>
+<td><code>TCP_NODELAY</code>, keepalive idle 30 с / interval 10 с / count 3</td>
+<td><code>main/tcp_bridge.c:239-258</code></td>
+</tr>
+<tr>
+<td>Аутентификация</td>
+<td>нет</td>
+<td><code>README.md:~458</code>, код <code>tcp_bridge.c</code></td>
+</tr>
+<tr>
+<td>Потоки задач</td>
+<td><code>tcp_srv</code>, <code>tcp_tx</code>, <code>tcp_rx</code> на core 1</td>
+<td><code>main/tcp_bridge.c:296-300</code></td>
+</tr>
+</tbody>
+</table>
+<p>Не нашёл в коде моста: фрейминга/версионирования, ответа на неизвестные команды, ограничения скорости команд.</p>
+<h2>7. Ограничения и поведение под нагрузкой</h2>
+<table>
+<thead>
+<tr>
+<th>Пункт</th>
+<th>Факт</th>
+<th>Источник</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Поток httpd</td>
+<td>одна задача, обработчики исполняются строго по очереди (ядро 1, стек 8192)</td>
+<td><code>main/http_gate_budget.h:6-8</code>, <code>main/web_server.c:2970,2981</code></td>
+</tr>
+<tr>
+<td>Открытые сокеты httpd</td>
+<td>19 (+3 служебных IDF +2 TCP-моста = 24 при сборке)</td>
+<td><code>main/socket_budget.h:9-13</code>, <code>main/web_server.c:2982</code></td>
+</tr>
+<tr>
+<td>Вытеснение</td>
+<td><code>lru_purge_enable=true</code>: при исчерпании пула закрывается самое давнее соединение</td>
+<td><code>main/web_server.c:2983</code></td>
+</tr>
+<tr>
+<td>Таймауты</td>
+<td>recv/send 3 с; keep-alive TCP idle 5 с, interval 5 с, count 3</td>
+<td><code>main/web_server.c:2990-2991,2998-3001</code></td>
+</tr>
+<tr>
+<td>Обработчиков URI</td>
+<td>до 90 (комментарий: запас на момент пересчёта)</td>
+<td><code>main/web_server.c:2980,2934-2936</code></td>
+</tr>
+<tr>
+<td>Кэш спектра</td>
+<td>TTL 2 с, одиночная пересборка (single-flight), общая для вкладок</td>
+<td><code>main/spectrum_http_cache.h:8-11</code>, <code>main/spectrum_http_cache.c:196-217</code></td>
+</tr>
+<tr>
+<td>Частота опроса</td>
+<td>в коде явной нормы нет; README: чаще раза в 2 с новых данных кэш не даёт; Web UI опрашивает каждые 2000 мс</td>
+<td><code>README.md:~430</code>, <code>web/index.html:914</code></td>
+</tr>
+<tr>
+<td>«Тяжёлый» слот</td>
+<td>concurrency=1 для флеш-операций (сохранённые спектры, экспорт, импорт); занят → <code>503 Retry-After: 1</code>; ожидание слота до 2000 мс</td>
+<td><code>main/http_io_gate.h:6-8</code>, <code>main/http_gate_budget.h:20-30</code></td>
+</tr>
+<tr>
+<td>Очередь сжатия</td>
+<td>глубина 2; переполнение → несжатый ответ, <code>gz_queue_full</code>+1</td>
+<td><code>main/spectrum_gz_plan.h:161</code>, <code>main/spectrum_gz.c:362-378</code></td>
+</tr>
+<tr>
+<td>Срок задания</td>
+<td>1500 мс</td>
+<td><code>main/spectrum_gz_plan.h:162,181-183</code></td>
+</tr>
+<tr>
+<td>Память</td>
+<td>при включённом gzip постоянно ≈180 КиБ PSRAM (компрессор + стек), на задание — ещё буферы</td>
+<td><code>web/system.html:303</code> (текст UI), <code>main/spectrum_gz.c:36,76</code></td>
+</tr>
+<tr>
+<td>Размер ответа</td>
+<td>v1 ≈ до <code>8192·11</code> Б + meta (буфер ≥64 КБ, растёт); v2 — <code>N·6+2048</code> Б минимум; <code>/api/spectrum</code> — 32768 Б</td>
+<td><code>main/spectrum_http_cache.c:411,488</code>, <code>README.md:370</code></td>
+</tr>
+<tr>
+<td>TCP_NODELAY</td>
+<td>включается на сокете для ответов спектра</td>
+<td><code>main/spectrum_http_cache.c:265-280</code></td>
+</tr>
+<tr>
+<td>Параллельная работа каналов</td>
+<td>согласования команд между TCP-мостом, Web UI и REST в коде не обнаружено (README)</td>
+<td><code>README.md:~459-461</code></td>
+</tr>
+</tbody>
+</table>
+<h2>8. Что не установлено / не проверено</h2>
+<table>
+<thead>
+<tr>
+<th>№</th>
+<th>Вопрос</th>
+<th>Статус</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Порт HTTP-сервера числом</td>
+<td>умолчание IDF; в репозитории не записано (README — адрес без порта)</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Точный текст и заголовки тел <code>400/404/500</code> на проводе (<code>httpd_resp_send_err</code>)</td>
+<td>зависит от IDF, не проверено</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Порядок байт <code>/api/spectrum</code></td>
+<td>кодом не задан; «LE» — комментарий в <code>spectrum_http_cache.h:39</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td>Применение <code>calib</code> к свёрнутому спектру (центры групп)</td>
+<td>формулы в коде нет</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Совпадение <code>dev_resets</code>+1 с Сбросом спектра</td>
+<td>прямого теста не нашёл</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Поведение на живой плате (все пункты выше)</td>
+<td>в этом разборе не измерялось; только код и host-тесты</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Выигрыш gzip по размеру/времени</td>
+<td>не измерялся</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Рекомендуемая частота опроса сверх «≥2 с»</td>
+<td>кроме README/UI нет</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Поведение после перезагрузки: гарантия уникальности <code>boot_id</code></td>
+<td>вероятностная (32 бит), порог коллизии в доках не указан</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Что делает прибор с <code>-sto</code> в части гистограмм</td>
+<td>README: «на приборе не проверялось» (<code>README.md:~441</code>)</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Неконечные значения <code>calib</code> (NaN/Inf) в JSON meta</td>
+<td>формат <code>%.15g</code> не защищает; источник значений из прибора не разбирался</td>
+</tr>
+<tr>
+<td>12</td>
+<td>Расхождения документации: README описывает REST по 1.2.37 (<code>README.md:~407</code>) и называет <code>channels</code> полем v1</td>
+<td>v1 без <code>channels</code> по коду (п. 2.1); README про v2 (<code>?channels=N</code>) в таблице эндпоинтов, кроме строки gzip, не говорит</td>
+</tr>
+<tr>
+<td>13</td>
+<td>Объём ответов <code>/api/status</code> без <code>load</code> и т.д.</td>
+<td>не измерялся</td>
+</tr>
+</tbody>
+</table></body></html>

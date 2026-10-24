@@ -14,6 +14,9 @@
 #include "monitor.h"        // #MON-1: серия CPS-мониторинга (/api/monitor/series)
 #include "meta_w_handler.h" // З-5 (gate 1.2.36 pass1) / З-3 (pass2): обработчик meta.json?w= (разбор meta_w_parse.h)
 #include "spectrum_http_cache.h"  // #PERF-1: 2s snapshot cache + meta/binary
+#include "task_load_sampler.h"    // D1: загрузка по задачам/ядрам за интервал между вызовами /api/status
+#include "spectrum_gz.h"          // #GZ-T (1.2.37-rc90): тест сжатия gzip тел спектра (задача, метрики)
+#include "spectrum_gz_plan.h"     // #GZ-T: spec_gz_level_valid (POST /api/boot-config)
 #include "spectrum_calib_meta.h"  // 1.2.36 H12: /api/device без буфера 33 КБ
 #include "http_io_gate.h"         // #PERF-2: HEAVY lane gate
 #include "flash_quiet.h"          // М7: координация записи слепка DSP с autosave (#FW-8)
@@ -51,6 +54,7 @@
 #include "spectrum_import_plan.h"  // 1.2.31: импорт фона (разбор тела ASI1) + путь удаления записи (host-тест)
 #include "n42_time_plan.h"           // #AWF-F2: StartDateTime N42 в UTC с Z (host-тест)
 #include "ttl_plan.h"            // 1.2.36 H5: срок жизни медленной части /api/system (host-тест)
+#include "cmdlog_glue.h"          // 1.2.39-t1: журнал команд к прибору
 #define SYS_SLOW_PERIOD_US (10LL * 1000000LL)   // 1.2.36 H5: период обхода кучи/стеков (решение оператора 2026-10-10)
 #include "import_body_plan.h"      // 1.2.32: D-1131-1/#AWF-F3 — план приёма тела /api/import (host-тест)
 _Static_assert(IMPORT_BODY_SIZE == SPEC_IMPORT_SIZE, "import_body_plan.h: IMPORT_BODY_SIZE != SPEC_IMPORT_SIZE");
@@ -210,6 +214,10 @@ static esp_err_t handle_status(httpd_req_t *req)
     // наблюдение 25.09: time=3611 неподвижно против растущего spectrum.json).
     cJSON_AddNumberToObject(root, "time", sp->total_time_sec);
     status_add_base_info(root);
+    // D1: интервалы без завершённого коммита свипа (не hist_drop) и загрузка CPU по ядрам/задачам за окно между вызовами.
+    cJSON_AddNumberToObject(root, "sweep_missed", spectrum_sweep_missed());
+    cJSON *load = task_load_json();
+    if (load) cJSON_AddItemToObject(root, "load", load);
     {   // #DOSE-A: живая МД за окно 10 с (умолчание SMA главной); нет данных / режим none — dose_rate:null
         spec_dose_t dz;
         monitor_dose_live(10, &dz);
@@ -369,6 +377,32 @@ static esp_err_t handle_devlog(httpd_req_t *req)
     httpd_resp_sendstr(req, buf);
     free(buf);
     return ESP_OK;
+}
+
+// 1.2.39-t1: GET /api/debug/cmdlog?since=N -- журнал последних команд к прибору (кольцо на 32).
+// CSRF обязателен, как у /api/debug/log (в тексте команд видны параметры набора).
+// Без флага сборки AWF_CMDLOG ручка отвечает 404.
+static esp_err_t handle_debug_cmdlog(httpd_req_t *req)
+{
+#ifdef AWF_CMDLOG
+    if (!csrf_check(req)) return ESP_FAIL;
+    uint32_t since = 0;
+    char q[48], v[16];
+    if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK && httpd_query_key_value(q, "since", v, sizeof(v)) == ESP_OK)
+        since = strtoul(v, NULL, 10);
+    size_t cap = cmdlog_glue_json(since, NULL, 0) + 1 + 256;   // +256: запись могла прийти между двумя вызовами
+    char *buf = malloc(cap);
+    if (!buf) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM"); return ESP_FAIL; }
+    size_t n = cmdlog_glue_json(since, buf, cap);
+    if (n == 0 || n >= cap) { free(buf); httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "cmdlog"); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, buf);
+    free(buf);
+    return ESP_OK;
+#else
+    httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "no cmdlog");
+    return ESP_FAIL;
+#endif
 }
 
 // #FW-50: GET /api/debug/log/meta — JSON status of PSRAM log ring (no CSRF).
@@ -569,7 +603,10 @@ static esp_err_t handle_reset(httpd_req_t *req)
     // платы выполнен. Н-4/Н-Д1: -rst дошлётся на ближайшем коннекте, если к тому
     // времени набор прибора не принят по таймауту гейта #58 и не было нового Сброса.
     (void)spectrogram_flush_tail(1200);   // #RST-TAIL: хвост с последней строки до Сброса — строкой водопада, ДО -rst
-    bool sent = usb_host_cdc_send(pkt.data, pkt.len) == 0;
+    uint32_t cl_seq = cmdlog_glue_record(2, cmd, strlen(cmd), 1);   // t1: src 2 rest_reset
+    int cl_rc = usb_host_cdc_send(pkt.data, pkt.len);
+    cmdlog_glue_result(cl_seq, cl_rc == 0, cl_rc);
+    bool sent = cl_rc == 0;
     if (sent) {
         spectrum_reset();
     } else {
@@ -850,6 +887,12 @@ static esp_err_t handle_boot_config_get(httpd_req_t *req)
         bc.dose_live_enabled ? "true" : "false",
 
         boot_config_get_session());
+    {   // #GZ-T (1.2.37-rc90): ключ gzip_level — вместо закрывающей '}' (формат выше не меняется; ответ <= ~310 Б при resp[420])
+        size_t rl = strlen(resp);
+        if (rl > 0 && resp[rl - 1] == '}') {
+            snprintf(resp + rl - 1, sizeof(resp) - (rl - 1), SPEC_GZ_BOOTCFG_TAIL, (unsigned)bc.gzip_level);
+        }
+    }
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, resp);
     return ESP_OK;
@@ -912,9 +955,18 @@ static esp_err_t handle_boot_config_set(httpd_req_t *req)
         bc.calib_always_from_device = cJSON_IsTrue(it);
     if ((it = cJSON_GetObjectItem(root, "dose_live")))        // #DOSE-TOGGLE (1.2.37): «Считать живую МД»
         bc.dose_live_enabled = cJSON_IsTrue(it);
+    if ((it = cJSON_GetObjectItem(root, "gzip_level"))) {   // #GZ-T (1.2.37-rc90): тест сжатия спектра, только 0 / 1 / 6
+        if (!cJSON_IsNumber(it) || it->valuedouble != (double)it->valueint || !spec_gz_level_valid(it->valueint)) {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "gzip_level must be 0, 1 or 6");
+            return ESP_FAIL;
+        }
+        bc.gzip_level = (uint8_t)it->valueint;
+    }
 
     cJSON_Delete(root);
     int rc = boot_config_save(&bc);
+    spectrum_gz_sync();   // #GZ-T (1.2.37-rc90): уровень сжатия применяется сразу (задача сжатия, без перезагрузки)
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, rc == 0 ? "{\"ok\":true}" : "{\"ok\":false}");
     return ESP_OK;
@@ -1985,7 +2037,9 @@ static esp_err_t handle_reboot_device(httpd_req_t *req)
     shproto_packet_start(&pkt, CMD_REBOOT);
     shproto_packet_complete(&pkt);
     usb_host_cdc_acq_intent_device_reboot();  // сторож набора вернёт набор после перезагрузки
+    uint32_t cl_seq = cmdlog_glue_record(4, "[CMD_REBOOT]", 12, 0);   // t1: src 4 web_ui; кадр CMD_REBOOT без текста
     int ret = usb_host_cdc_send(pkt.data, pkt.len);
+    cmdlog_glue_result(cl_seq, ret == 0, ret);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, ret == 0 ? "{\"ok\":true}" : "{\"ok\":false}");
     return ESP_OK;
@@ -2112,6 +2166,7 @@ static esp_err_t handle_system(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "spectrum_build_us", (double)spectrum_http_cache_build_us_last());
     cJSON_AddNumberToObject(root, "spectrum_build_us_max", (double)spectrum_http_cache_build_us_max());
     cJSON_AddNumberToObject(root, "spectrum_json_builds", (double)spectrum_http_cache_json_builds());
+    spectrum_gz_add_metrics(root);   // #GZ-T (1.2.37-rc90): gz_level, gz_comp_bytes, gz_ok/miss/nomem/fail, gz_async_ok/fallback/async_timeout/queue_full/send_err, gz_ring_us, время, размеры, gz_stack_hwm
     cJSON_AddNumberToObject(root, "heap_walk_n", (double)s_heap_walk_n);
     cJSON_AddNumberToObject(root, "autosave_writes", (double)spectrum_autosave_writes());
     cJSON_AddNumberToObject(root, "autosave_skips", (double)spectrum_autosave_skips());
@@ -2938,6 +2993,7 @@ void web_server_init(void)
     csrf_generate();
     http_io_gate_init();           // #PERF-2
     spectrum_http_cache_init();    // #PERF-1
+    spectrum_gz_init();            // #GZ-T (1.2.37-rc90): крючки сжатия спектра; задача и память — только при gzip_level 1/6
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     // #WF-1: httpd на core 1 к остальной прикладной сети (#TCP-2). Дефолт
@@ -2991,6 +3047,7 @@ void web_server_init(void)
         {"/api/command",                 HTTP_POST, handle_command,          NULL},
         {"/api/devlog",                  HTTP_GET,  handle_devlog,           NULL},
         {"/api/debug/log/meta",          HTTP_GET,  handle_debug_log_meta,   NULL},  // #FW-50
+        {"/api/debug/cmdlog",            HTTP_GET,  handle_debug_cmdlog,     NULL},  // 1.2.39-t1 CSRF, 404 без AWF_CMDLOG
         {"/api/debug/log",               HTTP_GET,  handle_debug_log_get,    NULL},  // #FW-50 CSRF
         {"/api/debug/log/flush",         HTTP_POST, handle_debug_log_flush,  NULL},  // #FW-50 CSRF
         {"/api/debug/log/config",        HTTP_GET,  handle_debug_log_meta,   NULL},  // тот же meta_json

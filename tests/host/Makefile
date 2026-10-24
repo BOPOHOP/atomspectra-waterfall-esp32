@@ -59,22 +59,41 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_autosave_skip_plan.c \
        test_ttl_plan.c \
        test_spectrum_meta_fmt.c \
+       test_spectrum_fold.c \
+       test_spectrum_epoch.c \
+       test_sweep_missed.c \
+       test_task_load.c \
        test_seq_copy.c \
        test_monitor_window.c \
        test_autosave_mark_retry.c \
        test_meta_w_parse.c
 
-test: $(SRCS) test_util.h socket_budget_check.sh ../../main/socket_budget.h test_import_body_plan test_import_tmp_plan test_n42_time_plan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w
+test: $(SRCS) test_util.h socket_budget_check.sh ../../main/socket_budget.h test_import_body_plan test_import_tmp_plan test_n42_time_plan test_spectrum_gz_plan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w test_glue_fold test_epoch_atomic test_glue_epoch test_spectrum_gz_async_plan test_spectrum_gz_job test_glue_gz_async test_mdns_txt_plan test_tcp_reset test_cmdlog
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm
 	./test_runner
 	bash ./socket_budget_check.sh
 	./test_import_body_plan
 	./test_import_tmp_plan
 	./test_n42_time_plan
+	./test_spectrum_gz_plan
 	./test_glue_cache
 	./test_glue_monitor
 	./test_glue_cache_oom
 	./test_glue_meta_w
+	./test_glue_fold
+	./test_epoch_atomic
+	./test_glue_epoch
+	./test_spectrum_gz_async_plan
+	./test_spectrum_gz_job
+	./test_glue_gz_async
+	./test_mdns_txt_plan
+	./test_tcp_reset
+	./test_cmdlog
+
+# D2 (#SA-3): тот же набор БЕЗ остановки на первом упавшем бинаре - мутационные скрипты D2 (MT_TARGET=test-keepgoing) видят красные тесты ВСЕХ бинарей.
+test-keepgoing: $(SRCS) test_util.h socket_budget_check.sh ../../main/socket_budget.h test_import_body_plan test_import_tmp_plan test_n42_time_plan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w test_glue_fold test_epoch_atomic test_glue_epoch test_spectrum_gz_async_plan test_spectrum_gz_job test_glue_gz_async test_mdns_txt_plan test_tcp_reset test_cmdlog
+	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm
+	@rc=0; for t in ./test_runner "bash ./socket_budget_check.sh" ./test_import_body_plan ./test_import_tmp_plan ./test_n42_time_plan ./test_glue_cache ./test_glue_monitor ./test_glue_cache_oom ./test_glue_meta_w ./test_glue_fold ./test_epoch_atomic ./test_glue_epoch ./test_spectrum_gz_async_plan ./test_spectrum_gz_job ./test_glue_gz_async ./test_mdns_txt_plan ./test_tcp_reset ./test_cmdlog; do $$t || rc=1; done; exit $$rc
 
 # release-gate 1.2.36 pass1 С-2: тесты СКЛЕЙКИ - сам main/*.c (не копия) с заглушками IDF/FreeRTOS из glue/ (учёт блоков glue_alloc).
 GLUE_DEPS = glue/glue_stubs.c glue/*.h glue/freertos/*.h
@@ -92,6 +111,18 @@ test_glue_meta_w: test_glue_meta_w.c glue/glue_cache_env.h $(GLUE_DEPS) ../../ma
 test_glue_monitor: test_glue_monitor.c $(GLUE_DEPS) ../../main/monitor.c ../../main/monitor_window.h
 	$(CC) $(CFLAGS) -Iglue -I. -o test_glue_monitor test_glue_monitor.c glue/glue_stubs.c -lm
 
+# D1: склейка GET /api/spectrum.json?channels=N с самим spectrum_http_cache.c (коды 400/404, байты v1/v2, чередование)
+test_glue_fold: test_glue_fold.c glue/glue_cache_env.h $(GLUE_DEPS) ../../main/spectrum_fold.h ../../main/spectrum_http_cache.c ../../main/spectrum_meta_fmt.h ../../main/spectrum_t1.c
+	$(CC) $(CFLAGS) -Iglue -I. -o test_glue_fold test_glue_fold.c glue/glue_stubs.c ../../main/spectrum_t1.c -lm
+
+# D2 (K2): seqlock-снимок с эпохой (детерминированные вклинивания писателя + стресс двумя потоками, pthread)
+test_epoch_atomic: test_epoch_atomic.c ../../main/spectrum_epoch.h ../../main/seq_copy.h
+	$(CC) $(CFLAGS) -pthread -o test_epoch_atomic test_epoch_atomic.c
+
+# D2 (K2): склейка кэша - эпоха парой со снимком (epoch_cache_gen), ответ без параметра байтово == снимок платы (v1_bytes), обрезка query (400)
+test_glue_epoch: test_glue_epoch.c glue/glue_cache_env.h $(GLUE_DEPS) ../../main/spectrum_fold.h ../../main/spectrum_epoch.h ../../main/spectrum_http_cache.c ../../main/spectrum_meta_fmt.h ../../main/spectrum_t1.c
+	$(CC) $(CFLAGS) -Iglue -I. -o test_glue_epoch test_glue_epoch.c glue/glue_stubs.c ../../main/spectrum_t1.c -lm
+
 # #AWF-F4: автономный тест со своим main() (import_tmp_plan.h) — какой файл SPEC_DIR чистить на старте.
 test_import_tmp_plan: test_import_tmp_plan.c ../../main/import_tmp_plan.h
 	$(CC) $(CFLAGS) -o test_import_tmp_plan test_import_tmp_plan.c
@@ -99,6 +130,35 @@ test_import_tmp_plan: test_import_tmp_plan.c ../../main/import_tmp_plan.h
 # AWF-F2: standalone test (n42_time_plan.h) - N42 StartDateTime in UTC with Z.
 test_n42_time_plan: test_n42_time_plan.c ../../main/n42_time_plan.h
 	$(CC) $(CFLAGS) -o test_n42_time_plan test_n42_time_plan.c
+
+# #GZ-T (1.2.37-rc90): автономный тест со своим main() (spectrum_gz_plan.h) - уровень, Accept-Encoding, рамка gzip, поколение, запас PSRAM.
+test_spectrum_gz_plan: test_spectrum_gz_plan.c ../../main/spectrum_gz_plan.h
+	$(CC) $(CFLAGS) -o test_spectrum_gz_plan test_spectrum_gz_plan.c
+
+# Ф4.2 (D3): чистые решения асинхронной отдачи (decide/route/срок/очередь/кольцо) и исполнитель задания (spectrum_gz_job.h, учёт выделений).
+test_spectrum_gz_async_plan: test_spectrum_gz_async_plan.c ../../main/spectrum_gz_plan.h
+	$(CC) $(CFLAGS) -o test_spectrum_gz_async_plan test_spectrum_gz_async_plan.c
+
+test_spectrum_gz_job: test_spectrum_gz_job.c ../../main/spectrum_gz_job.h ../../main/spectrum_gz_plan.h
+	$(CC) $(CFLAGS) -o test_spectrum_gz_job test_spectrum_gz_job.c
+
+# Ф4.2: склейка кэша (main/spectrum_http_cache.c) + исполнитель задания + настоящий zlib: эквивалентность распаковкой, атомарность эпохи, утечки.
+test_glue_gz_async: test_glue_gz_async.c glue/glue_cache_env.h $(GLUE_DEPS) ../../main/spectrum_gz_job.h ../../main/spectrum_gz_plan.h ../../main/spectrum_http_cache.c ../../main/spectrum_http_cache.h ../../main/spectrum_fold.h ../../main/spectrum_t1.c
+	$(CC) $(CFLAGS) -Iglue -I. -o test_glue_gz_async test_glue_gz_async.c glue/glue_stubs.c ../../main/spectrum_t1.c -lm -lz
+
+# Ф4.2: только три теста асинхронной отдачи, без остановки на первом упавшем (мутационный скрипт mutate_gz_async.sh; строки ALL PASSED / CHECK(S) FAILED для mutlib.sh).
+test-gz-keepgoing: test_spectrum_gz_async_plan test_spectrum_gz_job test_glue_gz_async
+	@rc=0; for t in ./test_spectrum_gz_async_plan ./test_spectrum_gz_job ./test_glue_gz_async; do $$t || rc=1; done; if [ $$rc -eq 0 ]; then echo "ALL PASSED"; else echo "CHECK(S) FAILED"; fi; exit $$rc
+
+# 1.2.39: автономные тесты со своим main() - TXT службы mDNS _atomspectra._tcp, распознавание -rst без завершающего  в кадре TCP-моста, кольцо журнала команд.
+test_mdns_txt_plan: test_mdns_txt_plan.c ../../main/mdns_txt_plan.h
+	$(CC) $(CFLAGS) -o test_mdns_txt_plan test_mdns_txt_plan.c
+
+test_tcp_reset: test_tcp_reset.c ../../main/tcp_reset_plan.h ../../main/acq_intent.h
+	$(CC) $(CFLAGS) -o test_tcp_reset test_tcp_reset.c
+
+test_cmdlog: test_cmdlog.c ../../main/cmdlog.h
+	$(CC) $(CFLAGS) -o test_cmdlog test_cmdlog.c
 
 # Автономный тест со своим main() (import_body_plan.h) — в общий test_runner не линкуется.
 test_import_body_plan: test_import_body_plan.c ../../main/import_body_plan.h
@@ -124,7 +184,7 @@ tsan: test_seq_stress.c ../../main/seq_copy.h
 	TSAN_OPTIONS="halt_on_error=0 exitcode=0" ./test_seq_stress_tsan
 
 clean:
-	rm -f test_runner test_runner_asan bench_json_fmt test_import_body_plan test_import_tmp_plan test_n42_time_plan test_seq_stress test_seq_stress_tsan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w
+	rm -f test_runner test_runner_asan bench_json_fmt test_import_body_plan test_import_tmp_plan test_n42_time_plan test_spectrum_gz_plan test_seq_stress test_seq_stress_tsan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w test_glue_fold test_epoch_atomic test_glue_epoch test_spectrum_gz_async_plan test_spectrum_gz_job test_glue_gz_async test_mdns_txt_plan test_tcp_reset test_cmdlog
 
 # UI-P1: замер до/после старого(vsnprintf-loop)/нового(json_append_uint32_csv)
 # форматтера бинов — числа для отчёта, не гейт ALL PASSED.

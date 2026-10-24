@@ -10,19 +10,46 @@
 spectrum_data_t g_spec;
 bool g_spec_ok = true;
 
-bool spectrum_get_snapshot_seq(spectrum_data_t *out) {
+/* D2 (K2): эпоха, снятая вместе со снимком, и boot_id. g_live_ep - "живые" счётчики прошивки: заглушка снимка копирует их в пару ep
+   в момент сборки кэша (как spectrum_get_snapshot_epoch_seq в одном окне seqlock); тест меняет g_live_ep между сборками. */
+spec_epoch_t g_live_ep;
+uint32_t g_boot_id = 0xB007B007u;
+
+bool spectrum_get_snapshot_epoch_seq(spectrum_data_t *out, spec_epoch_t *ep) {
     if (!g_spec_ok) return false;
     memcpy(out, &g_spec, sizeof *out);
+    *ep = g_live_ep;
     return out->valid;
 }
 
+uint32_t spectrum_boot_id(void) {
+    return g_boot_id;
+}
+
+/* ЖИВЫЕ геттеры прошивки (каждый со своим замком, неатомарно со снимком) - в склейке кэша их вызывать НЕЛЬЗЯ; заглушки нужны мутанту KE6 */
+void spectrum_get_base_info(uint32_t *base_time, uint32_t *base_counts, uint32_t *dev_resets) {
+    if (base_time) *base_time = 0;
+    if (base_counts) *base_counts = 0;
+    if (dev_resets) *dev_resets = g_live_ep.dev_resets;
+}
+
+uint32_t spectrum_reset_gen(void) {
+    return g_live_ep.spec_resets;
+}
+
+/* D2: живые счётчики meta (по умолчанию - стенд 00000081); замороженный тест v1_bytes ставит значения из снимка .146 */
+uint32_t g_live_hist_ok = STAND_HIST_OK, g_live_hist_drop = STAND_HIST_DROP, g_live_bridge_drop = STAND_BRIDGE_DROP;
+uint32_t g_live_usb_rx_err = STAND_USB_RX_ERR, g_live_rx_ring_drops = STAND_RX_RING_DROPS, g_live_reset_unconfirmed = STAND_RESET_UNCONFIRMED;
+int g_live_dead = STAND_DEAD, g_live_as_age = (int)STAND_AUTOSAVE_AGE_SEC, g_live_as_streak = (int)STAND_AUTOSAVE_FAIL_STREAK;
+float g_live_live = (float)STAND_LIVE;
+
 void spectrum_get_hist_stats(uint32_t *commits, uint32_t *drops) {
-    *commits = STAND_HIST_OK;
-    *drops = STAND_HIST_DROP;
+    *commits = g_live_hist_ok;
+    *drops = g_live_hist_drop;
 }
 
 bool usb_host_cdc_spectrometer_dead(void) {
-    return STAND_DEAD != 0;
+    return g_live_dead != 0;
 }
 
 /* 1.2.37 X-Hist-Age-Ms: the stamp of the last histogram is set by the test (0 - none since boot); "now" is the glue clock (glue_now_us),
@@ -33,32 +60,32 @@ int32_t usb_host_cdc_hist_age_ms(void) {
 }
 
 int spectrum_autosave_age_sec(void) {
-    return (int)STAND_AUTOSAVE_AGE_SEC;
+    return g_live_as_age;
 }
 
 int spectrum_autosave_fail_streak(void) {
-    return (int)STAND_AUTOSAVE_FAIL_STREAK;
+    return g_live_as_streak;
 }
 
 uint32_t tcp_bridge_dropped_bytes(void) {
-    return STAND_BRIDGE_DROP;
+    return g_live_bridge_drop;
 }
 
 uint32_t usb_host_cdc_rx_errors(void) {
-    return STAND_USB_RX_ERR;
+    return g_live_usb_rx_err;
 }
 
 uint32_t usb_host_cdc_rx_ring_drops(void) {
-    return STAND_RX_RING_DROPS;
+    return g_live_rx_ring_drops;
 }
 
 uint32_t spectrum_reset_unconfirmed_count(void) {
-    return STAND_RESET_UNCONFIRMED;
+    return g_live_reset_unconfirmed;
 }
 
 float spectrum_compute_live_time(const spectrum_data_t *sp) {
     (void)sp;
-    return (float)STAND_LIVE;
+    return g_live_live;
 }
 
 static void __attribute__((unused)) glue_fill_stand(spectrum_data_t *s, uint32_t scale) {

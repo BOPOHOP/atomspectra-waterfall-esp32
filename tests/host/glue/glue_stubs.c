@@ -77,6 +77,10 @@ void *heap_caps_realloc(void *ptr, size_t size, uint32_t caps) {
     return glue_realloc(ptr, size);
 }
 
+void heap_caps_free(void *ptr) {
+    glue_free(ptr);
+}
+
 int64_t esp_timer_get_time(void) {
     return glue_now_us;
 }
@@ -206,9 +210,12 @@ BaseType_t xSemaphoreTake(SemaphoreHandle_t s, TickType_t t) {
     return pdTRUE;
 }
 
+void (*glue_on_give)(void) = NULL;
+
 BaseType_t xSemaphoreGive(SemaphoreHandle_t s) {
     if (!s) return pdTRUE;
     glue_sem_depth--;
+    if (glue_on_give) glue_on_give();
     return pdTRUE;
 }
 

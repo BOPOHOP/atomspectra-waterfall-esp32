@@ -5,6 +5,7 @@
 #include "spectrum_t1.h"
 #include "spec_cache_gen.h"       // М5: чистое решение "отбросить устаревший снимок" (host-pure)
 #include "spectrum_meta_fmt.h"
+#include "spectrum_fold.h"          // D1: ?channels=N - свёртка bins (версия 2 ответа)
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -52,6 +53,10 @@ static int                s_readers;
 // вторую параллельную сборку с того же tick).
 static spectrum_data_t   *s_sp_build;    // PSRAM, scratch для снимка при пересборке
 static bool               s_building;
+// D2 (K2): эпоха {dev_resets, spec_resets} живёт в кэше ПАРОЙ со снимком s_sp (снята в том же окне seqlock, spectrum_get_snapshot_epoch_seq)
+// и меняется swap-ом вместе с ним; v2 читает её копией под s_mtx в той же секции, где берёт bins. Живьём (через геттеры) - НЕ читать.
+static spec_epoch_t       s_ep;
+static spec_epoch_t       s_ep_build;
 // М5 (release-gate-firmware-v1.2.28-code.md): счётчик поколений — снимок в
 // finish_build() снимается ДО захвата s_mtx (:211), invalidate() может успеть
 // вклиниться между снимком и commit'ом и пометить его устаревшим уже ПОСЛЕ
@@ -125,7 +130,7 @@ void spectrum_http_cache_init(void)
 static bool spectrum_http_cache_finish_build(int64_t now, uint32_t gen_before)
 {
     int64_t t_build0 = esp_timer_get_time();   // 1.2.36 Commit 0: цена снимка+сборки (без ожидания s_mtx)
-    bool snap_ok = s_sp_build && spectrum_get_snapshot_seq(s_sp_build);   // 1.2.36 H1: без SPEC_LOCK (seqlock)
+    bool snap_ok = s_sp_build && spectrum_get_snapshot_epoch_seq(s_sp_build, &s_ep_build);   // 1.2.36 H1: без SPEC_LOCK (seqlock); D2: эпоха в том же окне
     size_t nml = 0, na = 0, nb = 0;
     bool build_ok = snap_ok && build_meta(s_sp_build, &s_meta_build, &s_meta_build_cap, &nml, &na, &nb);
     {
@@ -165,6 +170,9 @@ static bool spectrum_http_cache_finish_build(int64_t now, uint32_t gen_before)
     spectrum_data_t *tmp = s_sp;
     s_sp = s_sp_build;
     s_sp_build = tmp;
+    spec_epoch_t tmp_ep = s_ep;   // D2: эпоха уходит в кэш вместе со своим снимком
+    s_ep = s_ep_build;
+    s_ep_build = tmp_ep;
 
     // Swap meta buffers
     char *tmp_meta = s_meta;
@@ -301,13 +309,48 @@ static void snapshot_end(void)
     xSemaphoreGive(s_mtx);
 }
 
-esp_err_t spectrum_http_send_json(httpd_req_t *req)
+// D1: параметр channels запроса. 0 - ключа нет (ответ версии 1, байты прежние), 1 - допустимое N в *n, -1 - ключ есть, значение недопустимо (400).
+// Запрос длиннее буфера (95 символов) - 400 (D2): обрезанное значение могло бы прочитаться как другое допустимое N.
+static int spec_req_channels(httpd_req_t *req, int *n)
 {
+    char q[96];
+    if (httpd_req_get_url_query_len(req) == 0) return 0;
+    esp_err_t qe = httpd_req_get_url_query_str(req, q, sizeof q);
+    if (qe == ESP_ERR_HTTPD_RESULT_TRUNC) {   // D2 (P3, К0): запрос не уместился в q[]. 400 - только если channels виден в уместившейся части или на её границе
+        if (spec_channels_query_parse(q, n) != 0) return -1;   // ключ в q[] (в т.ч. "channels=2048" + усечённое "0": раньше читалось как 2048) -> 400
+        const char *seg = strrchr(q, '&');
+        seg = seg ? seg + 1 : q;   // последний (возможно усечённый) параметр: если это начало слова "channels" - хвост мог его продолжить -> 400
+        if (strncmp(seg, "channels", strlen(seg)) == 0) return -1;
+        return 0;   // иначе ответ версии 1, как без параметров (до D2 такой запрос получал 200)
+    }
+    if (qe != ESP_OK) return 0;
+    return spec_channels_query_parse(q, n);
+}
+
+static esp_err_t spectrum_http_send_json_v2(httpd_req_t *req, int n);
+
+// Ф4.2: крючок очереди сжатия (ставит spectrum_gz_init до httpd_start; на хосте NULL).
+static spectrum_http_gz_try_fn s_gz_try;
+void spectrum_http_cache_set_gz_hook(spectrum_http_gz_try_fn try_send) { s_gz_try = try_send; }
+
+static esp_err_t send_json_impl(httpd_req_t *req, bool gz)
+{
+    int ch = 0;
+    int qk = spec_req_channels(req, &ch);
+    if (qk < 0) {   // D1: недопустимое channels - 400 раньше проверки наличия данных
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "channels must be 8192, 4096, 2048 or 1024");
+        return ESP_FAIL;
+    }
     if (!spectrum_http_cache_ensure()) {
         httpd_resp_set_hdr(req, "X-Spectrometer-Dead",
                            usb_host_cdc_spectrometer_dead() ? "1" : "0");
         httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "No spectrum data yet");
         return ESP_FAIL;
+    }
+    if (qk > 0) {   // D1: версия 2, кэш JSON версии 1 не трогаем
+        esp_err_t ge = ESP_OK;
+        if (gz && s_gz_try && s_gz_try(req, ch, &ge)) return ge;   // Ф4.2: gzip-запрос v2 уходит в очередь задачи
+        return spectrum_http_send_json_v2(req, ch);
     }
     // 1.2.36 H3: полный JSON (8192 канала текстом) строится ЛЕНИВО, только если его кто-то запросил, и из ТОЙ ЖЕ строки meta,
     // что отдаёт meta.json этого поколения. Сборка — ВНЕ s_mtx; s_readers держит s_sp/s_meta от смены.
@@ -421,6 +464,49 @@ esp_err_t spectrum_http_send_json(httpd_req_t *req)
     }
     xSemaphoreGive(s_mtx);
 
+    return e;
+}
+
+// D1: ответ версии 2 (?channels=N): bins свёрнуты суммой m=8192/N соседних каналов, в ответе поле channels. Решение «один кэш или два»:
+// ОДИН кэш JSON (версии 1, s_json*), версия 2 в него не пишет - собирается каждый раз в приватный буфер из ТОГО ЖЕ поколения (s_sp/s_meta,
+// s_render_count) под s_readers. Чередование версий кэш версии 1 не пересобирает и не портит. Цена - пересборка текста на каждый запрос v2.
+static esp_err_t spectrum_http_send_json_v2(httpd_req_t *req, int n)
+{
+    char hdr[16];       // живут до конца функции - дольше, чем httpd_resp_send()
+    char age_hdr[16];
+    char *buf = NULL;
+    size_t cap = 0;
+    xSemaphoreTake(s_mtx, portMAX_DELAY);
+    uint32_t rc = s_render_count;
+    s_readers++;
+    const uint32_t *bins = s_sp->bins;
+    const char *meta = s_meta;
+    size_t mlen = s_meta_len, a_end = s_meta_a_end, b_start = s_meta_b_start;
+    spec_epoch_t ep = s_ep;   // D2 (K2): копия значением, пара с bins этого же поколения
+    xSemaphoreGive(s_mtx);
+    size_t len = 0;
+    bool ok = buf_grow(&buf, &cap, (size_t)n * 6 + 2048, 2048);
+    if (ok) {
+        len = spec_json_full_fmt_v2(buf, cap, bins, n, meta, mlen, a_end, b_start, &ep, spectrum_boot_id());
+        if (len >= cap) {
+            ok = buf_grow(&buf, &cap, len + 1, 2048);
+            if (ok) len = spec_json_full_fmt_v2(buf, cap, bins, n, meta, mlen, a_end, b_start, &ep, spectrum_boot_id());
+        }
+    }
+    xSemaphoreTake(s_mtx, portMAX_DELAY);
+    if (s_readers > 0) s_readers--;
+    xSemaphoreGive(s_mtx);
+    if (!ok || len == 0) {
+        free(buf);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+        return ESP_FAIL;
+    }
+    set_render_hdr(req, rc, hdr, sizeof(hdr));
+    set_hist_age_hdr(req, age_hdr, sizeof(age_hdr));
+    httpd_resp_set_type(req, "application/json");
+    spectrum_http_nodelay(req);
+    esp_err_t e = httpd_resp_send(req, buf, len);
+    free(buf);
     return e;
 }
 
@@ -550,3 +636,75 @@ esp_err_t spectrum_http_send_meta_sma(httpd_req_t *req, uint64_t sum_counts, uin
     snapshot_end();
     return e;
 }
+
+// Ф4.2: снимок v2 для задачи spec_gz (тело в PSRAM; s_readers снимается сразу после построения)
+bool spectrum_http_cache_v2_acquire(int n, char **out, size_t *len, uint32_t *gen) {
+    *out = NULL;
+    *len = 0;
+    spec_epoch_t ep;
+    uint32_t rc = 0;
+    const uint32_t *bins = NULL;
+    const char *meta = NULL;
+    size_t mlen = 0;
+    size_t a_end = 0;
+    size_t b_start = 0;
+
+    if (xSemaphoreTake(s_mtx, portMAX_DELAY) != pdTRUE) {
+        return false;
+    }
+    if (!s_have || !s_sp || !s_meta || s_meta_len == 0) {   // F7: после invalidate старый снимок не отдаём
+        xSemaphoreGive(s_mtx);
+        return false;
+    }
+    rc = s_render_count;
+    s_readers++;
+    bins = s_sp->bins;
+    meta = s_meta;
+    mlen = s_meta_len;
+    a_end = s_meta_a_end;
+    b_start = s_meta_b_start;
+    ep = s_ep;   // D2 (K2): копия значением, пара с bins этого же поколения
+    xSemaphoreGive(s_mtx);
+
+    size_t cap = (size_t)n * 6 + 2048;
+    char *buf = (char *)heap_caps_malloc(cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (buf == NULL) {
+        if (xSemaphoreTake(s_mtx, portMAX_DELAY) == pdTRUE) {
+            if (s_readers > 0) s_readers--;
+            xSemaphoreGive(s_mtx);
+        }
+        return false;
+    }
+
+    size_t l = spec_json_full_fmt_v2(buf, cap, bins, n, meta, mlen, a_end, b_start, &ep, spectrum_boot_id());
+    if (l >= cap) {   // F1: бины до 11 символов - буфер n*6+2048 мал; повтор с точным размером, PSRAM без отката на DRAM
+        heap_caps_free(buf);
+        cap = l + 1;
+        buf = (char *)heap_caps_malloc(cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        l = buf ? spec_json_full_fmt_v2(buf, cap, bins, n, meta, mlen, a_end, b_start, &ep, spectrum_boot_id()) : 0;
+    }
+    if (l == 0 || l >= cap) {
+        heap_caps_free(buf);
+        if (xSemaphoreTake(s_mtx, portMAX_DELAY) == pdTRUE) {
+            if (s_readers > 0) s_readers--;
+            xSemaphoreGive(s_mtx);
+        }
+        return false;
+    }
+
+    if (xSemaphoreTake(s_mtx, portMAX_DELAY) == pdTRUE) {   // readers отпускаются сразу: в теле уже копия bins и эпохи
+        if (s_readers > 0) s_readers--;
+        xSemaphoreGive(s_mtx);
+    }
+    *out = buf;
+    *len = l;
+    *gen = rc;
+    return true;
+}
+
+void spectrum_http_cache_v2_release(char *body) {   // тело - приватная копия, s_readers не держит
+    heap_caps_free(body);
+}
+
+esp_err_t spectrum_http_send_json(httpd_req_t *req) { return send_json_impl(req, true); }
+esp_err_t spectrum_http_send_json_plain(httpd_req_t *req) { return send_json_impl(req, false); }

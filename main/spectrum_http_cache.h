@@ -39,6 +39,16 @@ esp_err_t spectrum_http_send_json(httpd_req_t *req);
 // Send bins only (uint32 LE × SPECTRUM_CHANNELS).
 esp_err_t spectrum_http_send_bins(httpd_req_t *req);
 
+// Ф4.2 (D3): gzip ТОЛЬКО для /api/spectrum.json?channels=N (версия 2). Версия 1 и /api/spectrum отдаются без сжатия, байты как в D2b.
+// Крючок: true — запрос ушёл в очередь задачи spec_gz (httpd_req_async_handler_begin), ответ отправит она; false — ответить как раньше.
+typedef bool (*spectrum_http_gz_try_fn)(httpd_req_t *req, int channels, esp_err_t *out);
+void spectrum_http_cache_set_gz_hook(spectrum_http_gz_try_fn try_send);   // spectrum_gz_init() до httpd_start; NULL — путь прежний
+// Тот же обработчик без крючка: несжатый ответ из задачи (срок 1500 мс, сбой сжатия).
+esp_err_t spectrum_http_send_json_plain(httpd_req_t *req);
+// Только задача spec_gz: снимок v2 (bins + копия эпохи под ОДНИМ s_mtx, s_readers++) и тело в PSRAM; s_readers держится до release.
+bool spectrum_http_cache_v2_acquire(int n, char **out, size_t *len, uint32_t *gen);
+void spectrum_http_cache_v2_release(char *body);   // освободить тело (PSRAM)
+
 // Send meta JSON without bins (cps, total, calib, …).
 esp_err_t spectrum_http_send_meta(httpd_req_t *req);
 

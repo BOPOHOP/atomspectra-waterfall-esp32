@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <time.h>
+#include "spectrum_epoch.h"   // D2 (K2): spec_epoch_t - пара счётчиков эпохи ответа версии 2
 
 #define SPECTRUM_CHANNELS     8192
 #define SPECTRUM_CHUNK_BINS   64
@@ -265,6 +266,9 @@ const spectrum_data_t *spectrum_get_current(void);
 // Поле bins[] в out НЕ заполняется — не читать его после этого вызова.
 bool spectrum_get_meta(spectrum_data_t *out);
 
+// 1.2.39: серийный номер прибора (пустая строка, пока прибор не ответил); для mDNS TXT `sn`.
+void spectrum_get_serial(char *out, size_t cap);
+
 // 1.2.36 OPT-1: живое время, с (метод BecqMoni; формула — live_time.h). Одна функция для JSON, XML, N42, SPE.
 float spectrum_compute_live_time(const spectrum_data_t *sp);
 
@@ -276,12 +280,19 @@ bool spectrum_get_snapshot(spectrum_data_t *out);
 // 1.2.36 H1 (A): снимок для кэша /api/spectrum* без SPEC_LOCK (seqlock, seq_copy.h); не вышло за
 // 3 попытки — spectrum_get_snapshot(). Счётчики повторов и запасных путей — /api/system.
 bool spectrum_get_snapshot_seq(spectrum_data_t *out);
+// D2 (K2): снимок + эпоха {dev_resets, spec_resets} в ОДНОМ окне seqlock (spectrum_epoch.h); запасной путь - оба под одним SPEC_LOCK.
+bool spectrum_get_snapshot_epoch_seq(spectrum_data_t *out, spec_epoch_t *ep);
+// D2 (K2): boot_id - случайное ненулевое uint32 за загрузку (не NVS). Init один раз в app_main после wifi_manager_init().
+void spectrum_boot_id_init(void);
+uint32_t spectrum_boot_id(void);
 uint32_t spectrum_spec_seq_retry(void);
 uint32_t spectrum_spec_seq_fallback(void);
 // У-3: снимок + счётчик переноса опоры водопада (под одним локом).
 bool spectrum_get_snapshot_wf(spectrum_data_t *out, uint32_t *resync_seq);
 // У-2: сколько Reset с боота прибор не выполнил (данные прибора сохранены по таймауту).
 uint32_t spectrum_reset_unconfirmed_count(void);
+// D1: число секундных интервалов без завершённого коммита свипа с загрузки (sweep_missed.h); для /api/status.
+uint32_t spectrum_sweep_missed(void);
 // #MON-1: атомарная пара (total_counts, total_time_sec) под коммит-локом —
 // для монитора CPS; НЕ копирует 32 КБ bins (в отличие от spectrum_get_snapshot).
 // resync_seq (может быть NULL) — счётчик переноса опоры У-3/Н-8.
