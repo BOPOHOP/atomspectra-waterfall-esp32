@@ -262,8 +262,8 @@ def classify(code: str, off: int, d: int, fname: str, allow_fns: set):
     if callee in write_calls and first_arg:
         return 'WRITE'
     
-    # read-only source argument: memcpy/memmove/memcmp (2nd+), seq_copy src (3rd, const void *)
-    src_arg = (callee in ('memcpy', 'memmove', 'memcmp') and not first_arg) or (callee == 'seq_copy' and arg_idx == 2)
+    # read-only source argument: memcpy/memmove/memcmp (2nd+), seq_copy / spec_epoch_snapshot_seq src (3rd, const void *)
+    src_arg = (callee in ('memcpy', 'memmove', 'memcmp') and not first_arg) or (callee in ('seq_copy', 'spec_epoch_snapshot_seq') and arg_idx == 2)
     # Check ESCAPE conditions ((?<!&): '&&' is logical AND, not address-of)
     if re.search(r'(?<!&)&\s*(\([^()]*\)\s*)?$', before):
         if not src_arg:

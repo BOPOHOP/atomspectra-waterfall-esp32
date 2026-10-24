@@ -221,7 +221,7 @@ need spectrogram.c  1 '        if (!wf_tail_should_row(tail_force, now_time, s_p
 need spectrogram.c  1 '        if (tail_force) { s_tail_force = false; s_tail_inflight = true; }'
 need spectrogram.c  1 '        if (s_tail_inflight) { s_tail_inflight = false; if (s_tail_done) xSemaphoreGive(s_tail_done); }'
 need spectrogram.c  1 '    xSemaphoreGive(s_commit_sig);            // разбудить wf_task вне очереди'
-rt=$(awk '/^    \(void\)spectrogram_flush_tail/{f=FNR} f && FNR==f+1 && /bool sent = usb_host_cdc_send\(pkt\.data/{ok=1} END{print (!f || ok) ? "ok" : "bad"}' web_server.c)
+rt=$(awk '/^static esp_err_t handle_reset\(/{h=1} h && /^    \(void\)spectrogram_flush_tail/{f=FNR} h && !s && /usb_host_cdc_send\(pkt\.data/{s=FNR} h && /^}/{h=0} END{print (f && s && f<s) ? "ok" : "bad"}' web_server.c)   # 1.2.39: между flush и send теперь cmdlog_glue_record - порядок по номерам строк внутри handle_reset
 [ "$rt" = ok ] || { echo "WIRING FAIL web_server.c: spectrogram_flush_tail must precede usb_host_cdc_send in handle_reset ($rt)"; RC=1; }
 rt=$(awk '/^        if \(saw_rst\) \(void\)spectrogram_flush_tail/{f=FNR} f && FNR==f+1 && /int rc = usb_host_cdc_send\(buf, n\);/{ok=1} END{print (!f || ok) ? "ok" : "bad"}' tcp_bridge.c)
 [ "$rt" = ok ] || { echo "WIRING FAIL tcp_bridge.c: spectrogram_flush_tail must precede usb_host_cdc_send ($rt)"; RC=1; }
@@ -372,8 +372,8 @@ line spectrum.c 1 '#define SPEC_LOCK()   do { if (s_spec_lock) xSemaphoreTake(s_
 line spectrum.c 1 '#define SPEC_UNLOCK() do { __sync_synchronize(); s_spec_seq++; if (s_spec_lock) xSemaphoreGive(s_spec_lock); } while (0)'
 need seq_copy.h 2 '__sync_synchronize();'
 need spectrum.c 1 'if (seq_copy(&s_spec_seq, out, &s_spectrum, sizeof(*out), SPEC_SEQ_TRIES,'
-need spectrum.c 1 's_spec_seq_fallback++;'
-need spectrum_http_cache.c 1 'spectrum_get_snapshot_seq(s_sp_build)'
+need spectrum.c 2 's_spec_seq_fallback++;'   # 1.2.38 D2: два запасных пути - spectrum_get_snapshot_seq и spectrum_get_snapshot_epoch_seq
+need spectrum_http_cache.c 1 'spectrum_get_snapshot_epoch_seq(s_sp_build, &s_ep_build)'   # 1.2.38 D2: снимок + эпоха в одном окне seqlock
 need spectrum_http_cache.c 0 'spectrum_get_snapshot(s_sp_build)'
 need web_server.c 1 '"spec_seq_retry"'
 need web_server.c 1 '"spec_seq_fallback"'
@@ -425,10 +425,10 @@ need web_server.c 1 'return meta_w_handle(req);'   # pass2 З-3: обработ�
 need spectrum_http_cache.c 1 'size_t tl = spec_meta_sma_tail('
 need spectrum_http_cache.c 1 'e = httpd_resp_send_chunk(req, NULL, 0);'
 # 1.2.37: TCP_NODELAY на сокете запроса ПЕРЕД httpd_resp_send спектральных ответов (spectrum.json: кэш + сборка, бинарный /api/spectrum) - ровно три вызова хелпера, флаг не снимается; исполняет test_glue_cache (glue_nodelay)
-line spectrum_http_cache.c 3 'spectrum_http_nodelay(req);'
+line spectrum_http_cache.c 4 'spectrum_http_nodelay(req);'   # 1.2.38 D1: +spectrum.json?channels=N (четвёртая отправка)
 need spectrum_http_cache.c 1 'setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one)'
 # 1.2.37: X-Hist-Age-Ms - ровно у двух отправок spectrum.json (из кэша и после сборки), значение - геттер платы под DIAG_LOCK; исполняет test_glue_cache (glue_hist_age)
-line spectrum_http_cache.c 2 'set_hist_age_hdr(req, age_hdr, sizeof(age_hdr));'
+line spectrum_http_cache.c 3 'set_hist_age_hdr(req, age_hdr, sizeof(age_hdr));'   # 1.2.38 D1: +spectrum.json?channels=N
 need spectrum_http_cache.c 1 'httpd_resp_set_hdr(req, "X-Hist-Age-Ms", hdr);'
 need usb_host_cdc.c 1 '    return acq_hist_age_ms(now, hist_ts);'
 # release-gate 1.2.36 passA З-1: КАЖДАЯ запись s_spectrum - под SPEC_LOCK (или из мест вызова под ним): spec_writers.py с
