@@ -150,7 +150,7 @@ test_glue_gz_async: test_glue_gz_async.c glue/glue_cache_env.h $(GLUE_DEPS) ../.
 test-gz-keepgoing: test_spectrum_gz_async_plan test_spectrum_gz_job test_glue_gz_async
 	@rc=0; for t in ./test_spectrum_gz_async_plan ./test_spectrum_gz_job ./test_glue_gz_async; do $$t || rc=1; done; if [ $$rc -eq 0 ]; then echo "ALL PASSED"; else echo "CHECK(S) FAILED"; fi; exit $$rc
 
-# 1.2.39: автономные тесты со своим main() - TXT службы mDNS _atomspectra._tcp, распознавание -rst без завершающего   в кадре TCP-моста, кольцо журнала команд.
+# 1.2.39: автономные тесты со своим main() - TXT службы mDNS _atomspectra._tcp, распознавание -rst без завершающего  в кадре TCP-моста, кольцо журнала команд.
 test_mdns_txt_plan: test_mdns_txt_plan.c ../../main/mdns_txt_plan.h
 	$(CC) $(CFLAGS) -o test_mdns_txt_plan test_mdns_txt_plan.c
 
