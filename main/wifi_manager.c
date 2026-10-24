@@ -10,6 +10,8 @@
 #include "nvs_flash.h"
 #include "esp_http_server.h"
 #include "mdns.h"
+#include "mdns_txt_plan.h"        // 1.2.39: TXT службы _atomspectra._tcp (host-pure)
+#include "esp_app_desc.h"         // 1.2.39: версия прошивки для TXT fw
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -301,6 +303,23 @@ static void start_captive_portal(void)
 
 /* ---- mDNS (atomspectra.local) ---- */
 
+#define MDNS_AT_SVC   "_atomspectra"
+#define MDNS_AT_PROTO "_tcp"
+static char s_mdns_sn[64];                 // опубликованный sn ("" — ключа в TXT нет)
+static esp_timer_handle_t s_mdns_sn_timer;
+
+// 1.2.39: серийник прибора появляется после ответа прибора — обновляем TXT `sn` на лету (раз в 5 с, без перезапуска mDNS)
+static void mdns_sn_poll(void *arg)
+{
+    (void)arg;
+    char sn[64];
+    spectrum_get_serial(sn, sizeof sn);
+    if (!mdns_txt_sn_changed(s_mdns_sn, sn)) return;
+    esp_err_t e = sn[0] ? mdns_service_txt_item_set(MDNS_AT_SVC, MDNS_AT_PROTO, "sn", sn)
+                        : mdns_service_txt_item_remove(MDNS_AT_SVC, MDNS_AT_PROTO, "sn");
+    if (e == ESP_OK) snprintf(s_mdns_sn, sizeof s_mdns_sn, "%s", sn);
+}
+
 static void start_mdns(void)
 {
     esp_err_t err = mdns_init();
@@ -311,6 +330,20 @@ static void start_mdns(void)
     mdns_hostname_set("atomspectra");
     mdns_instance_name_set("AtomSpectra Gateway");
     mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
+    // 1.2.39: служба для списка плат в клиенте (BecqMoni); плату различают по TXT sn
+    char sn[64];
+    spectrum_get_serial(sn, sizeof sn);
+    mdns_txt_kv_t kv[MDNS_TXT_MAX];
+    const esp_app_desc_t *ad = esp_app_get_description();
+    size_t n = mdns_txt_plan(sn, ad ? ad->version : NULL, 80, kv);
+    mdns_txt_item_t items[MDNS_TXT_MAX];
+    for (size_t i = 0; i < n; i++) { items[i].key = kv[i].key; items[i].value = kv[i].val; }
+    if (mdns_service_add(NULL, MDNS_AT_SVC, MDNS_AT_PROTO, TCP_BRIDGE_PORT, items, n) == ESP_OK)
+        snprintf(s_mdns_sn, sizeof s_mdns_sn, "%s", sn);
+    if (!s_mdns_sn_timer) {
+        const esp_timer_create_args_t ta = { .callback = mdns_sn_poll, .name = "mdns_sn" };
+        if (esp_timer_create(&ta, &s_mdns_sn_timer) == ESP_OK) esp_timer_start_periodic(s_mdns_sn_timer, 5000000);
+    }
     ESP_LOGI(TAG, "mDNS started: http://atomspectra.local/");
 }
 

@@ -1,6 +1,8 @@
 #include "atomspectra.h"
 #include "shproto.h"
 #include "acq_intent.h"      /* P1-a: cmd_is_device_reset() */
+#include "tcp_reset_plan.h"   /* 1.2.39-t1: -rst без завершающего \0 */
+#include "cmdlog_glue.h"      /* 1.2.39-t1: журнал команд */
 #include "spectrogram.h"     /* #RST-TAIL: spectrogram_flush_tail() */
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -116,12 +118,16 @@ static void tcp_tx_task(void *arg)
 static uint8_t s_pc_cmd_buf[512];
 static shproto_struct s_pc_cmd_decoder;
 static bool s_pc_cmd_decoder_init;
+enum { PC_SEQ_MAX = 8 };   // 1.2.39-t1: сколько кадров одного recv-куска получают результат в cmdlog
+static uint32_t s_pc_seq[PC_SEQ_MAX];
+static int s_pc_seq_n;
 // Скормить сырые байты клиента декодеру; true — в куске был полный CMD_TEXT с «-rst».
 // F-05: сам Сброс платы — у вызывающего и только после доставки прибору (rc==0),
 // как send_text_command_raw (usb_host_cdc.c) и кнопка UI «Сброс».
 static bool tcp_scan_for_reset_cmd(const uint8_t *data, size_t n)
 {
     bool saw_rst = false;
+    s_pc_seq_n = 0;
     if (!s_pc_cmd_decoder_init) {
         shproto_init(&s_pc_cmd_decoder, s_pc_cmd_buf, sizeof(s_pc_cmd_buf));
         s_pc_cmd_decoder_init = true;
@@ -130,10 +136,12 @@ static bool tcp_scan_for_reset_cmd(const uint8_t *data, size_t n)
         shproto_byte_received(&s_pc_cmd_decoder, data[i]);
         if (s_pc_cmd_decoder.ready) {
             s_pc_cmd_decoder.ready = false;
-            if (s_pc_cmd_decoder.cmd == CMD_TEXT && s_pc_cmd_decoder.len > 0 &&
-                s_pc_cmd_decoder.data[s_pc_cmd_decoder.len - 1] == '\0' &&
-                cmd_is_device_reset((const char *)s_pc_cmd_decoder.data)) {
-                saw_rst = true;
+            if (s_pc_cmd_decoder.cmd == CMD_TEXT && s_pc_cmd_decoder.len > 0) {
+                size_t fl = s_pc_cmd_decoder.len;
+                bool nul = s_pc_cmd_decoder.data[fl - 1] == '\0';
+                if (s_pc_seq_n < PC_SEQ_MAX)   // t1: журнал команд, src 3; результат — в tcp_rx_task после send
+                    s_pc_seq[s_pc_seq_n++] = cmdlog_glue_record(3, (const char *)s_pc_cmd_decoder.data, nul ? fl - 1 : fl, nul);
+                if (tcp_text_frame_is_reset(s_pc_cmd_decoder.data, fl, s_pc_cmd_decoder.buf_size)) saw_rst = true;
             }
         } else if (s_pc_cmd_decoder.dropped) {
             s_pc_cmd_decoder.dropped = false;
@@ -177,6 +185,7 @@ static void tcp_rx_task(void *arg)
         bool saw_rst = tcp_scan_for_reset_cmd(buf, n);
         if (saw_rst) (void)spectrogram_flush_tail(1200);   // #RST-TAIL: хвост строкой водопада, ДО передачи -rst прибору
         int rc = usb_host_cdc_send(buf, n);
+        for (int k = 0; k < s_pc_seq_n; k++) cmdlog_glue_result(s_pc_seq[k], rc == 0, rc);   // t1
         if (saw_rst) {
             if (rc == 0) {
                 ESP_LOGW(TAG, "TCP client sent -rst -- clearing base");

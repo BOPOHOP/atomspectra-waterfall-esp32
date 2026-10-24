@@ -23,6 +23,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"   // #FW-13 фикс №2: ожидание коммита свипа перед autosave
+#include "cmdlog_glue.h"       // 1.2.39-t1
 
 static const char *TAG = "main";
 
@@ -83,6 +84,7 @@ void app_main(void)
     heap_caps_register_failed_alloc_callback(alloc_failed_cb);
 
     wifi_manager_init();
+    spectrum_boot_id_init();   // D2 (K2): boot_id после старта Wi-Fi (esp_random() - истинная случайность при работающем радио), не NVS
 
     // #FW-2/#FW-3: настройки поведения при старте платы (NVS, по умолчанию всё OFF).
     // #FW-44: весь USB-стек (boot_config → spectrum → spectrogram → usb_host_cdc)
@@ -166,6 +168,7 @@ void app_main(void)
     web_server_init();
     monitor_init();      // #MON-1: кольцо серии CPS (6 ч в PSRAM) + задача-подписчик коммитов
     tcp_bridge_init();
+    cmdlog_glue_start();   // 1.2.39-t1: журнал команд + STATE-строки (после сети и спектра)
     if (net_mode == NET_MODE_STA) {
         wf_offload_init();   // #REC-11-A2: аплоадер сегментов — только Indoor (есть сеть/приёмник)
         init_sntp();          // SNTP-время — только Indoor (есть интернет)
