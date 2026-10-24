@@ -68,7 +68,7 @@ SRCS = test_shproto.c test_roundtrip.c ../../components/shproto/shproto.c \
        test_autosave_mark_retry.c \
        test_meta_w_parse.c
 
-test: $(SRCS) test_util.h socket_budget_check.sh ../../main/socket_budget.h test_import_body_plan test_import_tmp_plan test_n42_time_plan test_spectrum_gz_plan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w test_glue_fold test_epoch_atomic test_glue_epoch test_spectrum_gz_async_plan test_spectrum_gz_job test_glue_gz_async
+test: $(SRCS) test_util.h socket_budget_check.sh ../../main/socket_budget.h test_import_body_plan test_import_tmp_plan test_n42_time_plan test_spectrum_gz_plan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w test_glue_fold test_epoch_atomic test_glue_epoch test_spectrum_gz_async_plan test_spectrum_gz_job test_glue_gz_async test_mdns_txt_plan test_tcp_reset test_cmdlog
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm
 	./test_runner
 	bash ./socket_budget_check.sh
@@ -86,11 +86,14 @@ test: $(SRCS) test_util.h socket_budget_check.sh ../../main/socket_budget.h test
 	./test_spectrum_gz_async_plan
 	./test_spectrum_gz_job
 	./test_glue_gz_async
+	./test_mdns_txt_plan
+	./test_tcp_reset
+	./test_cmdlog
 
 # D2 (#SA-3): тот же набор БЕЗ остановки на первом упавшем бинаре - мутационные скрипты D2 (MT_TARGET=test-keepgoing) видят красные тесты ВСЕХ бинарей.
-test-keepgoing: $(SRCS) test_util.h socket_budget_check.sh ../../main/socket_budget.h test_import_body_plan test_import_tmp_plan test_n42_time_plan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w test_glue_fold test_epoch_atomic test_glue_epoch test_spectrum_gz_async_plan test_spectrum_gz_job test_glue_gz_async
+test-keepgoing: $(SRCS) test_util.h socket_budget_check.sh ../../main/socket_budget.h test_import_body_plan test_import_tmp_plan test_n42_time_plan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w test_glue_fold test_epoch_atomic test_glue_epoch test_spectrum_gz_async_plan test_spectrum_gz_job test_glue_gz_async test_mdns_txt_plan test_tcp_reset test_cmdlog
 	$(CC) $(CFLAGS) -o test_runner $(SRCS) -lm
-	@rc=0; for t in ./test_runner "bash ./socket_budget_check.sh" ./test_import_body_plan ./test_import_tmp_plan ./test_n42_time_plan ./test_glue_cache ./test_glue_monitor ./test_glue_cache_oom ./test_glue_meta_w ./test_glue_fold ./test_epoch_atomic ./test_glue_epoch ./test_spectrum_gz_async_plan ./test_spectrum_gz_job ./test_glue_gz_async; do $$t || rc=1; done; exit $$rc
+	@rc=0; for t in ./test_runner "bash ./socket_budget_check.sh" ./test_import_body_plan ./test_import_tmp_plan ./test_n42_time_plan ./test_glue_cache ./test_glue_monitor ./test_glue_cache_oom ./test_glue_meta_w ./test_glue_fold ./test_epoch_atomic ./test_glue_epoch ./test_spectrum_gz_async_plan ./test_spectrum_gz_job ./test_glue_gz_async ./test_mdns_txt_plan ./test_tcp_reset ./test_cmdlog; do $$t || rc=1; done; exit $$rc
 
 # release-gate 1.2.36 pass1 С-2: тесты СКЛЕЙКИ - сам main/*.c (не копия) с заглушками IDF/FreeRTOS из glue/ (учёт блоков glue_alloc).
 GLUE_DEPS = glue/glue_stubs.c glue/*.h glue/freertos/*.h
@@ -147,6 +150,16 @@ test_glue_gz_async: test_glue_gz_async.c glue/glue_cache_env.h $(GLUE_DEPS) ../.
 test-gz-keepgoing: test_spectrum_gz_async_plan test_spectrum_gz_job test_glue_gz_async
 	@rc=0; for t in ./test_spectrum_gz_async_plan ./test_spectrum_gz_job ./test_glue_gz_async; do $$t || rc=1; done; if [ $$rc -eq 0 ]; then echo "ALL PASSED"; else echo "CHECK(S) FAILED"; fi; exit $$rc
 
+# 1.2.39: автономные тесты со своим main() - TXT службы mDNS _atomspectra._tcp, распознавание -rst без завершающего   в кадре TCP-моста, кольцо журнала команд.
+test_mdns_txt_plan: test_mdns_txt_plan.c ../../main/mdns_txt_plan.h
+	$(CC) $(CFLAGS) -o test_mdns_txt_plan test_mdns_txt_plan.c
+
+test_tcp_reset: test_tcp_reset.c ../../main/tcp_reset_plan.h ../../main/acq_intent.h
+	$(CC) $(CFLAGS) -o test_tcp_reset test_tcp_reset.c
+
+test_cmdlog: test_cmdlog.c ../../main/cmdlog.h
+	$(CC) $(CFLAGS) -o test_cmdlog test_cmdlog.c
+
 # Автономный тест со своим main() (import_body_plan.h) — в общий test_runner не линкуется.
 test_import_body_plan: test_import_body_plan.c ../../main/import_body_plan.h
 	$(CC) $(CFLAGS) -o test_import_body_plan test_import_body_plan.c
@@ -171,7 +184,7 @@ tsan: test_seq_stress.c ../../main/seq_copy.h
 	TSAN_OPTIONS="halt_on_error=0 exitcode=0" ./test_seq_stress_tsan
 
 clean:
-	rm -f test_runner test_runner_asan bench_json_fmt test_import_body_plan test_import_tmp_plan test_n42_time_plan test_spectrum_gz_plan test_seq_stress test_seq_stress_tsan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w test_glue_fold test_epoch_atomic test_glue_epoch test_spectrum_gz_async_plan test_spectrum_gz_job test_glue_gz_async
+	rm -f test_runner test_runner_asan bench_json_fmt test_import_body_plan test_import_tmp_plan test_n42_time_plan test_spectrum_gz_plan test_seq_stress test_seq_stress_tsan test_glue_cache test_glue_monitor test_glue_cache_oom test_glue_meta_w test_glue_fold test_epoch_atomic test_glue_epoch test_spectrum_gz_async_plan test_spectrum_gz_job test_glue_gz_async test_mdns_txt_plan test_tcp_reset test_cmdlog
 
 # UI-P1: замер до/после старого(vsnprintf-loop)/нового(json_append_uint32_csv)
 # форматтера бинов — числа для отчёта, не гейт ALL PASSED.

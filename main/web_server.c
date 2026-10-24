@@ -54,6 +54,7 @@
 #include "spectrum_import_plan.h"  // 1.2.31: импорт фона (разбор тела ASI1) + путь удаления записи (host-тест)
 #include "n42_time_plan.h"           // #AWF-F2: StartDateTime N42 в UTC с Z (host-тест)
 #include "ttl_plan.h"            // 1.2.36 H5: срок жизни медленной части /api/system (host-тест)
+#include "cmdlog_glue.h"          // 1.2.39-t1: журнал команд к прибору
 #define SYS_SLOW_PERIOD_US (10LL * 1000000LL)   // 1.2.36 H5: период обхода кучи/стеков (решение оператора 2026-10-10)
 #include "import_body_plan.h"      // 1.2.32: D-1131-1/#AWF-F3 — план приёма тела /api/import (host-тест)
 _Static_assert(IMPORT_BODY_SIZE == SPEC_IMPORT_SIZE, "import_body_plan.h: IMPORT_BODY_SIZE != SPEC_IMPORT_SIZE");
@@ -378,6 +379,32 @@ static esp_err_t handle_devlog(httpd_req_t *req)
     return ESP_OK;
 }
 
+// 1.2.39-t1: GET /api/debug/cmdlog?since=N -- журнал последних команд к прибору (кольцо на 32).
+// CSRF обязателен, как у /api/debug/log (в тексте команд видны параметры набора).
+// Без флага сборки AWF_CMDLOG ручка отвечает 404.
+static esp_err_t handle_debug_cmdlog(httpd_req_t *req)
+{
+#ifdef AWF_CMDLOG
+    if (!csrf_check(req)) return ESP_FAIL;
+    uint32_t since = 0;
+    char q[48], v[16];
+    if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK && httpd_query_key_value(q, "since", v, sizeof(v)) == ESP_OK)
+        since = strtoul(v, NULL, 10);
+    size_t cap = cmdlog_glue_json(since, NULL, 0) + 1 + 256;   // +256: запись могла прийти между двумя вызовами
+    char *buf = malloc(cap);
+    if (!buf) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM"); return ESP_FAIL; }
+    size_t n = cmdlog_glue_json(since, buf, cap);
+    if (n == 0 || n >= cap) { free(buf); httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "cmdlog"); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, buf);
+    free(buf);
+    return ESP_OK;
+#else
+    httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "no cmdlog");
+    return ESP_FAIL;
+#endif
+}
+
 // #FW-50: GET /api/debug/log/meta — JSON status of PSRAM log ring (no CSRF).
 // Он же отвечает на GET /api/debug/log/config: тело ответа — один и тот же
 // meta_json (настройки живут в тех же полях enabled/level), два отдельных
@@ -576,7 +603,10 @@ static esp_err_t handle_reset(httpd_req_t *req)
     // платы выполнен. Н-4/Н-Д1: -rst дошлётся на ближайшем коннекте, если к тому
     // времени набор прибора не принят по таймауту гейта #58 и не было нового Сброса.
     (void)spectrogram_flush_tail(1200);   // #RST-TAIL: хвост с последней строки до Сброса — строкой водопада, ДО -rst
-    bool sent = usb_host_cdc_send(pkt.data, pkt.len) == 0;
+    uint32_t cl_seq = cmdlog_glue_record(2, cmd, strlen(cmd), 1);   // t1: src 2 rest_reset
+    int cl_rc = usb_host_cdc_send(pkt.data, pkt.len);
+    cmdlog_glue_result(cl_seq, cl_rc == 0, cl_rc);
+    bool sent = cl_rc == 0;
     if (sent) {
         spectrum_reset();
     } else {
@@ -2007,7 +2037,9 @@ static esp_err_t handle_reboot_device(httpd_req_t *req)
     shproto_packet_start(&pkt, CMD_REBOOT);
     shproto_packet_complete(&pkt);
     usb_host_cdc_acq_intent_device_reboot();  // сторож набора вернёт набор после перезагрузки
+    uint32_t cl_seq = cmdlog_glue_record(4, "[CMD_REBOOT]", 12, 0);   // t1: src 4 web_ui; кадр CMD_REBOOT без текста
     int ret = usb_host_cdc_send(pkt.data, pkt.len);
+    cmdlog_glue_result(cl_seq, ret == 0, ret);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, ret == 0 ? "{\"ok\":true}" : "{\"ok\":false}");
     return ESP_OK;
@@ -3015,6 +3047,7 @@ void web_server_init(void)
         {"/api/command",                 HTTP_POST, handle_command,          NULL},
         {"/api/devlog",                  HTTP_GET,  handle_devlog,           NULL},
         {"/api/debug/log/meta",          HTTP_GET,  handle_debug_log_meta,   NULL},  // #FW-50
+        {"/api/debug/cmdlog",            HTTP_GET,  handle_debug_cmdlog,     NULL},  // 1.2.39-t1 CSRF, 404 без AWF_CMDLOG
         {"/api/debug/log",               HTTP_GET,  handle_debug_log_get,    NULL},  // #FW-50 CSRF
         {"/api/debug/log/flush",         HTTP_POST, handle_debug_log_flush,  NULL},  // #FW-50 CSRF
         {"/api/debug/log/config",        HTTP_GET,  handle_debug_log_meta,   NULL},  // тот же meta_json

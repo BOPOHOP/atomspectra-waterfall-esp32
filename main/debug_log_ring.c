@@ -47,7 +47,7 @@ static bool               s_hook_installed;
 
 static const char *const s_own_info_tags[] = {
     "main", "wf", "spectrum", "spec_cache", "web", "wf_web", "wf_ofl",
-    "usb_cdc", "http_io", "bootcfg", "tcp_bridge", "monitor", "wifi_mgr", "dbglog",
+    "usb_cdc", "http_io", "bootcfg", "tcp_bridge", "monitor", "wifi_mgr", "dbglog", "STATE", "CMDLOG",
 };
 // Чужие теги, поднимаемые только на detailed: сеть и HTTP-стек.
 static const char *const s_sys_info_tags[] = {

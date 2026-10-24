@@ -1051,6 +1051,16 @@ void spectrum_get_totals(uint32_t *counts, uint32_t *time_sec, uint32_t *resync_
     SPEC_UNLOCK();
 }
 
+// 1.2.39: серийный номер прибора для mDNS TXT `sn` (пустая строка — прибор ещё не ответил). Короткий замок, без логов.
+void spectrum_get_serial(char *out, size_t cap)
+{
+    if (!out || cap == 0) return;
+    SPEC_LOCK();
+    strncpy(out, s_spectrum.serial_number, cap - 1);
+    SPEC_UNLOCK();
+    out[cap - 1] = '\0';
+}
+
 // #MX-12 (1.2.31): температура T1 прибора для кольца мониторинга (NaN — нет данных)
 float spectrum_get_t1(void)
 {

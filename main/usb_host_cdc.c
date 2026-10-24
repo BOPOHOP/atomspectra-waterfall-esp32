@@ -16,6 +16,7 @@
 #include "acq_intent.h"      /* намерение набора по текстовой команде */
 #include "calib_autoread.h"  /* #AWF-12: авто-считывание -cal перед -sta */
 #include "text_accum.h"      /* #AWF-12b F1: чистая логика накопителя s_text_accum */
+#include "cmdlog_glue.h"      /* 1.2.39-t1: журнал команд к прибору */
 #include <string.h>
 
 static const char *TAG = "usb_cdc";
@@ -982,8 +983,10 @@ static int send_text_command_raw(const char *cmd)
     for (size_t i = 0; i < in_len; i++) shproto_packet_add_data(&pkt, (uint8_t)cmd[i]);
     shproto_packet_add_data(&pkt, '\0');
     shproto_packet_complete(&pkt);
+    uint32_t cl_seq = cmdlog_glue_record(cmdlog_glue_src_from_task(), cmd, in_len, 1);   // t1: кадр всегда кончается \0
     if (cmd_is_device_reset(cmd0)) (void)spectrogram_flush_tail(1200);   // #RST-TAIL: хвост строкой водопада, ДО -rst
     int rc = usb_host_cdc_send(pkt.data, pkt.len);
+    cmdlog_glue_result(cl_seq, rc == 0, rc);
     if (rc == 0) {
         DIAG_LOCK();
         strncpy(s_diag.last_tx_cmd, cmd0, sizeof(s_diag.last_tx_cmd) - 1);
